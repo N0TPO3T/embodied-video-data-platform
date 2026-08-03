@@ -89,6 +89,37 @@ export interface SettlementBatch {
   status: "locked" | "processing";
 }
 
+export interface DeliveryPackage {
+  id: string;
+  name: string;
+  assetCount: number;
+  status: "ready";
+  createdAt: string;
+}
+
+export interface RuleConfig {
+  version: string;
+  passThreshold: number;
+  description: string;
+}
+
+export interface LabelConfig {
+  id: string;
+  name: string;
+  type: "scene" | "action" | "object" | "issue";
+  associationCount: number;
+  enabled: boolean;
+}
+
+export interface OperationLog {
+  id: string;
+  actor: string;
+  action: string;
+  target: string;
+  reason: string;
+  createdAt: string;
+}
+
 export interface ValidationResult {
   valid: boolean;
   message: string;

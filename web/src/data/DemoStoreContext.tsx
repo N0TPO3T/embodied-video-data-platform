@@ -8,13 +8,34 @@ import {
   type ReactNode,
 } from "react";
 import type { Role, WithdrawalStatus } from "../domain/types";
-import { createDemoStore, demoSeed, type DemoStore } from "./demoStore";
+import {
+  createDemoStore,
+  demoSeed,
+  type AddUserInput,
+  type DeliveryPackageInput,
+  type DemoStore,
+  type InviteMemberInput,
+  type RuleVersionInput,
+  type UpdateLabelInput,
+  type UpdateUserInput,
+} from "./demoStore";
 
 type DemoStoreValue = {
   state: ReturnType<DemoStore["getState"]>;
   currentUser: ReturnType<DemoStore["getState"]>["users"][number];
   currentTeam?: ReturnType<DemoStore["getState"]>["teams"][number];
   loginAs(role: Role): void;
+  inviteMember(input: InviteMemberInput): ReturnType<DemoStore["inviteMember"]>;
+  addUser(input: AddUserInput): ReturnType<DemoStore["addUser"]>;
+  updateUser(input: UpdateUserInput): ReturnType<DemoStore["updateUser"]>;
+  createRuleVersion(
+    input: RuleVersionInput,
+  ): ReturnType<DemoStore["createRuleVersion"]>;
+  updateLabel(input: UpdateLabelInput): ReturnType<DemoStore["updateLabel"]>;
+  createSettlementBatch(): ReturnType<DemoStore["createSettlementBatch"]>;
+  createDeliveryPackage(
+    input: DeliveryPackageInput,
+  ): ReturnType<DemoStore["createDeliveryPackage"]>;
   addUploads(files: File[]): void;
   adjustQuality(id: string, score: number, reason: string): void;
   requestWithdrawal(amount: number): void;
@@ -42,6 +63,13 @@ export function DemoStoreProvider({ children }: { children: ReactNode }) {
         currentUser,
         currentTeam,
         loginAs: (role) => store.loginAs(role),
+        inviteMember: (input) => store.inviteMember(input),
+        addUser: (input) => store.addUser(input),
+        updateUser: (input) => store.updateUser(input),
+        createRuleVersion: (input) => store.createRuleVersion(input),
+        updateLabel: (input) => store.updateLabel(input),
+        createSettlementBatch: () => store.createSettlementBatch(),
+        createDeliveryPackage: (input) => store.createDeliveryPackage(input),
         addUploads: (files) => store.addUploads(files),
         adjustQuality: (id, score, reason) =>
           store.adjustQuality(id, score, reason),

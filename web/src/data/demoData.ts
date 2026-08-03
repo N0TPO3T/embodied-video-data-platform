@@ -1,4 +1,8 @@
 import type {
+  DeliveryPackage,
+  LabelConfig,
+  OperationLog,
+  RuleConfig,
   SettlementBatch,
   Submission,
   Team,
@@ -13,6 +17,10 @@ export interface DemoState {
   submissions: Submission[];
   withdrawals: Withdrawal[];
   settlements: SettlementBatch[];
+  deliveryPackages: DeliveryPackage[];
+  rule: RuleConfig;
+  labels: LabelConfig[];
+  operationLogs: OperationLog[];
   wallet: {
     available: number;
     frozen: number;
@@ -365,6 +373,60 @@ export const demoSeed: DemoState = {
       effectiveMinutes: 402.3,
       amount: 4386.2,
       status: "locked",
+    },
+  ],
+  deliveryPackages: [],
+  rule: {
+    version: "RULE-2026-08",
+    passThreshold: 60,
+    description: "八月具身视频质量准入规则",
+  },
+  labels: [
+    {
+      id: "SCENE-001",
+      name: "家庭厨房",
+      type: "scene",
+      associationCount: 186,
+      enabled: true,
+    },
+    {
+      id: "ACTION-014",
+      name: "组装",
+      type: "action",
+      associationCount: 94,
+      enabled: true,
+    },
+    {
+      id: "OBJECT-032",
+      name: "手持工具",
+      type: "object",
+      associationCount: 128,
+      enabled: true,
+    },
+    {
+      id: "ISSUE-006",
+      name: "镜头遮挡",
+      type: "issue",
+      associationCount: 37,
+      enabled: true,
+    },
+  ],
+  operationLogs: [
+    {
+      id: "OP-PRICE-0802",
+      actor: "陈屿",
+      action: "调整团队单价",
+      target: "远山二队",
+      reason: "根据八月任务难度更新",
+      createdAt: "2026-08-02 16:20",
+    },
+    {
+      id: "OP-WD-0802",
+      actor: "陈屿",
+      action: "审核通过提现",
+      target: "WD-002",
+      reason: "账户信息与结算记录一致",
+      createdAt: "2026-08-02 15:04",
     },
   ],
   wallet: {

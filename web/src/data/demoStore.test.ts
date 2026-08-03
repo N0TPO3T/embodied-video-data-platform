@@ -123,3 +123,247 @@ describe("upload and withdrawal workflows", () => {
     expect(notifications).toBe(1);
   });
 });
+
+describe("team member and user management workflows", () => {
+  it("invites a collector into the leader's own team", () => {
+    const store = createDemoStore(demoSeed);
+    store.loginAs("leader");
+
+    const created = store.inviteMember({
+      name: "苏禾",
+      phone: "13812345678",
+    });
+
+    expect(created.role).toBe("collector");
+    expect(created.teamId).toBe("TEAM-01");
+    expect(store.getState().teams[0].memberIds).toContain(created.id);
+  });
+
+  it("rejects duplicate invitation phones", () => {
+    const store = createDemoStore(demoSeed);
+    store.loginAs("leader");
+    store.inviteMember({ name: "苏禾", phone: "13812345678" });
+
+    expect(() =>
+      store.inviteMember({ name: "苏禾二", phone: "13812345678" }),
+    ).toThrow("该手机号已存在");
+  });
+
+  it("rejects invalid invitation fields and non-leader invitations", () => {
+    const store = createDemoStore(demoSeed);
+    store.loginAs("leader");
+
+    expect(() =>
+      store.inviteMember({ name: " ", phone: "13812345678" }),
+    ).toThrow("请填写成员姓名");
+    expect(() =>
+      store.inviteMember({ name: "苏禾", phone: "123" }),
+    ).toThrow("请输入正确的手机号");
+
+    store.loginAs("collector");
+    expect(() =>
+      store.inviteMember({ name: "苏禾", phone: "13812345678" }),
+    ).toThrow("仅团长可邀请成员");
+  });
+
+  it("adds a user and rejects duplicate login accounts", () => {
+    const store = createDemoStore(demoSeed);
+    store.loginAs("admin");
+
+    const created = store.addUser({
+      name: "沈舟",
+      account: "shenzhou",
+      role: "collector",
+      teamId: "TEAM-01",
+    });
+
+    expect(created.teamId).toBe("TEAM-01");
+    expect(store.getState().teams[0].memberIds).toContain(created.id);
+    expect(() =>
+      store.addUser({
+        name: "重复账号",
+        account: "linxiaoyu",
+        role: "collector",
+        teamId: "TEAM-01",
+      }),
+    ).toThrow("登录账号已存在");
+  });
+
+  it("moves a collector between teams", () => {
+    const store = createDemoStore(demoSeed);
+    store.loginAs("admin");
+
+    const updated = store.updateUser({
+      userId: "U-COL-01",
+      role: "collector",
+      teamId: "TEAM-02",
+    });
+
+    expect(updated.teamId).toBe("TEAM-02");
+    expect(store.getState().teams[0].memberIds).not.toContain("U-COL-01");
+    expect(store.getState().teams[1].memberIds).toContain("U-COL-01");
+  });
+
+  it("replaces a team leader without leaving two leaders", () => {
+    const store = createDemoStore(demoSeed);
+    store.loginAs("admin");
+
+    const replacement = store.updateUser({
+      userId: "U-COL-01",
+      role: "leader",
+      teamId: "TEAM-01",
+    });
+
+    expect(replacement.role).toBe("leader");
+    expect(store.getState().teams[0].leaderId).toBe("U-COL-01");
+    expect(
+      store.getState().users.find((user) => user.id === "U-LEAD-01")?.role,
+    ).toBe("collector");
+    expect(store.getState().teams[0].memberIds).toContain("U-LEAD-01");
+    expect(store.getState().teams[0].memberIds).not.toContain("U-COL-01");
+  });
+
+  it("requires a replacement before demoting the current leader", () => {
+    const store = createDemoStore(demoSeed);
+    store.loginAs("admin");
+
+    expect(() =>
+      store.updateUser({
+        userId: "U-LEAD-01",
+        role: "collector",
+        teamId: "TEAM-01",
+      }),
+    ).toThrow("请先为团队指定新的团长");
+  });
+});
+
+describe("administrator rule, settlement, and delivery workflows", () => {
+  it("publishes the active rule and records an operation log", () => {
+    const store = createDemoStore(demoSeed);
+    store.loginAs("admin");
+
+    const created = store.createRuleVersion({
+      version: "RULE-2026-09",
+      passThreshold: 65,
+      description: "九月质量规则",
+    });
+
+    expect(created).toEqual({
+      version: "RULE-2026-09",
+      passThreshold: 65,
+      description: "九月质量规则",
+    });
+    expect(store.getState().rule).toEqual(created);
+    expect(store.getState().operationLogs[0].action).toBe("发布质量规则");
+  });
+
+  it("rejects invalid rule values", () => {
+    const store = createDemoStore(demoSeed);
+    store.loginAs("admin");
+
+    expect(() =>
+      store.createRuleVersion({
+        version: " ",
+        passThreshold: 65,
+        description: "说明",
+      }),
+    ).toThrow("请填写版本名称");
+    expect(() =>
+      store.createRuleVersion({
+        version: "RULE-2026-09",
+        passThreshold: 60.5,
+        description: "说明",
+      }),
+    ).toThrow("通过阈值必须是 0 到 100 的整数");
+    expect(() =>
+      store.createRuleVersion({
+        version: "RULE-2026-09",
+        passThreshold: 65,
+        description: " ",
+      }),
+    ).toThrow("请填写规则说明");
+  });
+
+  it("updates an existing label and rejects an empty name", () => {
+    const store = createDemoStore(demoSeed);
+    store.loginAs("admin");
+
+    const updated = store.updateLabel({
+      id: "SCENE-001",
+      name: "家庭烹饪",
+      enabled: true,
+    });
+
+    expect(updated.name).toBe("家庭烹饪");
+    expect(store.getState().labels[0].name).toBe("家庭烹饪");
+    expect(() =>
+      store.updateLabel({ id: "SCENE-001", name: " ", enabled: true }),
+    ).toThrow("请填写标签名称");
+  });
+
+  it("locks only completed, passed, unsettled submissions", () => {
+    const store = createDemoStore(demoSeed);
+    store.loginAs("admin");
+
+    const batch = store.createSettlementBatch();
+
+    expect(batch.submissionCount).toBe(4);
+    expect(batch.effectiveMinutes).toBe(11.27);
+    expect(batch.amount).toBe(116.12);
+    expect(batch.status).toBe("locked");
+    expect(store.getState().settlements[0]).toEqual(batch);
+    expect(store.getSubmission("SUB-001").settlementStatus).toBe("settled");
+    expect(store.getSubmission("SUB-003").settlementStatus).toBe("unsettled");
+    expect(store.getSubmission("SUB-004").settlementStatus).toBe("unsettled");
+    expect(store.getState().operationLogs[0].action).toBe("生成结算批次");
+  });
+
+  it("rejects a second settlement when nothing remains eligible", () => {
+    const store = createDemoStore(demoSeed);
+    store.loginAs("admin");
+    store.createSettlementBatch();
+
+    expect(() => store.createSettlementBatch()).toThrow("当前没有可结算数据");
+  });
+
+  it("creates a delivery package from settled passed assets", () => {
+    const store = createDemoStore(demoSeed);
+    store.loginAs("admin");
+
+    const created = store.createDeliveryPackage({
+      name: "八月家庭任务包",
+    });
+
+    expect(created.name).toBe("八月家庭任务包");
+    expect(created.assetCount).toBe(2);
+    expect(created.status).toBe("ready");
+    expect(store.getState().deliveryPackages).toEqual([created]);
+  });
+
+  it("rejects delivery when there are no eligible assets", () => {
+    const seed = structuredClone(demoSeed);
+    seed.submissions = seed.submissions.map((submission) => ({
+      ...submission,
+      settlementStatus: "unsettled",
+    }));
+    const store = createDemoStore(seed);
+    store.loginAs("admin");
+
+    expect(() =>
+      store.createDeliveryPackage({ name: "无资产交付包" }),
+    ).toThrow("当前没有可交付资产");
+  });
+
+  it("rejects configuration commands from non-administrators", () => {
+    const store = createDemoStore(demoSeed);
+    store.loginAs("leader");
+
+    expect(() =>
+      store.createRuleVersion({
+        version: "RULE-2026-09",
+        passThreshold: 65,
+        description: "九月质量规则",
+      }),
+    ).toThrow("仅管理员可执行该操作");
+  });
+});
