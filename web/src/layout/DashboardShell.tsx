@@ -4,7 +4,9 @@ import { Bell, ChevronDown, Menu, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { navigationByRole } from "../app/navigation";
 import { BrandMark } from "../components/BrandMark";
+import { NotificationPanel } from "../components/NotificationPanel";
 import { useDemoStore } from "../data/DemoStoreContext";
+import { useInteractions } from "../interactions/InteractionContext";
 
 const roleLabel = {
   collector: "数采人员",
@@ -22,7 +24,9 @@ export function DashboardShell({
   children: ReactNode;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const { currentUser, loginAs } = useDemoStore();
+  const { unreadCount } = useInteractions();
   const navigation = navigationByRole[currentUser.role];
 
   function go(path: string) {
@@ -93,10 +97,16 @@ export function DashboardShell({
             <small>具身视频数据生产与质量运营</small>
           </div>
           <div className="topbar-actions">
-            <button className="icon-button notification-button" aria-label="通知">
+            <button
+              className="icon-button notification-button"
+              aria-label={unreadCount > 0 ? `通知，${unreadCount} 条未读` : "通知，无未读"}
+              aria-expanded={notificationsOpen}
+              onClick={() => setNotificationsOpen((open) => !open)}
+            >
               <Bell size={19} />
-              <span />
+              {unreadCount > 0 && <span />}
             </button>
+            {notificationsOpen && <NotificationPanel />}
             <label className="demo-role-switcher">
               <span>演示角色</span>
               <select

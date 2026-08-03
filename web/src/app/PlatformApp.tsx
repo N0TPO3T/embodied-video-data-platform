@@ -30,6 +30,7 @@ import { TeamAnalyticsPage } from "../features/team/TeamAnalyticsPage";
 import { TeamIncomePage } from "../features/team/TeamIncomePage";
 import { TeamSubmissionsPage } from "../features/team/TeamSubmissionsPage";
 import { DashboardShell } from "../layout/DashboardShell";
+import { InteractionProvider } from "../interactions/InteractionContext";
 import { roleHome } from "./navigation";
 
 function requiredRole(path: string): Role | null {
@@ -40,6 +41,14 @@ function requiredRole(path: string): Role | null {
 }
 
 export function PlatformApp({ initialPath }: { initialPath: string }) {
+  return (
+    <InteractionProvider>
+      <PlatformContent initialPath={initialPath} />
+    </InteractionProvider>
+  );
+}
+
+function PlatformContent({ initialPath }: { initialPath: string }) {
   const [path, setPath] = useState(initialPath || "/");
   const { currentUser, loginAs } = useDemoStore();
 

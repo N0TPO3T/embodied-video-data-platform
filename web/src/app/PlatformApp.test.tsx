@@ -64,4 +64,21 @@ describe("platform routing", () => {
     expect(await screen.findByRole("link", { name: /^AI 任务/ })).toBeVisible();
     expect(screen.getByRole("link", { name: /^提现审核/ })).toBeVisible();
   });
+
+  it("opens notifications and clears the unread state", async () => {
+    const user = userEvent.setup();
+    renderPlatform("/login");
+    await user.click(
+      screen.getByRole("button", { name: "以管理员身份进入" }),
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "通知，3 条未读" }),
+    );
+    expect(screen.getByText("AI 任务 SUB-019 处理异常")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "全部标为已读" }));
+
+    expect(screen.getByRole("button", { name: "通知，无未读" })).toBeVisible();
+    expect(screen.getByText("通知已全部标为已读")).toBeVisible();
+  });
 });
