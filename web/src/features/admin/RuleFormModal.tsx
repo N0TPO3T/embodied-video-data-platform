@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  useEffect,
   useRef,
   useState,
   type FormEvent,
@@ -28,26 +27,14 @@ export function RuleFormModal({
   const { state, createRuleVersion, updateLabel } = useDemoStore();
   const { notify } = useInteractions();
   const [version, setVersion] = useState("");
-  const [threshold, setThreshold] = useState("60");
+  const [threshold, setThreshold] = useState(String(state.rule.passThreshold));
   const [description, setDescription] = useState("");
-  const [labelName, setLabelName] = useState("");
-  const [enabled, setEnabled] = useState(true);
+  const [labelName, setLabelName] = useState(label?.name ?? "");
+  const [enabled, setEnabled] = useState(label?.enabled ?? true);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const firstInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    setVersion("");
-    setThreshold(String(state.rule.passThreshold));
-    setDescription("");
-    setLabelName(label?.name ?? "");
-    setEnabled(label?.enabled ?? true);
-    setError("");
-    setSubmitting(false);
-    submittingRef.current = false;
-  }, [label, mode, open, state.rule.passThreshold]);
 
   function close() {
     setError("");

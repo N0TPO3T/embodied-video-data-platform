@@ -2,6 +2,7 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useState,
   useSyncExternalStore,
@@ -46,6 +47,7 @@ const DemoStoreContext = createContext<DemoStoreValue | null>(null);
 
 export function DemoStoreProvider({ children }: { children: ReactNode }) {
   const [store] = useState(() => createDemoStore(demoSeed));
+  const loginAs = useCallback((role: Role) => store.loginAs(role), [store]);
   const state = useSyncExternalStore(
     (listener) => store.subscribe(listener),
     () => store.getState(),
@@ -62,7 +64,7 @@ export function DemoStoreProvider({ children }: { children: ReactNode }) {
         state,
         currentUser,
         currentTeam,
-        loginAs: (role) => store.loginAs(role),
+        loginAs,
         inviteMember: (input) => store.inviteMember(input),
         addUser: (input) => store.addUser(input),
         updateUser: (input) => store.updateUser(input),

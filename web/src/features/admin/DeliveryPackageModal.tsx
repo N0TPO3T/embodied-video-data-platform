@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent, type RefObject } from "react";
+import { useRef, useState, type FormEvent, type RefObject } from "react";
 import { Modal } from "../../components/Modal";
 import { useDemoStore } from "../../data/DemoStoreContext";
 import { useInteractions } from "../../interactions/InteractionContext";
@@ -24,14 +24,6 @@ export function DeliveryPackageModal({
   const assetCount = state.submissions.filter(
     (item) => item.settlementStatus === "settled" && item.qualityStatus === "passed",
   ).length;
-
-  useEffect(() => {
-    if (!open) return;
-    setName("");
-    setError("");
-    setSubmitting(false);
-    submittingRef.current = false;
-  }, [open]);
 
   function close() {
     setName("");

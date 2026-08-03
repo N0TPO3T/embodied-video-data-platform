@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  useEffect,
   useRef,
   useState,
   type FormEvent,
@@ -27,25 +26,14 @@ export function UserFormModal({
 }) {
   const { state, addUser, updateUser } = useDemoStore();
   const { notify } = useInteractions();
-  const [name, setName] = useState("");
-  const [account, setAccount] = useState("");
-  const [role, setRole] = useState<Role>("collector");
-  const [teamId, setTeamId] = useState("");
+  const [name, setName] = useState(user?.name ?? "");
+  const [account, setAccount] = useState(user?.account ?? "");
+  const [role, setRole] = useState<Role>(user?.role ?? "collector");
+  const [teamId, setTeamId] = useState(user?.teamId ?? state.teams[0]?.id ?? "");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const firstInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    setName(user?.name ?? "");
-    setAccount(user?.account ?? "");
-    setRole(user?.role ?? "collector");
-    setTeamId(user?.teamId ?? state.teams[0]?.id ?? "");
-    setError("");
-    setSubmitting(false);
-    submittingRef.current = false;
-  }, [mode, open, state.teams, user]);
 
   function close() {
     setError("");

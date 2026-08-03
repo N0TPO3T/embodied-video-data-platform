@@ -7,7 +7,7 @@ import { DemoStoreProvider, useDemoStore } from "../../data/DemoStoreContext";
 
 function AdminBootstrap({ path }: { path: string }) {
   const { loginAs } = useDemoStore();
-  useEffect(() => loginAs("admin"), []);
+  useEffect(() => loginAs("admin"), [loginAs]);
   return <PlatformApp initialPath={path} />;
 }
 

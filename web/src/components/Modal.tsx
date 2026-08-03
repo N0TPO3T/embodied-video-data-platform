@@ -3,8 +3,8 @@
 import { X } from "lucide-react";
 import {
   useEffect,
+  useEffectEvent,
   useId,
-  useRef,
   type MouseEvent,
   type ReactNode,
   type RefObject,
@@ -26,8 +26,7 @@ export function Modal({
   initialFocusRef?: RefObject<HTMLElement | null>;
 }) {
   const titleId = useId();
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  const closeOnEscape = useEffectEvent(onClose);
 
   useEffect(() => {
     if (!open) return;
@@ -35,7 +34,7 @@ export function Modal({
     const returnTarget = returnFocusRef?.current;
     initialFocusRef?.current?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onCloseRef.current();
+      if (event.key === "Escape") closeOnEscape();
     };
     document.addEventListener("keydown", handleKeyDown);
 

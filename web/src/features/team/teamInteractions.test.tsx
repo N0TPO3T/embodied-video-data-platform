@@ -7,7 +7,7 @@ import { DemoStoreProvider, useDemoStore } from "../../data/DemoStoreContext";
 
 function LeaderBootstrap({ path }: { path: string }) {
   const { loginAs } = useDemoStore();
-  useEffect(() => loginAs("leader"), []);
+  useEffect(() => loginAs("leader"), [loginAs]);
   return <PlatformApp initialPath={path} />;
 }
 

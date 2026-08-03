@@ -8,7 +8,7 @@ import type { Role } from "../../domain/types";
 
 function RoleBootstrap({ role, path }: { role: Role; path: string }) {
   const { loginAs } = useDemoStore();
-  useEffect(() => loginAs(role), [role]);
+  useEffect(() => loginAs(role), [loginAs, role]);
   return <PlatformApp initialPath={path} />;
 }
 

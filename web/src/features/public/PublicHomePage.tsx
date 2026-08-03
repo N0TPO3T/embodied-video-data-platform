@@ -4,6 +4,12 @@ import { ArrowRight, Bot, CheckCircle2, Database, Fingerprint, Layers3, PlayCirc
 import { BrandMark } from "../../components/BrandMark";
 
 export function PublicHomePage({ navigate }: { navigate(path: string): void }) {
+  function scrollToProcess() {
+    document
+      .getElementById("process")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   return (
     <div className="public-site">
       <header className="public-nav">
@@ -25,7 +31,7 @@ export function PublicHomePage({ navigate }: { navigate(path: string): void }) {
             <p>从开放采集、AI 内容理解到自动质检与资产入库，用一条可追溯的数据流水线，为具身智能持续供给高质量视频数据。</p>
             <div className="hero-actions">
               <button className="button button-primary" onClick={() => navigate("/login")}>进入演示平台 <ArrowRight size={17} /></button>
-              <button className="button button-secondary"><PlayCircle size={18} /> 了解生产流程</button>
+              <button className="button button-secondary" onClick={scrollToProcess}><PlayCircle size={18} /> 了解生产流程</button>
             </div>
             <div className="hero-trust">
               <span><CheckCircle2 size={16} /> 全流程可追溯</span>

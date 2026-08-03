@@ -36,8 +36,8 @@ export function RulesPage() {
           ))}
         </tbody></table></div>
       </section>
-      <RuleFormModal open={ruleOpen} mode="rule" onClose={() => setRuleOpen(false)} returnFocusRef={ruleTriggerRef} />
-      <RuleFormModal open={Boolean(selectedLabel)} mode="label" label={selectedLabel} onClose={() => setSelectedLabel(undefined)} returnFocusRef={labelTriggerRef} />
+      {ruleOpen && <RuleFormModal open mode="rule" onClose={() => setRuleOpen(false)} returnFocusRef={ruleTriggerRef} />}
+      {selectedLabel && <RuleFormModal open mode="label" label={selectedLabel} onClose={() => setSelectedLabel(undefined)} returnFocusRef={labelTriggerRef} />}
     </div>
   );
 }

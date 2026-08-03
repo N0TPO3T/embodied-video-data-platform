@@ -12,7 +12,7 @@ import {
 } from "./MemberDetailModal";
 
 export function MembersPage() {
-  const { state, currentTeam, currentUser } = useDemoStore();
+  const { state, currentTeam } = useDemoStore();
   const [query, setQuery] = useState("");
   const [inviteOpen, setInviteOpen] = useState(false);
   const [selectedMember, setSelectedMember] = useState<User>();

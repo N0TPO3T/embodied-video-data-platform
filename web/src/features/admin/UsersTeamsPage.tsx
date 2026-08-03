@@ -39,8 +39,8 @@ export function UsersTeamsPage() {
           ))}
         </tbody></table></div>
       </section>
-      <UserFormModal open={createOpen} mode="create" onClose={() => setCreateOpen(false)} returnFocusRef={createTriggerRef} />
-      <UserFormModal open={Boolean(selectedUser)} mode="edit" user={selectedUser} onClose={() => setSelectedUser(undefined)} returnFocusRef={editTriggerRef} />
+      {createOpen && <UserFormModal open mode="create" onClose={() => setCreateOpen(false)} returnFocusRef={createTriggerRef} />}
+      {selectedUser && <UserFormModal open mode="edit" user={selectedUser} onClose={() => setSelectedUser(undefined)} returnFocusRef={editTriggerRef} />}
     </div>
   );
 }
