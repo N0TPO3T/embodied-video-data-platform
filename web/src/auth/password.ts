@@ -97,7 +97,7 @@ export async function verifyPassword(
 }
 
 export function generateSessionToken(
-  bytes = crypto.getRandomValues(new Uint8Array(32)),
+  bytes: Uint8Array = crypto.getRandomValues(new Uint8Array(32)),
 ): string {
   return encodeBase64Url(Uint8Array.from(bytes));
 }

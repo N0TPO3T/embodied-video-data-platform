@@ -36,4 +36,15 @@ describe("account validation", () => {
       }),
     ).toThrow("请选择有效团队");
   });
+
+  it("rejects roles outside the supported account model", () => {
+    expect(() =>
+      validateAccountFields({
+        displayName: "异常账号",
+        username: "invalid.role",
+        role: "owner" as never,
+        teamId: "TEAM-01",
+      }),
+    ).toThrow("请选择有效角色");
+  });
 });

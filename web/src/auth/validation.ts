@@ -26,6 +26,14 @@ export function validateAccountFields(input: {
   role: Role;
   teamId?: string;
 }) {
+  if (
+    input.role !== "admin" &&
+    input.role !== "leader" &&
+    input.role !== "collector"
+  ) {
+    throw new Error("请选择有效角色");
+  }
+
   const displayName = input.displayName.trim();
   if (displayName.length < 1 || displayName.length > 30) {
     throw new Error("显示名称需为 1 到 30 个字符");
