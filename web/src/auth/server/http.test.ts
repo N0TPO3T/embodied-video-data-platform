@@ -14,6 +14,9 @@ import {
 } from "./http";
 import { makeAccountPublic } from "./testFactories";
 
+const TEST_PASSWORD = "test-password-admin";
+const NEXT_TEST_PASSWORD = "test-password-next";
+
 function authService(
   overrides: Partial<AuthService> = {},
 ): AuthService {
@@ -63,7 +66,7 @@ describe("authentication HTTP handlers", () => {
         },
         body: JSON.stringify({
           username: "admin",
-          password: "admin123",
+          password: TEST_PASSWORD,
         }),
       }),
     );
@@ -75,9 +78,9 @@ describe("authentication HTTP handlers", () => {
     expect(response.headers.get("set-cookie")).toContain("HttpOnly");
     expect(response.headers.get("set-cookie")).toContain("SameSite=Lax");
     expect(response.headers.get("set-cookie")).toContain("Secure");
-    expect(await response.text()).not.toMatch(
-      /admin123|password|sessionToken|raw-token/iu,
-    );
+    const responseText = await response.text();
+    expect(responseText).not.toContain(TEST_PASSWORD);
+    expect(responseText).not.toMatch(/password|sessionToken|raw-token/iu);
   });
 
   it("rejects cross-origin mutations before they reach account services", async () => {
@@ -91,7 +94,7 @@ describe("authentication HTTP handlers", () => {
         },
         body: JSON.stringify({
           username: "admin",
-          password: "admin123",
+          password: TEST_PASSWORD,
         }),
       }),
     );
@@ -176,7 +179,7 @@ describe("authentication HTTP handlers", () => {
             cookie: "evdp_session=session-token",
             "content-type": "application/json",
           },
-          body: JSON.stringify({ password: "newadmin123" }),
+          body: JSON.stringify({ password: NEXT_TEST_PASSWORD }),
         },
       ),
       { params: Promise.resolve({ id: "U-ADMIN-01" }) },

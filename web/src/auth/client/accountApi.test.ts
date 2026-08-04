@@ -12,6 +12,8 @@ import {
   updateAccount,
 } from "./accountApi";
 
+const TEST_PASSWORD = "test-password-admin";
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -33,7 +35,7 @@ describe("account API client", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(login("admin", "admin123")).resolves.toEqual({
+    await expect(login("admin", TEST_PASSWORD)).resolves.toEqual({
       user,
       homePath: "/admin",
     });
@@ -44,7 +46,7 @@ describe("account API client", () => {
         credentials: "same-origin",
         body: JSON.stringify({
           username: "admin",
-          password: "admin123",
+          password: TEST_PASSWORD,
         }),
       }),
     );

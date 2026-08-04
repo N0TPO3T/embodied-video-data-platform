@@ -36,13 +36,15 @@ pnpm test:render
 
 ## 初始账号
 
-- 管理员：`admin` / `admin123`
-- 团长：`tuanzhang1` / `tuanzhang1`、`tuanzhang2` / `tuanzhang2`
-- 测试人员：`ceshirenyuan1` 至 `ceshirenyuan5`，初始密码与各自用户名相同
+- 管理员用户名：`admin`
+- 团长用户名：`tuanzhang1`、`tuanzhang2`
+- 测试人员用户名：`ceshirenyuan1` 至 `ceshirenyuan5`
+
+初始密码由管理员通过私密渠道提供，不保存在公开源码或 README 中。
 
 登录页使用用户名和密码。管理员可在“用户与团队”页面新增管理员、团长或数采人员账号，并可编辑账号、重置密码、停用和重新启用账号。重置密码或停用账号会使该账号已有登录会话失效。
 
-> 对外长期使用前，请先登录管理员后台修改 `admin` 的初始密码。
+> 对外长期使用时，管理员可在后台定期重置账号密码。
 
 ## 交互演示
 

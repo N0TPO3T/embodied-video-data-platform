@@ -15,6 +15,8 @@ import {
 import { createTestD1 } from "./testD1";
 
 const disposers: Array<() => Promise<void>> = [];
+const TEST_PASSWORD = "test-password-admin";
+const NEXT_TEST_PASSWORD = "test-password-next";
 
 afterEach(async () => {
   await Promise.all(disposers.splice(0).map((dispose) => dispose()));
@@ -29,7 +31,7 @@ async function accountServiceFixture(): Promise<{
   disposers.push(dispose);
   const repo = createD1AccountRepository(db);
   const stored = await hashPassword(
-    "admin123",
+    TEST_PASSWORD,
     new Uint8Array(16).fill(3),
   );
   const adminRecord = makeAccountRecord({
@@ -152,7 +154,7 @@ describe("AccountService", () => {
     await repo.createSession("digest", admin.id, 10, 10_000);
 
     await expect(
-      service.resetPassword(admin, admin.id, "newadmin123"),
+      service.resetPassword(admin, admin.id, NEXT_TEST_PASSWORD),
     ).resolves.toEqual({ reauthenticate: true });
     await expect(repo.findSessionAccount("digest", 20)).resolves.toBeNull();
     await expect(repo.listAuditLogs(10)).resolves.toEqual(

@@ -17,6 +17,8 @@ type AuthFixture = {
   advance: (milliseconds: number) => void;
 };
 
+const TEST_PASSWORD = "test-password-admin";
+
 const disposers: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
@@ -28,7 +30,7 @@ async function authenticatedFixture(): Promise<AuthFixture> {
   disposers.push(dispose);
   const repo = createD1AccountRepository(db);
   const stored = await hashPassword(
-    "admin123",
+    TEST_PASSWORD,
     new Uint8Array(16).fill(3),
   );
   const admin = makeAccountRecord({
@@ -63,7 +65,7 @@ describe("AuthService", () => {
   it("logs in with a normalized username and creates a stored session", async () => {
     const { service, repo } = await authenticatedFixture();
 
-    const result = await service.login("  ADMIN ", "admin123");
+    const result = await service.login("  ADMIN ", TEST_PASSWORD);
 
     expect(result.user).toMatchObject({
       id: "U-ADMIN-01",
@@ -102,7 +104,7 @@ describe("AuthService", () => {
       },
     );
 
-    await expect(service.login("admin", "admin123")).rejects.toMatchObject({
+    await expect(service.login("admin", TEST_PASSWORD)).rejects.toMatchObject({
       code: "DISABLED",
     });
   });
@@ -120,13 +122,13 @@ describe("AuthService", () => {
     await expect(service.login("admin", "wrong-pass")).rejects.toMatchObject({
       code: "LOCKED",
     });
-    await expect(service.login("admin", "admin123")).rejects.toMatchObject({
+    await expect(service.login("admin", TEST_PASSWORD)).rejects.toMatchObject({
       code: "LOCKED",
     });
 
     advance(15 * 60 * 1_000 + 1);
 
-    await expect(service.login("admin", "admin123")).resolves.toMatchObject({
+    await expect(service.login("admin", TEST_PASSWORD)).resolves.toMatchObject({
       user: { role: "admin" },
     });
     expect(
@@ -136,7 +138,7 @@ describe("AuthService", () => {
 
   it("authenticates and then removes an opaque session on logout", async () => {
     const { service } = await authenticatedFixture();
-    const { token } = await service.login("admin", "admin123");
+    const { token } = await service.login("admin", TEST_PASSWORD);
 
     await expect(service.authenticate(token)).resolves.toMatchObject({
       username: "admin",

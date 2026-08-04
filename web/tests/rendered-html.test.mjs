@@ -70,36 +70,50 @@ test("server-renders password login without exposing initial credentials", async
   assert.match(html, /用户名/);
   assert.match(html, /密码/);
   assert.match(html, /登录数据平台/);
-  assert.doesNotMatch(html, /admin123|演示角色|选择身份/i);
+  assert.doesNotMatch(html, /初始密码|演示角色|选择身份/i);
 });
 
 test("keeps credential internals out of browser-facing account code", async () => {
-  const [accountClient, loginPage, migration] = await Promise.all([
-    readFile(
-      new URL("../src/auth/client/accountApi.ts", import.meta.url),
-      "utf8",
-    ),
-    readFile(
-      new URL("../src/features/auth/LoginPage.tsx", import.meta.url),
-      "utf8",
-    ),
-    readFile(
-      new URL("../drizzle/0000_account-authentication.sql", import.meta.url),
-      "utf8",
-    ),
-  ]);
+  const [readme, bootstrap, accountClient, loginPage, migration] =
+    await Promise.all([
+      readFile(new URL("../../README.md", import.meta.url), "utf8"),
+      readFile(
+        new URL(
+          "../src/auth/server/bootstrapAccounts.ts",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+      readFile(
+        new URL("../src/auth/client/accountApi.ts", import.meta.url),
+        "utf8",
+      ),
+      readFile(
+        new URL("../src/features/auth/LoginPage.tsx", import.meta.url),
+        "utf8",
+      ),
+      readFile(
+        new URL(
+          "../drizzle/0000_account-authentication.sql",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ]);
 
+  assert.doesNotMatch(readme, /`[^`\n]+`\s*\/\s*`[^`\n]+`/);
+  assert.doesNotMatch(
+    bootstrap,
+    /\[\s*"U-[^"]+",\s*"[^"]+",\s*"[^"]+",\s*"[^"]+",\s*"(?:admin|leader|collector)"/,
+  );
   assert.doesNotMatch(
     `${accountClient}\n${loginPage}`,
-    /passwordHash|passwordSalt|passwordIterations|admin123/,
+    /passwordHash|passwordSalt|passwordIterations/,
   );
   assert.match(migration, /CREATE TABLE `accounts`/);
   assert.match(migration, /CREATE TABLE `auth_sessions`/);
   assert.match(migration, /CREATE TABLE `account_audit_logs`/);
-  assert.doesNotMatch(
-    migration,
-    /admin123|tuanzhang1|ceshirenyuan1/,
-  );
+  assert.doesNotMatch(migration, /\bINSERT\b/i);
 });
 
 test("removes all temporary starter preview artifacts", async () => {

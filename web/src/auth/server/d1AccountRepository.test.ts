@@ -1,6 +1,7 @@
 // @vitest-environment node
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { verifyPassword } from "../password";
 import { ensureInitialAccounts } from "./bootstrapAccounts";
 import { createD1AccountRepository } from "./d1AccountRepository";
 import {
@@ -9,6 +10,17 @@ import {
   makeResetAudit,
 } from "./testFactories";
 import { createTestD1 } from "./testD1";
+
+const initialTestCredentials = JSON.stringify({
+  admin: "test-password-admin",
+  tuanzhang1: "test-password-leader-one",
+  tuanzhang2: "test-password-leader-two",
+  ceshirenyuan1: "test-password-collector-one",
+  ceshirenyuan2: "test-password-collector-two",
+  ceshirenyuan3: "test-password-collector-three",
+  ceshirenyuan4: "test-password-collector-four",
+  ceshirenyuan5: "test-password-collector-five",
+});
 
 describe("D1 account repository", () => {
   let dispose: () => Promise<void>;
@@ -69,8 +81,14 @@ describe("D1 account repository", () => {
   it("creates the eight initial accounts only once", async () => {
     const repo = createD1AccountRepository(db);
 
-    await ensureInitialAccounts(repo, 1_722_700_000_000);
-    await ensureInitialAccounts(repo, 1_722_700_000_000);
+    await ensureInitialAccounts(
+      repo,
+      initialTestCredentials,
+      1_722_700_000_000,
+    );
+    await expect(
+      ensureInitialAccounts(repo, undefined, 1_722_700_000_000),
+    ).resolves.toBeUndefined();
 
     const accounts = await repo.listAccounts({ kind: "all" });
     expect(accounts).toHaveLength(8);
@@ -85,6 +103,27 @@ describe("D1 account repository", () => {
     ).toHaveLength(5);
 
     const admin = await repo.findByNormalizedUsername("admin");
-    expect(admin?.passwordHash).not.toBe("admin123");
+    expect(admin).not.toBeNull();
+    await expect(
+      verifyPassword("test-password-admin", {
+        hash: admin!.passwordHash,
+        salt: admin!.passwordSalt,
+        iterations: admin!.passwordIterations,
+      }),
+    ).resolves.toBe(true);
+  });
+
+  it("does not partially seed accounts from incomplete credentials", async () => {
+    const repo = createD1AccountRepository(db);
+
+    await expect(
+      ensureInitialAccounts(
+        repo,
+        JSON.stringify({ admin: "test-password-admin" }),
+        1_722_700_000_000,
+      ),
+    ).rejects.toThrow("初始账号密码配置无效");
+
+    await expect(repo.listAccounts({ kind: "all" })).resolves.toEqual([]);
   });
 });

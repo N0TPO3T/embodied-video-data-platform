@@ -5,6 +5,8 @@ import { makeAccountPublic } from "../../auth/server/testFactories";
 import * as accountApi from "../../auth/client/accountApi";
 import { LoginPage } from "./LoginPage";
 
+const TEST_PASSWORD = "test-password-admin";
+
 vi.mock("../../auth/client/accountApi", async () => {
   const actual = await vi.importActual<
     typeof import("../../auth/client/accountApi")
@@ -35,13 +37,13 @@ describe("LoginPage", () => {
     );
 
     await user.type(screen.getByLabelText("用户名"), "admin");
-    await user.type(screen.getByLabelText("密码"), "admin123");
+    await user.type(screen.getByLabelText("密码"), TEST_PASSWORD);
     await user.dblClick(screen.getByRole("button", { name: "登录" }));
 
     expect(accountApi.login).toHaveBeenCalledTimes(1);
     expect(accountApi.login).toHaveBeenCalledWith(
       "admin",
-      "admin123",
+      TEST_PASSWORD,
     );
     expect(onAuthenticated).toHaveBeenCalledWith(
       expect.objectContaining({ homePath: "/admin" }),

@@ -6,16 +6,18 @@ import {
   verifyPassword,
 } from "./password";
 
+const TEST_PASSWORD = "test-password-admin";
+
 describe("password and session cryptography", () => {
   it("hashes and verifies a password without storing plaintext", async () => {
     const stored = await hashPassword(
-      "admin123",
+      TEST_PASSWORD,
       new Uint8Array(16).fill(7),
     );
 
-    expect(stored.hash).not.toContain("admin123");
+    expect(stored.hash).not.toContain(TEST_PASSWORD);
     expect(stored.iterations).toBe(600_000);
-    await expect(verifyPassword("admin123", stored)).resolves.toBe(true);
+    await expect(verifyPassword(TEST_PASSWORD, stored)).resolves.toBe(true);
     await expect(verifyPassword("wrong-pass", stored)).resolves.toBe(false);
   });
 
