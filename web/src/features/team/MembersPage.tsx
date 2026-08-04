@@ -5,7 +5,7 @@ import { useRef, useState } from "react";
 import { StatusBadge } from "../../components/StatusBadge";
 import { useDemoStore } from "../../data/DemoStoreContext";
 import type { User } from "../../domain/types";
-import { InviteMemberModal } from "./InviteMemberModal";
+import { useInteractions } from "../../interactions/InteractionContext";
 import {
   MemberDetailModal,
   memberMetrics,
@@ -13,10 +13,9 @@ import {
 
 export function MembersPage() {
   const { state, currentTeam } = useDemoStore();
+  const { notify } = useInteractions();
   const [query, setQuery] = useState("");
-  const [inviteOpen, setInviteOpen] = useState(false);
   const [selectedMember, setSelectedMember] = useState<User>();
-  const inviteTriggerRef = useRef<HTMLButtonElement>(null);
   const detailTriggerRef = useRef<HTMLButtonElement>(null);
   const teamMemberIds = currentTeam
     ? [currentTeam.leaderId, ...currentTeam.memberIds]
@@ -37,9 +36,10 @@ export function MembersPage() {
           <span>查看成员活跃状态、数据贡献与质量表现</span>
         </div>
         <button
-          ref={inviteTriggerRef}
           className="button button-primary"
-          onClick={() => setInviteOpen(true)}
+          onClick={() =>
+            notify("info", "请联系管理员在“用户与团队”中创建账号")
+          }
         >
           <UserPlus size={16} />邀请成员
         </button>
@@ -89,11 +89,6 @@ export function MembersPage() {
           </table>
         </div>
       </section>
-      <InviteMemberModal
-        open={inviteOpen}
-        onClose={() => setInviteOpen(false)}
-        returnFocusRef={inviteTriggerRef}
-      />
       <MemberDetailModal
         member={selectedMember}
         team={currentTeam}

@@ -1,6 +1,58 @@
 import { describe, expect, it } from "vitest";
 import { createDemoStore, demoSeed } from "./demoStore";
 
+describe("demo account identities", () => {
+  it("uses the approved generic names and pinyin usernames", () => {
+    expect(
+      demoSeed.users.map(({ id, name, account }) => ({
+        id,
+        name,
+        account,
+      })),
+    ).toEqual([
+      {
+        id: "U-COL-01",
+        name: "测试人员1",
+        account: "ceshirenyuan1",
+      },
+      {
+        id: "U-LEAD-01",
+        name: "团长1",
+        account: "tuanzhang1",
+      },
+      { id: "U-ADMIN-01", name: "管理员", account: "admin" },
+      {
+        id: "U-COL-02",
+        name: "测试人员2",
+        account: "ceshirenyuan2",
+      },
+      {
+        id: "U-COL-03",
+        name: "测试人员3",
+        account: "ceshirenyuan3",
+      },
+      {
+        id: "U-COL-04",
+        name: "测试人员4",
+        account: "ceshirenyuan4",
+      },
+      {
+        id: "U-COL-05",
+        name: "测试人员5",
+        account: "ceshirenyuan5",
+      },
+      {
+        id: "U-LEAD-02",
+        name: "团长2",
+        account: "tuanzhang2",
+      },
+    ]);
+    expect(
+      demoSeed.submissions.find(({ id }) => id === "SUB-001")?.ownerName,
+    ).toBe("测试人员1");
+  });
+});
+
 describe("demo store permissions", () => {
   it("prevents a leader from adjusting another team submission", () => {
     const store = createDemoStore(demoSeed);
@@ -125,6 +177,30 @@ describe("upload and withdrawal workflows", () => {
 });
 
 describe("team member and user management workflows", () => {
+  it("synchronizes a persistent account into its assigned team", () => {
+    const store = createDemoStore(demoSeed);
+
+    store.syncAccount({
+      id: "U-COL-NEW",
+      name: "测试人员6",
+      account: "ceshirenyuan6",
+      role: "collector",
+      teamId: "TEAM-02",
+      avatar: "测",
+      phone: "未设置",
+      status: "active",
+      updatedAt: 1_722_708_100_000,
+    });
+
+    expect(
+      store.getState().users.find((user) => user.id === "U-COL-NEW"),
+    ).toMatchObject({
+      account: "ceshirenyuan6",
+      teamId: "TEAM-02",
+    });
+    expect(store.getState().teams[1].memberIds).toContain("U-COL-NEW");
+  });
+
   it("invites a collector into the leader's own team", () => {
     const store = createDemoStore(demoSeed);
     store.loginAs("leader");
@@ -182,7 +258,7 @@ describe("team member and user management workflows", () => {
     expect(() =>
       store.addUser({
         name: "重复账号",
-        account: "linxiaoyu",
+        account: "ceshirenyuan1",
         role: "collector",
         teamId: "TEAM-01",
       }),

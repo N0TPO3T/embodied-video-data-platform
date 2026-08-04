@@ -2,33 +2,28 @@
 
 import {
   createContext,
-  useCallback,
   useContext,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import type { Role, WithdrawalStatus } from "../domain/types";
+import type { AccountPublic } from "../auth/contracts";
+import type { User, WithdrawalStatus } from "../domain/types";
 import {
+  alignAccountTeams,
   createDemoStore,
   demoSeed,
-  type AddUserInput,
   type DeliveryPackageInput,
   type DemoStore,
-  type InviteMemberInput,
   type RuleVersionInput,
   type UpdateLabelInput,
-  type UpdateUserInput,
 } from "./demoStore";
 
 type DemoStoreValue = {
   state: ReturnType<DemoStore["getState"]>;
   currentUser: ReturnType<DemoStore["getState"]>["users"][number];
   currentTeam?: ReturnType<DemoStore["getState"]>["teams"][number];
-  loginAs(role: Role): void;
-  inviteMember(input: InviteMemberInput): ReturnType<DemoStore["inviteMember"]>;
-  addUser(input: AddUserInput): ReturnType<DemoStore["addUser"]>;
-  updateUser(input: UpdateUserInput): ReturnType<DemoStore["updateUser"]>;
+  syncAccount(user: User): void;
   createRuleVersion(
     input: RuleVersionInput,
   ): ReturnType<DemoStore["createRuleVersion"]>;
@@ -45,9 +40,63 @@ type DemoStoreValue = {
 
 const DemoStoreContext = createContext<DemoStoreValue | null>(null);
 
-export function DemoStoreProvider({ children }: { children: ReactNode }) {
-  const [store] = useState(() => createDemoStore(demoSeed));
-  const loginAs = useCallback((role: Role) => store.loginAs(role), [store]);
+export function accountToUser(
+  account: AccountPublic,
+  existing?: User,
+): User {
+  return {
+    id: account.id,
+    name: account.displayName,
+    account: account.username,
+    role: account.role,
+    teamId: account.teamId,
+    avatar: existing?.avatar ?? account.displayName.slice(0, 1),
+    phone: existing?.phone ?? "未设置",
+    alipayAccount: existing?.alipayAccount,
+    status: account.status,
+    updatedAt: account.updatedAt,
+  };
+}
+
+function authenticatedSeed(
+  currentAccount: AccountPublic,
+  accounts: AccountPublic[],
+) {
+  const snapshot = accounts.some(
+    (account) => account.id === currentAccount.id,
+  )
+    ? accounts
+    : [currentAccount, ...accounts];
+  const users = snapshot.map((account) =>
+    accountToUser(
+      account,
+      demoSeed.users.find((user) => user.id === account.id),
+    ),
+  );
+  return {
+    ...structuredClone(demoSeed),
+    currentUserId: currentAccount.id,
+    users,
+    teams: alignAccountTeams(demoSeed.teams, users),
+  };
+}
+
+export function DemoStoreProvider({
+  children,
+  currentAccount,
+  accounts,
+}: {
+  children: ReactNode;
+  currentAccount?: AccountPublic;
+  accounts?: AccountPublic[];
+}) {
+  const [store] = useState(() =>
+    createDemoStore(
+      currentAccount
+        ? authenticatedSeed(currentAccount, accounts ?? [currentAccount])
+        : demoSeed,
+    ),
+  );
   const state = useSyncExternalStore(
     (listener) => store.subscribe(listener),
     () => store.getState(),
@@ -64,10 +113,7 @@ export function DemoStoreProvider({ children }: { children: ReactNode }) {
         state,
         currentUser,
         currentTeam,
-        loginAs,
-        inviteMember: (input) => store.inviteMember(input),
-        addUser: (input) => store.addUser(input),
-        updateUser: (input) => store.updateUser(input),
+        syncAccount: (user) => store.syncAccount(user),
         createRuleVersion: (input) => store.createRuleVersion(input),
         updateLabel: (input) => store.updateLabel(input),
         createSettlementBatch: () => store.createSettlementBatch(),

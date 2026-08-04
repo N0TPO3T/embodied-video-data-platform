@@ -6,75 +6,93 @@ import {
   type FormEvent,
   type RefObject,
 } from "react";
+import type {
+  AccountPublic,
+  CreateAccountInput,
+  UpdateAccountInput,
+} from "../../auth/contracts";
 import { Modal } from "../../components/Modal";
 import { useDemoStore } from "../../data/DemoStoreContext";
-import type { Role, User } from "../../domain/types";
-import { useInteractions } from "../../interactions/InteractionContext";
+import type { Role } from "../../domain/types";
 
 export function UserFormModal({
   open,
   mode,
-  user,
+  account,
+  onCreate,
+  onUpdate,
   onClose,
   returnFocusRef,
 }: {
   open: boolean;
   mode: "create" | "edit";
-  user?: User;
+  account?: AccountPublic;
+  onCreate(input: CreateAccountInput): Promise<AccountPublic>;
+  onUpdate(
+    id: string,
+    input: UpdateAccountInput,
+  ): Promise<AccountPublic>;
   onClose(): void;
   returnFocusRef: RefObject<HTMLButtonElement | null>;
 }) {
-  const { state, addUser, updateUser } = useDemoStore();
-  const { notify } = useInteractions();
-  const [name, setName] = useState(user?.name ?? "");
-  const [account, setAccount] = useState(user?.account ?? "");
-  const [role, setRole] = useState<Role>(user?.role ?? "collector");
-  const [teamId, setTeamId] = useState(user?.teamId ?? state.teams[0]?.id ?? "");
+  const { state } = useDemoStore();
+  const [displayName, setDisplayName] = useState(
+    account?.displayName ?? "",
+  );
+  const [username, setUsername] = useState(account?.username ?? "");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState<Role>(
+    account?.role ?? "collector",
+  );
+  const [teamId, setTeamId] = useState(
+    account?.teamId ?? state.teams[0]?.id ?? "",
+  );
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const firstInputRef = useRef<HTMLInputElement>(null);
 
   function close() {
+    if (submittingRef.current) return;
+    setPassword("");
     setError("");
-    setSubmitting(false);
-    submittingRef.current = false;
     onClose();
   }
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submittingRef.current) return;
     submittingRef.current = true;
     setSubmitting(true);
     setError("");
 
+    const fields = {
+      displayName,
+      username,
+      role,
+      teamId: role === "admin" ? undefined : teamId,
+    };
+
     try {
       if (mode === "create") {
-        addUser({
-          name,
-          account,
-          role,
-          teamId: role === "admin" ? undefined : teamId,
-        });
-        notify("success", "用户已创建");
-      } else if (user) {
-        updateUser({
-          userId: user.id,
-          role,
-          teamId: role === "admin" ? undefined : teamId,
-        });
-        notify("success", "用户配置已更新");
+        await onCreate({ ...fields, password });
+      } else if (account) {
+        await onUpdate(account.id, fields);
       }
-      close();
+      setPassword("");
+      submittingRef.current = false;
+      setSubmitting(false);
+      onClose();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "保存失败，请重试");
+      setError(
+        reason instanceof Error ? reason.message : "保存失败，请重试",
+      );
       setSubmitting(false);
       submittingRef.current = false;
     }
   }
 
-  const title = mode === "create" ? "新增用户" : "配置用户";
+  const title = mode === "create" ? "新增账号" : "编辑账号";
   return (
     <Modal
       open={open}
@@ -85,23 +103,38 @@ export function UserFormModal({
     >
       <form className="modal-form" onSubmit={submit}>
         <label>
-          姓名
+          显示名称
           <input
             ref={firstInputRef}
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            disabled={mode === "edit"}
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+            autoComplete="off"
+            required
           />
         </label>
         <label>
-          登录账号
+          用户名
           <input
-            value={account}
-            onChange={(event) => setAccount(event.target.value)}
-            disabled={mode === "edit"}
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
             autoComplete="username"
+            required
           />
         </label>
+        {mode === "create" && (
+          <label>
+            初始密码
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="new-password"
+              minLength={8}
+              maxLength={64}
+              required
+            />
+          </label>
+        )}
         <label>
           角色
           <select
@@ -122,18 +155,43 @@ export function UserFormModal({
         {role !== "admin" && (
           <label>
             所属团队
-            <select value={teamId} onChange={(event) => setTeamId(event.target.value)}>
+            <select
+              value={teamId}
+              onChange={(event) => setTeamId(event.target.value)}
+              required
+            >
               {state.teams.map((team) => (
-                <option key={team.id} value={team.id}>{team.name}</option>
+                <option key={team.id} value={team.id}>
+                  {team.name}
+                </option>
               ))}
             </select>
           </label>
         )}
-        {error && <p className="modal-error" role="alert">{error}</p>}
+        {error && (
+          <p className="modal-error" role="alert">
+            {error}
+          </p>
+        )}
         <div className="modal-actions">
-          <button type="button" className="button button-secondary" onClick={close}>取消</button>
-          <button type="submit" className="button button-primary" disabled={submitting}>
-            {submitting ? "保存中…" : mode === "create" ? "创建用户" : "保存配置"}
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={close}
+            disabled={submitting}
+          >
+            取消
+          </button>
+          <button
+            type="submit"
+            className="button button-primary"
+            disabled={submitting}
+          >
+            {submitting
+              ? "保存中…"
+              : mode === "create"
+                ? "创建账号"
+                : "保存账号"}
           </button>
         </div>
       </form>

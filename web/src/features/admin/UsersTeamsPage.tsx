@@ -1,46 +1,369 @@
 "use client";
 
-import { ShieldCheck, UserRoundPlus, Users } from "lucide-react";
-import { useRef, useState } from "react";
+import {
+  Search,
+  ShieldCheck,
+  UserRoundPlus,
+  Users,
+} from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import * as accountApi from "../../auth/client/accountApi";
+import type {
+  AccountPublic,
+  CreateAccountInput,
+  UpdateAccountInput,
+} from "../../auth/contracts";
 import { StatusBadge } from "../../components/StatusBadge";
-import { useDemoStore } from "../../data/DemoStoreContext";
-import type { User } from "../../domain/types";
+import {
+  accountToUser,
+  useDemoStore,
+} from "../../data/DemoStoreContext";
+import type { AccountStatus, Role, User } from "../../domain/types";
+import { useInteractions } from "../../interactions/InteractionContext";
+import { AccountStatusModal } from "./AccountStatusModal";
+import { ResetPasswordModal } from "./ResetPasswordModal";
 import { UserFormModal } from "./UserFormModal";
 
-const roleLabel = { collector: "数采人员", leader: "团长", admin: "管理员" };
+const roleLabel: Record<Role, string> = {
+  collector: "数采人员",
+  leader: "团长",
+  admin: "管理员",
+};
+
+function userToAccount(user: User): AccountPublic {
+  return {
+    id: user.id,
+    displayName: user.name,
+    username: user.account,
+    role: user.role,
+    teamId: user.teamId,
+    status: user.status,
+    updatedAt: user.updatedAt,
+  };
+}
+
+function formatUpdatedAt(timestamp: number): string {
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(timestamp);
+}
 
 export function UsersTeamsPage() {
-  const { state } = useDemoStore();
+  const { state, currentUser, syncAccount } = useDemoStore();
+  const { notify } = useInteractions();
   const [createOpen, setCreateOpen] = useState(false);
-  const [selectedUser, setSelectedUser] = useState<User>();
+  const [editTarget, setEditTarget] = useState<AccountPublic>();
+  const [resetTarget, setResetTarget] = useState<AccountPublic>();
+  const [statusTarget, setStatusTarget] = useState<AccountPublic>();
+  const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState<Role | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<
+    AccountStatus | "all"
+  >("all");
   const createTriggerRef = useRef<HTMLButtonElement>(null);
-  const editTriggerRef = useRef<HTMLButtonElement>(null);
+  const actionTriggerRef = useRef<HTMLButtonElement>(null);
+
+  const accounts = useMemo(
+    () => state.users.map(userToAccount),
+    [state.users],
+  );
+  const filteredAccounts = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return accounts.filter((account) => {
+      const matchesSearch =
+        !query ||
+        account.displayName.toLowerCase().includes(query) ||
+        account.username.toLowerCase().includes(query);
+      const matchesRole =
+        roleFilter === "all" || account.role === roleFilter;
+      const matchesStatus =
+        statusFilter === "all" || account.status === statusFilter;
+      return matchesSearch && matchesRole && matchesStatus;
+    });
+  }, [accounts, roleFilter, search, statusFilter]);
+
+  function synchronize(account: AccountPublic) {
+    const existing = state.users.find((user) => user.id === account.id);
+    syncAccount(accountToUser(account, existing));
+  }
+
+  async function create(input: CreateAccountInput) {
+    const account = await accountApi.createAccount(input);
+    synchronize(account);
+    notify("success", "账号已创建");
+    return account;
+  }
+
+  async function update(id: string, input: UpdateAccountInput) {
+    const account = await accountApi.updateAccount(id, input);
+    synchronize(account);
+    notify("success", "账号信息已更新");
+    return account;
+  }
+
+  function rememberActionTrigger(button: HTMLButtonElement) {
+    actionTriggerRef.current = button;
+  }
 
   return (
     <div className="page-stack">
       <div className="page-heading">
-        <div><p className="page-kicker">组织与权限</p><h1>用户与团队</h1><span>创建演示账号、设置角色并维护团队归属</span></div>
-        <button ref={createTriggerRef} className="button button-primary" onClick={() => setCreateOpen(true)}><UserRoundPlus size={16}/>新增用户</button>
+        <div>
+          <p className="page-kicker">组织与权限</p>
+          <h1>用户与团队</h1>
+          <span>创建真实登录账号、设置角色并维护团队归属</span>
+        </div>
+        <button
+          ref={createTriggerRef}
+          className="button button-primary"
+          onClick={() => setCreateOpen(true)}
+        >
+          <UserRoundPlus size={16} />
+          新增账号
+        </button>
       </div>
+
       <div className="people-summary">
-        <article><Users size={22}/><span><strong>{state.users.length}</strong><small>演示用户</small></span></article>
-        <article><ShieldCheck size={22}/><span><strong>{state.teams.length}</strong><small>运营团队</small></span></article>
-        <div>{state.teams.map((team) => <span key={team.id}><strong>{team.name}</strong><small>{team.memberIds.length + 1} 名成员 · ¥{team.unitPricePerMinute}/分钟</small></span>)}</div>
-      </div>
-      <section className="content-card table-card">
-        <div className="card-heading"><div><h2>账号列表</h2><p>角色权限与团队归属</p></div></div>
-        <div className="table-scroll"><table className="data-table"><thead><tr><th>用户</th><th>账号</th><th>角色</th><th>所属团队</th><th>手机</th><th>状态</th><th/></tr></thead><tbody>
-          {state.users.map((user) => (
-            <tr key={user.id}>
-              <td><div className="member-cell"><span>{user.avatar}</span><div><strong>{user.name}</strong><small>{user.id}</small></div></div></td>
-              <td>{user.account}</td><td>{roleLabel[user.role]}</td><td>{state.teams.find((team) => team.id === user.teamId)?.name ?? "平台"}</td><td>{user.phone}</td><td><StatusBadge label="正常" tone="success"/></td>
-              <td><button className="table-action" onClick={(event) => { editTriggerRef.current = event.currentTarget; setSelectedUser(user); }}>配置</button></td>
-            </tr>
+        <article>
+          <Users size={22} />
+          <span>
+            <strong>{accounts.length}</strong>
+            <small>登录账号</small>
+          </span>
+        </article>
+        <article>
+          <ShieldCheck size={22} />
+          <span>
+            <strong>{state.teams.length}</strong>
+            <small>运营团队</small>
+          </span>
+        </article>
+        <div>
+          {state.teams.map((team) => (
+            <span key={team.id}>
+              <strong>{team.name}</strong>
+              <small>
+                {team.memberIds.length + 1} 名成员 · ¥
+                {team.unitPricePerMinute}/分钟
+              </small>
+            </span>
           ))}
-        </tbody></table></div>
+        </div>
+      </div>
+
+      <section className="content-card table-card">
+        <div className="card-heading">
+          <div>
+            <h2>账号列表</h2>
+            <p>账号状态、角色权限与团队归属</p>
+          </div>
+        </div>
+        <div className="filter-bar account-filter-bar">
+          <label className="search-field">
+            <Search size={15} />
+            <span className="sr-only">搜索账号</span>
+            <input
+              aria-label="搜索账号"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="搜索显示名称或用户名"
+            />
+          </label>
+          <select
+            aria-label="角色筛选"
+            value={roleFilter}
+            onChange={(event) =>
+              setRoleFilter(event.target.value as Role | "all")
+            }
+          >
+            <option value="all">全部角色</option>
+            <option value="admin">管理员</option>
+            <option value="leader">团长</option>
+            <option value="collector">数采人员</option>
+          </select>
+          <select
+            aria-label="状态筛选"
+            value={statusFilter}
+            onChange={(event) =>
+              setStatusFilter(
+                event.target.value as AccountStatus | "all",
+              )
+            }
+          >
+            <option value="all">全部状态</option>
+            <option value="active">已启用</option>
+            <option value="disabled">已停用</option>
+          </select>
+          <span className="filter-count">
+            共 {filteredAccounts.length} 个账号
+          </span>
+        </div>
+        <div className="table-scroll">
+          <table className="data-table account-table">
+            <thead>
+              <tr>
+                <th>账号</th>
+                <th>用户名</th>
+                <th>角色</th>
+                <th>所属团队</th>
+                <th>状态</th>
+                <th>更新时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredAccounts.map((account) => (
+                <tr key={account.id}>
+                  <td>
+                    <div className="member-cell">
+                      <span>{account.displayName.slice(0, 1)}</span>
+                      <div>
+                        <strong>{account.displayName}</strong>
+                        <small>{account.id}</small>
+                      </div>
+                    </div>
+                  </td>
+                  <td>{account.username}</td>
+                  <td>{roleLabel[account.role]}</td>
+                  <td>
+                    {state.teams.find(
+                      (team) => team.id === account.teamId,
+                    )?.name ?? "平台"}
+                  </td>
+                  <td>
+                    <StatusBadge
+                      label={
+                        account.status === "active"
+                          ? "已启用"
+                          : "已停用"
+                      }
+                      tone={
+                        account.status === "active"
+                          ? "success"
+                          : "neutral"
+                      }
+                    />
+                  </td>
+                  <td>{formatUpdatedAt(account.updatedAt)}</td>
+                  <td>
+                    <div className="account-row-actions">
+                      <button
+                        className="table-action"
+                        onClick={(event) => {
+                          rememberActionTrigger(event.currentTarget);
+                          setEditTarget(account);
+                        }}
+                      >
+                        编辑
+                      </button>
+                      <button
+                        className="table-action"
+                        onClick={(event) => {
+                          rememberActionTrigger(event.currentTarget);
+                          setResetTarget(account);
+                        }}
+                      >
+                        重置密码
+                      </button>
+                      <button
+                        className="table-action"
+                        disabled={
+                          account.id === currentUser.id &&
+                          account.status === "active"
+                        }
+                        title={
+                          account.id === currentUser.id &&
+                          account.status === "active"
+                            ? "不能停用当前登录账号"
+                            : undefined
+                        }
+                        onClick={(event) => {
+                          rememberActionTrigger(event.currentTarget);
+                          setStatusTarget(account);
+                        }}
+                      >
+                        {account.status === "active" ? "停用" : "启用"}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {filteredAccounts.length === 0 && (
+            <div className="empty-state">
+              <strong>没有匹配账号</strong>
+              <span>请调整搜索词或筛选条件</span>
+            </div>
+          )}
+        </div>
       </section>
-      {createOpen && <UserFormModal open mode="create" onClose={() => setCreateOpen(false)} returnFocusRef={createTriggerRef} />}
-      {selectedUser && <UserFormModal open mode="edit" user={selectedUser} onClose={() => setSelectedUser(undefined)} returnFocusRef={editTriggerRef} />}
+
+      {createOpen && (
+        <UserFormModal
+          open
+          mode="create"
+          onCreate={create}
+          onUpdate={update}
+          onClose={() => setCreateOpen(false)}
+          returnFocusRef={createTriggerRef}
+        />
+      )}
+      {editTarget && (
+        <UserFormModal
+          open
+          mode="edit"
+          account={editTarget}
+          onCreate={create}
+          onUpdate={update}
+          onClose={() => setEditTarget(undefined)}
+          returnFocusRef={actionTriggerRef}
+        />
+      )}
+      {resetTarget && (
+        <ResetPasswordModal
+          account={resetTarget}
+          onClose={() => setResetTarget(undefined)}
+          returnFocusRef={actionTriggerRef}
+          onReset={async (password) => {
+            const result = await accountApi.resetAccountPassword(
+              resetTarget.id,
+              password,
+            );
+            notify("success", "账号密码已重置");
+            if (result.reauthenticate) {
+              window.location.assign("/login");
+            }
+          }}
+        />
+      )}
+      {statusTarget && (
+        <AccountStatusModal
+          account={statusTarget}
+          onClose={() => setStatusTarget(undefined)}
+          returnFocusRef={actionTriggerRef}
+          onConfirm={async () => {
+            const nextStatus =
+              statusTarget.status === "active"
+                ? "disabled"
+                : "active";
+            const account = await accountApi.setAccountStatus(
+              statusTarget.id,
+              nextStatus,
+            );
+            synchronize(account);
+            notify(
+              "success",
+              nextStatus === "active" ? "账号已启用" : "账号已停用",
+            );
+          }}
+        />
+      )}
     </div>
   );
 }

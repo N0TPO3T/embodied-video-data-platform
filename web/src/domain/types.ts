@@ -1,4 +1,5 @@
 export type Role = "collector" | "leader" | "admin";
+export type AccountStatus = "active" | "disabled";
 
 export type ProcessingStatus =
   | "uploading"
@@ -24,6 +25,8 @@ export interface User {
   avatar: string;
   phone: string;
   alipayAccount?: string;
+  status: AccountStatus;
+  updatedAt: number;
 }
 
 export interface Team {

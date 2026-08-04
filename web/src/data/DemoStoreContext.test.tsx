@@ -1,14 +1,25 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import { DemoStoreProvider, useDemoStore } from "./DemoStoreContext";
+import type { AccountPublic } from "../auth/contracts";
+import {
+  accountToUser,
+  DemoStoreProvider,
+  useDemoStore,
+} from "./DemoStoreContext";
 
 function StoreProbe() {
-  const { currentUser, loginAs } = useDemoStore();
+  const { currentUser, syncAccount } = useDemoStore();
   return (
     <div>
       <span>{currentUser.name}</span>
-      <button onClick={() => loginAs("admin")}>switch</button>
+      <button
+        onClick={() =>
+          syncAccount({ ...currentUser, name: "测试人员1更新" })
+        }
+      >
+        sync current
+      </button>
     </div>
   );
 }
@@ -16,10 +27,6 @@ function StoreProbe() {
 function WorkflowProbe() {
   const {
     state,
-    loginAs,
-    inviteMember,
-    addUser,
-    updateUser,
     createRuleVersion,
     updateLabel,
     createSettlementBatch,
@@ -35,26 +42,6 @@ function WorkflowProbe() {
       <span>交付 {state.deliveryPackages.length}</span>
       <button
         onClick={() => {
-          loginAs("leader");
-          inviteMember({ name: "苏禾", phone: "13812345678" });
-        }}
-      >
-        invite
-      </button>
-      <button
-        onClick={() => {
-          loginAs("admin");
-          const created = addUser({
-            name: "沈舟",
-            account: "shenzhou",
-            role: "collector",
-            teamId: "TEAM-01",
-          });
-          updateUser({
-            userId: created.id,
-            role: "collector",
-            teamId: "TEAM-02",
-          });
           createRuleVersion({
             version: "RULE-2026-09",
             passThreshold: 65,
@@ -71,6 +58,23 @@ function WorkflowProbe() {
   );
 }
 
+function AuthenticatedProbe({
+  account,
+}: {
+  account: AccountPublic;
+}) {
+  const { currentUser, state, syncAccount } = useDemoStore();
+  return (
+    <div>
+      <span>当前 {currentUser.name}</span>
+      <span>用户 {state.users.length}</span>
+      <button onClick={() => syncAccount(accountToUser(account))}>
+        sync
+      </button>
+    </div>
+  );
+}
+
 describe("DemoStoreProvider", () => {
   it("re-renders consumers when the store state changes", async () => {
     const user = userEvent.setup();
@@ -80,9 +84,11 @@ describe("DemoStoreProvider", () => {
       </DemoStoreProvider>,
     );
 
-    expect(screen.getByText("林晓雨")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "switch" }));
-    expect(screen.getByText("陈屿")).toBeVisible();
+    expect(screen.getByText("测试人员1")).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: "sync current" }),
+    );
+    expect(screen.getByText("测试人员1更新")).toBeVisible();
   });
 
   it("requires the hook to be used within the provider", () => {
@@ -91,20 +97,54 @@ describe("DemoStoreProvider", () => {
     );
   });
 
+  it("hydrates only the server-scoped account snapshot", async () => {
+    const user = userEvent.setup();
+    const admin: AccountPublic = {
+      id: "U-ADMIN-01",
+      displayName: "管理员",
+      username: "admin",
+      role: "admin",
+      status: "active",
+      updatedAt: 1_722_708_000_000,
+    };
+    const secondAdmin: AccountPublic = {
+      ...admin,
+      id: "U-ADMIN-02",
+      displayName: "管理员2",
+      username: "admin2",
+    };
+
+    render(
+      <DemoStoreProvider currentAccount={admin} accounts={[admin]}>
+        <AuthenticatedProbe account={secondAdmin} />
+      </DemoStoreProvider>,
+    );
+
+    expect(screen.getByText("当前 管理员")).toBeVisible();
+    expect(screen.getByText("用户 1")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "sync" }));
+    expect(screen.getByText("用户 2")).toBeVisible();
+  });
+
   it("exposes all session workflow commands and publishes their state", async () => {
     const user = userEvent.setup();
+    const admin: AccountPublic = {
+      id: "U-ADMIN-01",
+      displayName: "管理员",
+      username: "admin",
+      role: "admin",
+      status: "active",
+      updatedAt: 1_722_708_000_000,
+    };
     render(
-      <DemoStoreProvider>
+      <DemoStoreProvider currentAccount={admin} accounts={[admin]}>
         <WorkflowProbe />
       </DemoStoreProvider>,
     );
 
-    expect(screen.getByText("用户 8")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "invite" }));
-    expect(screen.getByText("用户 9")).toBeVisible();
-
+    expect(screen.getByText("用户 1")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "configure" }));
-    expect(screen.getByText("用户 10")).toBeVisible();
+    expect(screen.getByText("用户 1")).toBeVisible();
     expect(screen.getByText("规则 RULE-2026-09")).toBeVisible();
     expect(screen.getByText("标签 家庭烹饪")).toBeVisible();
     expect(screen.getByText("结算 3")).toBeVisible();

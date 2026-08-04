@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import * as accountApi from "../auth/client/accountApi";
 import { useDemoStore } from "../data/DemoStoreContext";
 import type { Role } from "../domain/types";
 import { LoginPage } from "../features/auth/LoginPage";
@@ -50,20 +51,24 @@ export function PlatformApp({ initialPath }: { initialPath: string }) {
 
 function PlatformContent({ initialPath }: { initialPath: string }) {
   const [path, setPath] = useState(initialPath || "/");
-  const { currentUser, loginAs } = useDemoStore();
+  const { currentUser } = useDemoStore();
 
   function navigate(nextPath: string) {
     window.history.pushState({}, "", nextPath);
     setPath(nextPath);
   }
 
-  function enter(role: Role) {
-    loginAs(role);
-    navigate(roleHome[role]);
-  }
-
   if (path === "/") return <PublicHomePage navigate={navigate} />;
-  if (path === "/login") return <LoginPage onEnter={enter} navigate={navigate} />;
+  if (path === "/login") {
+    return (
+      <LoginPage
+        navigate={navigate}
+        onAuthenticated={({ homePath }) => {
+          window.location.assign(homePath);
+        }}
+      />
+    );
+  }
 
   const gatedRole = requiredRole(path);
   const safePath = gatedRole && gatedRole !== currentUser.role ? roleHome[currentUser.role] : path;
@@ -101,7 +106,14 @@ function PlatformContent({ initialPath }: { initialPath: string }) {
   }
 
   return (
-    <DashboardShell currentPath={safePath} navigate={navigate}>
+    <DashboardShell
+      currentPath={safePath}
+      navigate={navigate}
+      onLogout={async () => {
+        await accountApi.logout();
+        window.location.assign("/login");
+      }}
+    >
       {page}
     </DashboardShell>
   );
