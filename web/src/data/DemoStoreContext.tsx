@@ -15,7 +15,6 @@ import {
   demoSeed,
   type DeliveryPackageInput,
   type DemoStore,
-  type InviteMemberInput,
   type RuleVersionInput,
   type UpdateLabelInput,
 } from "./demoStore";
@@ -24,7 +23,6 @@ type DemoStoreValue = {
   state: ReturnType<DemoStore["getState"]>;
   currentUser: ReturnType<DemoStore["getState"]>["users"][number];
   currentTeam?: ReturnType<DemoStore["getState"]>["teams"][number];
-  inviteMember(input: InviteMemberInput): ReturnType<DemoStore["inviteMember"]>;
   syncAccount(user: User): void;
   createRuleVersion(
     input: RuleVersionInput,
@@ -115,7 +113,6 @@ export function DemoStoreProvider({
         state,
         currentUser,
         currentTeam,
-        inviteMember: (input) => store.inviteMember(input),
         syncAccount: (user) => store.syncAccount(user),
         createRuleVersion: (input) => store.createRuleVersion(input),
         updateLabel: (input) => store.updateLabel(input),

@@ -84,7 +84,7 @@ describe("DemoStoreProvider", () => {
       </DemoStoreProvider>,
     );
 
-    expect(screen.getByText("林晓雨")).toBeVisible();
+    expect(screen.getByText("测试人员1")).toBeVisible();
     await user.click(
       screen.getByRole("button", { name: "sync current" }),
     );
