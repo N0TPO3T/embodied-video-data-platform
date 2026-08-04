@@ -9,7 +9,6 @@ import type {
 import type { AccountStatus, Role } from "../../domain/types";
 import { hashPassword } from "../password";
 import {
-  normalizeUsername,
   validateAccountFields,
   validatePassword,
 } from "../validation";

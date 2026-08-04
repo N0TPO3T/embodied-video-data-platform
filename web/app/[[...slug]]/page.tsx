@@ -1,6 +1,5 @@
 import { PlatformApp } from "@/src/app/PlatformApp";
 import { resolveRouteAccess } from "@/src/auth/server/access";
-import { getRuntimeServices } from "@/src/auth/server/runtime";
 import { DemoStoreProvider } from "@/src/data/DemoStoreContext";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -29,6 +28,7 @@ export default async function Page({
     );
   }
 
+  const { getRuntimeServices } = await import("@/src/auth/server/runtime");
   const services = await getRuntimeServices();
   const currentAccount = await services.auth.authenticate(sessionToken);
   const access = resolveRouteAccess(initialPath, currentAccount);
