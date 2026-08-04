@@ -13,13 +13,11 @@ import {
   alignAccountTeams,
   createDemoStore,
   demoSeed,
-  type AddUserInput,
   type DeliveryPackageInput,
   type DemoStore,
   type InviteMemberInput,
   type RuleVersionInput,
   type UpdateLabelInput,
-  type UpdateUserInput,
 } from "./demoStore";
 
 type DemoStoreValue = {
@@ -27,8 +25,6 @@ type DemoStoreValue = {
   currentUser: ReturnType<DemoStore["getState"]>["users"][number];
   currentTeam?: ReturnType<DemoStore["getState"]>["teams"][number];
   inviteMember(input: InviteMemberInput): ReturnType<DemoStore["inviteMember"]>;
-  addUser(input: AddUserInput): ReturnType<DemoStore["addUser"]>;
-  updateUser(input: UpdateUserInput): ReturnType<DemoStore["updateUser"]>;
   syncAccount(user: User): void;
   createRuleVersion(
     input: RuleVersionInput,
@@ -120,8 +116,6 @@ export function DemoStoreProvider({
         currentUser,
         currentTeam,
         inviteMember: (input) => store.inviteMember(input),
-        addUser: (input) => store.addUser(input),
-        updateUser: (input) => store.updateUser(input),
         syncAccount: (user) => store.syncAccount(user),
         createRuleVersion: (input) => store.createRuleVersion(input),
         updateLabel: (input) => store.updateLabel(input),

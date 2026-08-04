@@ -15,52 +15,6 @@ function renderAdmin(path: string) {
   );
 }
 
-describe("administrator user configuration", () => {
-  it("creates a user and updates the live account list", async () => {
-    const user = userEvent.setup();
-    renderAdmin("/admin/people");
-
-    await user.click(await screen.findByRole("button", { name: "新增用户" }));
-    await user.type(screen.getByLabelText("姓名"), "沈舟");
-    await user.type(screen.getByLabelText("登录账号"), "shenzhou");
-    await user.selectOptions(screen.getByLabelText("角色"), "collector");
-    await user.selectOptions(screen.getByLabelText("所属团队"), "TEAM-01");
-    await user.click(screen.getByRole("button", { name: "创建用户" }));
-
-    expect(screen.getByText("沈舟")).toBeVisible();
-    expect(screen.getByText("用户已创建")).toBeVisible();
-    expect(screen.getByText("9")).toBeVisible();
-  });
-
-  it("shows duplicate-account errors inline", async () => {
-    const user = userEvent.setup();
-    renderAdmin("/admin/people");
-
-    await user.click(await screen.findByRole("button", { name: "新增用户" }));
-    await user.type(screen.getByLabelText("姓名"), "重复账号");
-    await user.type(screen.getByLabelText("登录账号"), "linxiaoyu");
-    await user.selectOptions(screen.getByLabelText("角色"), "collector");
-    await user.selectOptions(screen.getByLabelText("所属团队"), "TEAM-01");
-    await user.click(screen.getByRole("button", { name: "创建用户" }));
-
-    expect(screen.getByRole("alert")).toHaveTextContent("登录账号已存在");
-    expect(screen.getByRole("dialog", { name: "新增用户" })).toBeVisible();
-  });
-
-  it("moves a collector to another team", async () => {
-    const user = userEvent.setup();
-    renderAdmin("/admin/people");
-
-    const row = (await screen.findByText("林晓雨")).closest("tr")!;
-    await user.click(within(row).getByRole("button", { name: "配置" }));
-    await user.selectOptions(screen.getByLabelText("所属团队"), "TEAM-02");
-    await user.click(screen.getByRole("button", { name: "保存配置" }));
-
-    expect(within(row).getByText("远山二队")).toBeVisible();
-    expect(screen.getByText("用户配置已更新")).toBeVisible();
-  });
-});
-
 describe("administrator rule configuration", () => {
   it("publishes a new active rule version", async () => {
     const user = userEvent.setup();

@@ -27,8 +27,6 @@ function StoreProbe() {
 function WorkflowProbe() {
   const {
     state,
-    addUser,
-    updateUser,
     createRuleVersion,
     updateLabel,
     createSettlementBatch,
@@ -44,17 +42,6 @@ function WorkflowProbe() {
       <span>交付 {state.deliveryPackages.length}</span>
       <button
         onClick={() => {
-          const created = addUser({
-            name: "沈舟",
-            account: "shenzhou",
-            role: "collector",
-            teamId: "TEAM-01",
-          });
-          updateUser({
-            userId: created.id,
-            role: "collector",
-            teamId: "TEAM-02",
-          });
           createRuleVersion({
             version: "RULE-2026-09",
             passThreshold: 65,
@@ -157,7 +144,7 @@ describe("DemoStoreProvider", () => {
 
     expect(screen.getByText("用户 1")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "configure" }));
-    expect(screen.getByText("用户 2")).toBeVisible();
+    expect(screen.getByText("用户 1")).toBeVisible();
     expect(screen.getByText("规则 RULE-2026-09")).toBeVisible();
     expect(screen.getByText("标签 家庭烹饪")).toBeVisible();
     expect(screen.getByText("结算 3")).toBeVisible();

@@ -1,4 +1,10 @@
-import type { AccountPublic } from "../contracts";
+import type { AccountStatus } from "../../domain/types";
+import type {
+  AccountAuditLog,
+  AccountPublic,
+  CreateAccountInput,
+  UpdateAccountInput,
+} from "../contracts";
 
 export class AccountApiError extends Error {
   constructor(
@@ -70,4 +76,72 @@ export function logout(): Promise<void> {
   return requestJson("/api/auth/logout", {
     method: "POST",
   });
+}
+
+export async function listAccounts(): Promise<AccountPublic[]> {
+  const result = await requestJson<{ accounts: AccountPublic[] }>(
+    "/api/admin/accounts",
+  );
+  return result.accounts;
+}
+
+export async function createAccount(
+  input: CreateAccountInput,
+): Promise<AccountPublic> {
+  const result = await requestJson<{ account: AccountPublic }>(
+    "/api/admin/accounts",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+  );
+  return result.account;
+}
+
+export async function updateAccount(
+  id: string,
+  input: UpdateAccountInput,
+): Promise<AccountPublic> {
+  const result = await requestJson<{ account: AccountPublic }>(
+    `/api/admin/accounts/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    },
+  );
+  return result.account;
+}
+
+export function resetAccountPassword(
+  id: string,
+  password: string,
+): Promise<{ reauthenticate: boolean }> {
+  return requestJson(
+    `/api/admin/accounts/${encodeURIComponent(id)}/reset-password`,
+    {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    },
+  );
+}
+
+export async function setAccountStatus(
+  id: string,
+  status: AccountStatus,
+): Promise<AccountPublic> {
+  const result = await requestJson<{ account: AccountPublic }>(
+    `/api/admin/accounts/${encodeURIComponent(id)}/status`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    },
+  );
+  return result.account;
+}
+
+export async function listAccountAudit(): Promise<AccountAuditLog[]> {
+  const result = await requestJson<{ logs: AccountAuditLog[] }>(
+    "/api/admin/account-audit",
+  );
+  return result.logs;
 }
