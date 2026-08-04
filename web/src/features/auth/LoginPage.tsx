@@ -1,40 +1,127 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, Database, ShieldCheck, Upload, Users } from "lucide-react";
+import {
+  ArrowLeft,
+  Database,
+  LogIn,
+  ShieldCheck,
+} from "lucide-react";
+import { useRef, useState, type FormEvent } from "react";
+import {
+  AccountApiError,
+  login,
+} from "../../auth/client/accountApi";
+import type { AccountPublic } from "../../auth/contracts";
 import { BrandMark } from "../../components/BrandMark";
-import type { Role } from "../../domain/types";
 
-const accounts = [
-  { role: "collector" as Role, title: "数采人员", name: "林晓雨", detail: "上传视频、查看质检与收入", icon: Upload, action: "以数采人员身份进入" },
-  { role: "leader" as Role, title: "团长", name: "周明远", detail: "管理成员、团队数据与结算前复核", icon: Users, action: "以团长身份进入" },
-  { role: "admin" as Role, title: "平台管理员", name: "陈屿", detail: "管理全平台数据、规则、结算与提现", icon: ShieldCheck, action: "以管理员身份进入" },
-];
+type LoginResult = {
+  user: AccountPublic;
+  homePath: string;
+};
 
-export function LoginPage({ onEnter, navigate }: { onEnter(role: Role): void; navigate(path: string): void }) {
+export function LoginPage({
+  navigate,
+  onAuthenticated,
+}: {
+  navigate(path: string): void;
+  onAuthenticated(result: LoginResult): void;
+}) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    setError("");
+
+    try {
+      const result = await login(username, password);
+      onAuthenticated(result);
+    } catch (caught) {
+      setError(
+        caught instanceof AccountApiError
+          ? caught.message
+          : "登录失败，请稍后重试",
+      );
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  }
+
   return (
     <div className="login-page">
       <div className="login-aside">
         <BrandMark />
         <div className="login-aside-copy">
-          <span className="eyebrow"><Database size={15} /> Embodied Data Platform</span>
-          <h1>从视频提交到<br />数据资产的完整闭环</h1>
-          <p>一个账号入口，按角色进入不同工作台，完整演示数据上传、AI 质检、人工复核、结算和资产入库。</p>
+          <span className="eyebrow">
+            <Database size={15} /> Embodied Data Platform
+          </span>
+          <h1>
+            从视频提交到
+            <br />
+            数据资产的完整闭环
+          </h1>
+          <p>
+            使用平台账号登录，系统会按照账号角色进入对应工作台。
+            视频业务流程当前仍使用演示数据。
+          </p>
         </div>
-        <button className="back-link" onClick={() => navigate("/")}><ArrowLeft size={16} /> 返回官网</button>
+        <button className="back-link" onClick={() => navigate("/")}>
+          <ArrowLeft size={16} /> 返回官网
+        </button>
       </div>
       <main className="login-panel">
         <div className="login-panel-inner">
-          <div className="login-heading"><span>可点击产品演示</span><h2>选择演示身份</h2><p>无需输入密码，可随时在工作台切换角色。</p></div>
-          <div className="account-list">
-            {accounts.map(({ role, title, name, detail, icon: Icon, action }) => (
-              <button key={role} className="account-card" aria-label={action} onClick={() => onEnter(role)}>
-                <span className={`account-icon account-${role}`}><Icon size={21} /></span>
-                <div><strong>{title}<em>{name}</em></strong><small>{detail}</small></div>
-                <ArrowRight size={18} />
-              </button>
-            ))}
+          <div className="login-heading">
+            <span>账号登录</span>
+            <h2>登录数据平台</h2>
+            <p>请输入管理员分配的用户名和密码。</p>
           </div>
-          <div className="login-note"><ShieldCheck size={16} /> 此版本仅使用演示数据，不包含真实个人或资金信息。</div>
+          <form className="login-form" onSubmit={submit}>
+            <label>
+              <span>用户名</span>
+              <input
+                name="username"
+                autoComplete="username"
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              <span>密码</span>
+              <input
+                name="password"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                required
+              />
+            </label>
+            {error && (
+              <p className="form-alert" role="alert">
+                {error}
+              </p>
+            )}
+            <button
+              className="button button-primary login-submit"
+              type="submit"
+              disabled={submitting}
+            >
+              <LogIn size={17} />
+              {submitting ? "登录中…" : "登录"}
+            </button>
+          </form>
+          <div className="login-note">
+            <ShieldCheck size={16} />
+            登录失败次数过多时，账号会被临时锁定以保护安全。
+          </div>
         </div>
       </main>
     </div>

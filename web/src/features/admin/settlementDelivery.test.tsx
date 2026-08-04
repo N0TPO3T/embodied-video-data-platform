@@ -1,21 +1,16 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useEffect } from "react";
 import { describe, expect, it } from "vitest";
 import { PlatformApp } from "../../app/PlatformApp";
-import { DemoStoreProvider, useDemoStore } from "../../data/DemoStoreContext";
-
-function AdminBootstrap({ path }: { path: string }) {
-  const { loginAs } = useDemoStore();
-  useEffect(() => loginAs("admin"), [loginAs]);
-  return <PlatformApp initialPath={path} />;
-}
+import { DemoStoreProvider } from "../../data/DemoStoreContext";
+import { accountForRole, demoAccounts } from "../../test/accountFixtures";
 
 function renderAdmin(path: string) {
   window.history.replaceState({}, "", path);
+  const admin = accountForRole("admin");
   return render(
-    <DemoStoreProvider>
-      <AdminBootstrap path={path} />
+    <DemoStoreProvider currentAccount={admin} accounts={demoAccounts}>
+      <PlatformApp initialPath={path} />
     </DemoStoreProvider>,
   );
 }

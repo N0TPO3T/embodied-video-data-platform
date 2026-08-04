@@ -1,7 +1,7 @@
 "use client";
 
-import { Bell, ChevronDown, Menu, X } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { Bell, LogOut, Menu, X } from "lucide-react";
+import { useRef, useState, type ReactNode } from "react";
 import { navigationByRole } from "../app/navigation";
 import { BrandMark } from "../components/BrandMark";
 import { NotificationPanel } from "../components/NotificationPanel";
@@ -17,21 +17,38 @@ const roleLabel = {
 export function DashboardShell({
   currentPath,
   navigate,
+  onLogout,
   children,
 }: {
   currentPath: string;
   navigate(path: string): void;
+  onLogout(): Promise<void> | void;
   children: ReactNode;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const { currentUser, loginAs } = useDemoStore();
-  const { unreadCount } = useInteractions();
+  const [loggingOut, setLoggingOut] = useState(false);
+  const loggingOutRef = useRef(false);
+  const { currentUser } = useDemoStore();
+  const { notify, unreadCount } = useInteractions();
   const navigation = navigationByRole[currentUser.role];
 
   function go(path: string) {
     setMobileOpen(false);
     navigate(path);
+  }
+
+  async function signOut() {
+    if (loggingOutRef.current) return;
+    loggingOutRef.current = true;
+    setLoggingOut(true);
+    try {
+      await onLogout();
+    } catch {
+      notify("error", "退出登录失败，请稍后重试");
+      loggingOutRef.current = false;
+      setLoggingOut(false);
+    }
   }
 
   return (
@@ -107,27 +124,19 @@ export function DashboardShell({
               {unreadCount > 0 && <span />}
             </button>
             {notificationsOpen && <NotificationPanel />}
-            <label className="demo-role-switcher">
-              <span>演示角色</span>
-              <select
-                aria-label="演示角色"
-                value={currentUser.role}
-                onChange={(event) => {
-                  const role = event.target.value as keyof typeof roleLabel;
-                  loginAs(role);
-                  go(role === "collector" ? "/collector" : role === "leader" ? "/team" : "/admin");
-                }}
-              >
-                <option value="collector">数采人员</option>
-                <option value="leader">团长</option>
-                <option value="admin">平台管理员</option>
-              </select>
-              <ChevronDown size={14} />
-            </label>
             <div className="user-chip">
               <span>{currentUser.avatar}</span>
               <div><strong>{currentUser.name}</strong><small>{roleLabel[currentUser.role]}</small></div>
             </div>
+            <button
+              className="logout-button"
+              type="button"
+              onClick={signOut}
+              disabled={loggingOut}
+            >
+              <LogOut size={15} />
+              {loggingOut ? "退出中…" : "退出登录"}
+            </button>
           </div>
         </header>
         <main className="dashboard-content">{children}</main>

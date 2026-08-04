@@ -125,6 +125,30 @@ describe("upload and withdrawal workflows", () => {
 });
 
 describe("team member and user management workflows", () => {
+  it("synchronizes a persistent account into its assigned team", () => {
+    const store = createDemoStore(demoSeed);
+
+    store.syncAccount({
+      id: "U-COL-NEW",
+      name: "测试人员6",
+      account: "ceshirenyuan6",
+      role: "collector",
+      teamId: "TEAM-02",
+      avatar: "测",
+      phone: "未设置",
+      status: "active",
+      updatedAt: 1_722_708_100_000,
+    });
+
+    expect(
+      store.getState().users.find((user) => user.id === "U-COL-NEW"),
+    ).toMatchObject({
+      account: "ceshirenyuan6",
+      teamId: "TEAM-02",
+    });
+    expect(store.getState().teams[1].memberIds).toContain("U-COL-NEW");
+  });
+
   it("invites a collector into the leader's own team", () => {
     const store = createDemoStore(demoSeed);
     store.loginAs("leader");

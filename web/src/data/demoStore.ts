@@ -18,6 +18,33 @@ import { demoSeed, type DemoState } from "./demoData";
 
 type Listener = () => void;
 
+function alignTeamsWithUsers(
+  teams: DemoState["teams"],
+  users: User[],
+): DemoState["teams"] {
+  return teams.map((team) => {
+    const assigned = users.filter((user) => user.teamId === team.id);
+    const leaders = assigned.filter((user) => user.role === "leader");
+    const primaryLeader =
+      leaders.find((user) => user.id === team.leaderId) ?? leaders[0];
+    const leaderId = primaryLeader?.id ?? team.leaderId;
+    return {
+      ...team,
+      leaderId,
+      memberIds: assigned
+        .filter((user) => user.id !== leaderId)
+        .map((user) => user.id),
+    };
+  });
+}
+
+export function alignAccountTeams(
+  teams: DemoState["teams"],
+  users: User[],
+): DemoState["teams"] {
+  return alignTeamsWithUsers(teams, users);
+}
+
 export type InviteMemberInput = { name: string; phone: string };
 export type AddUserInput = {
   name: string;
@@ -65,6 +92,23 @@ export class DemoStore {
     const user = this.state.users.find((item) => item.role === role);
     if (!user) throw new Error("演示账号不存在");
     this.state = { ...this.state, currentUserId: user.id };
+    this.notify();
+  }
+
+  syncAccount(user: User): void {
+    const existing = this.state.users.some(
+      (item) => item.id === user.id,
+    );
+    const users = existing
+      ? this.state.users.map((item) =>
+          item.id === user.id ? user : item,
+        )
+      : [...this.state.users, user];
+    this.state = {
+      ...this.state,
+      users,
+      teams: alignTeamsWithUsers(this.state.teams, users),
+    };
     this.notify();
   }
 

@@ -1,0 +1,46 @@
+import { describe, expect, it } from "vitest";
+import { resolveRouteAccess } from "./access";
+import { makeAccountPublic } from "./testFactories";
+
+describe("server route access", () => {
+  it("allows public pages without an account", () => {
+    expect(resolveRouteAccess("/", null)).toEqual({ kind: "allow" });
+    expect(resolveRouteAccess("/login", null)).toEqual({
+      kind: "allow",
+    });
+  });
+
+  it("redirects anonymous dashboard requests to login", () => {
+    expect(resolveRouteAccess("/admin", null)).toEqual({
+      kind: "redirect",
+      location: "/login",
+    });
+    expect(resolveRouteAccess("/unknown", null)).toEqual({
+      kind: "redirect",
+      location: "/login",
+    });
+  });
+
+  it("redirects authenticated users away from login", () => {
+    expect(
+      resolveRouteAccess(
+        "/login",
+        makeAccountPublic({ role: "leader" }),
+      ),
+    ).toEqual({
+      kind: "redirect",
+      location: "/team",
+    });
+  });
+
+  it("allows only the matching role workspace", () => {
+    const collector = makeAccountPublic({ role: "collector" });
+    expect(
+      resolveRouteAccess("/collector/submissions", collector),
+    ).toEqual({ kind: "allow" });
+    expect(resolveRouteAccess("/admin", collector)).toEqual({
+      kind: "redirect",
+      location: "/collector",
+    });
+  });
+});

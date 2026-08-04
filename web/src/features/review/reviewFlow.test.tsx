@@ -1,20 +1,19 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useEffect } from "react";
 import { describe, expect, it } from "vitest";
 import { PlatformApp } from "../../app/PlatformApp";
-import { DemoStoreProvider, useDemoStore } from "../../data/DemoStoreContext";
+import { DemoStoreProvider } from "../../data/DemoStoreContext";
 import type { Role } from "../../domain/types";
-
-function RoleBootstrap({ role, path }: { role: Role; path: string }) {
-  const { loginAs } = useDemoStore();
-  useEffect(() => loginAs(role), [loginAs, role]);
-  return <PlatformApp initialPath={path} />;
-}
+import { accountForRole, demoAccounts } from "../../test/accountFixtures";
 
 function renderRole(path: string, role: Role) {
   window.history.replaceState({}, "", path);
-  return render(<DemoStoreProvider><RoleBootstrap path={path} role={role} /></DemoStoreProvider>);
+  const account = accountForRole(role);
+  return render(
+    <DemoStoreProvider currentAccount={account} accounts={demoAccounts}>
+      <PlatformApp initialPath={path} />
+    </DemoStoreProvider>,
+  );
 }
 
 describe("review workflows", () => {
