@@ -52,6 +52,8 @@ export const demoSeed: DemoState = {
       avatar: "林",
       phone: "138****6218",
       alipayAccount: "lin***@example.com",
+      status: "active",
+      updatedAt: 1_722_708_000_000,
     },
     {
       id: "U-LEAD-01",
@@ -62,6 +64,8 @@ export const demoSeed: DemoState = {
       avatar: "周",
       phone: "139****1176",
       alipayAccount: "zhou***@example.com",
+      status: "active",
+      updatedAt: 1_722_708_000_000,
     },
     {
       id: "U-ADMIN-01",
@@ -70,6 +74,8 @@ export const demoSeed: DemoState = {
       role: "admin",
       avatar: "陈",
       phone: "137****0008",
+      status: "active",
+      updatedAt: 1_722_708_000_000,
     },
     {
       id: "U-COL-02",
@@ -79,6 +85,8 @@ export const demoSeed: DemoState = {
       teamId: "TEAM-02",
       avatar: "宋",
       phone: "136****8072",
+      status: "active",
+      updatedAt: 1_722_708_000_000,
     },
     {
       id: "U-COL-03",
@@ -88,6 +96,8 @@ export const demoSeed: DemoState = {
       teamId: "TEAM-01",
       avatar: "秦",
       phone: "135****3821",
+      status: "active",
+      updatedAt: 1_722_708_000_000,
     },
     {
       id: "U-COL-04",
@@ -97,6 +107,8 @@ export const demoSeed: DemoState = {
       teamId: "TEAM-01",
       avatar: "许",
       phone: "158****2507",
+      status: "active",
+      updatedAt: 1_722_708_000_000,
     },
     {
       id: "U-COL-05",
@@ -106,6 +118,8 @@ export const demoSeed: DemoState = {
       teamId: "TEAM-01",
       avatar: "陆",
       phone: "186****9163",
+      status: "active",
+      updatedAt: 1_722_708_000_000,
     },
     {
       id: "U-LEAD-02",
@@ -115,6 +129,8 @@ export const demoSeed: DemoState = {
       teamId: "TEAM-02",
       avatar: "顾",
       phone: "188****7113",
+      status: "active",
+      updatedAt: 1_722_708_000_000,
     },
   ],
   teams: [

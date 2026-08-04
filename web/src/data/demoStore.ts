@@ -96,6 +96,8 @@ export class DemoStore {
       teamId: current.teamId,
       avatar: name.slice(0, 1),
       phone,
+      status: "active",
+      updatedAt: now,
     };
 
     this.state = {
@@ -130,6 +132,8 @@ export class DemoStore {
       teamId: team?.id,
       avatar: name.slice(0, 1),
       phone: "未设置",
+      status: "active",
+      updatedAt: Date.now(),
     };
 
     let users = [...this.state.users, created];
