@@ -194,6 +194,7 @@ function errorResponse(error: unknown): Response {
     );
   }
 
+  console.error("Unexpected account API failure", error);
   return json(
     { code: "INTERNAL", error: "操作失败，请稍后重试" },
     { status: 500 },

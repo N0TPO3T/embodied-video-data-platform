@@ -158,6 +158,47 @@ describe("authentication HTTP handlers", () => {
     });
   });
 
+  it("logs unexpected runtime failures without exposing the request body", async () => {
+    const runtimeError = new Error("D1 accounts table is unavailable");
+    const errorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const handler = createLoginHandler(async () => {
+      throw runtimeError;
+    });
+
+    try {
+      const response = await handler(
+        new Request("https://app.test/api/auth/login", {
+          method: "POST",
+          headers: {
+            origin: "https://app.test",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            username: "admin",
+            password: TEST_PASSWORD,
+          }),
+        }),
+      );
+
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toEqual({
+        code: "INTERNAL",
+        error: "操作失败，请稍后重试",
+      });
+      expect(errorSpy).toHaveBeenCalledWith(
+        "Unexpected account API failure",
+        runtimeError,
+      );
+      expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(
+        TEST_PASSWORD,
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it("clears the current session cookie after a self password reset", async () => {
     const auth = authService();
     const accounts = accountService({
