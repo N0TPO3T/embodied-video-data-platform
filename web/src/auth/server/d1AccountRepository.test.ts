@@ -3,7 +3,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { verifyPassword } from "../password";
 import { ensureInitialAccounts } from "./bootstrapAccounts";
-import { createD1AccountRepository } from "./d1AccountRepository";
+import { createAuthService } from "./authService";
+import {
+  createD1AccountRepository,
+  ensureAccountSchema,
+} from "./d1AccountRepository";
 import {
   makeAccountRecord,
   makeAudit,
@@ -111,6 +115,34 @@ describe("D1 account repository", () => {
         iterations: admin!.passwordIterations,
       }),
     ).resolves.toBe(true);
+  });
+
+  it("initializes a blank production database before the first login", async () => {
+    const blank = await createTestD1({ migrate: false });
+
+    try {
+      await ensureAccountSchema(blank.db);
+      const repo = createD1AccountRepository(blank.db);
+      await ensureInitialAccounts(
+        repo,
+        initialTestCredentials,
+        1_722_700_000_000,
+      );
+
+      await expect(
+        createAuthService(repo).login(
+          "admin",
+          "test-password-admin",
+        ),
+      ).resolves.toMatchObject({
+        user: {
+          username: "admin",
+          role: "admin",
+        },
+      });
+    } finally {
+      await blank.dispose();
+    }
   });
 
   it("does not partially seed accounts from incomplete credentials", async () => {

@@ -55,6 +55,65 @@ const ACCOUNT_COLUMNS = `
 const PUBLIC_ACCOUNT_COLUMNS =
   "id, display_name, username, role, team_id, status, updated_at";
 
+const ACCOUNT_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS account_audit_logs (
+    id TEXT PRIMARY KEY NOT NULL,
+    actor_account_id TEXT NOT NULL,
+    actor_name TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target_account_id TEXT NOT NULL,
+    target_name TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_account_audit_created_at
+    ON account_audit_logs (created_at)`,
+  `CREATE TABLE IF NOT EXISTS accounts (
+    id TEXT PRIMARY KEY NOT NULL,
+    display_name TEXT NOT NULL,
+    username TEXT NOT NULL,
+    username_normalized TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    password_salt TEXT NOT NULL,
+    password_iterations INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    team_id TEXT,
+    status TEXT DEFAULT 'active' NOT NULL,
+    failed_attempt_count INTEGER DEFAULT 0 NOT NULL,
+    first_failed_at INTEGER,
+    locked_until INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_username_normalized
+    ON accounts (username_normalized)`,
+  `CREATE INDEX IF NOT EXISTS idx_accounts_team_id
+    ON accounts (team_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_accounts_role_status
+    ON accounts (role, status)`,
+  `CREATE TABLE IF NOT EXISTS auth_sessions (
+    token_hash TEXT PRIMARY KEY NOT NULL,
+    account_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    FOREIGN KEY (account_id) REFERENCES accounts (id)
+      ON UPDATE NO ACTION ON DELETE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_auth_sessions_account_id
+    ON auth_sessions (account_id)`,
+] as const;
+
+export async function ensureAccountSchema(
+  db: D1Database,
+): Promise<void> {
+  await db.batch(
+    ACCOUNT_SCHEMA_STATEMENTS.map((statement) =>
+      db.prepare(statement),
+    ),
+  );
+  await db.prepare("PRAGMA optimize").run();
+}
+
 function toAccountRecord(row: AccountRow): AccountRecord {
   return {
     id: row.id,

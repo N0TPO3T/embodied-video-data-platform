@@ -2,7 +2,10 @@ import { env } from "cloudflare:workers";
 import { createAccountService } from "./accountService";
 import { createAuthService } from "./authService";
 import { ensureInitialAccounts } from "./bootstrapAccounts";
-import { createD1AccountRepository } from "./d1AccountRepository";
+import {
+  createD1AccountRepository,
+  ensureAccountSchema,
+} from "./d1AccountRepository";
 
 export async function getRuntimeServices() {
   const runtimeEnv = env as typeof env & {
@@ -12,6 +15,7 @@ export async function getRuntimeServices() {
     throw new Error("Cloudflare D1 binding `DB` is unavailable");
   }
 
+  await ensureAccountSchema(runtimeEnv.DB);
   const repository = createD1AccountRepository(runtimeEnv.DB);
   await ensureInitialAccounts(
     repository,
