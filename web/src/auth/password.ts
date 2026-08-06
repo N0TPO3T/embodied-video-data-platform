@@ -1,4 +1,5 @@
-export const PASSWORD_ITERATIONS = 600_000;
+export const PASSWORD_ITERATIONS = 0;
+export const PASSWORD_STORAGE_MODE = "plaintext-prototype" as const;
 export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type StoredPassword = {
@@ -20,41 +21,6 @@ function encodeBase64Url(bytes: Uint8Array): string {
     .replace(/=+$/u, "");
 }
 
-function decodeBase64Url(value: string): Uint8Array {
-  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = normalized.padEnd(
-    normalized.length + ((4 - (normalized.length % 4)) % 4),
-    "=",
-  );
-  const binary = atob(padded);
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
-}
-
-async function derivePassword(
-  password: string,
-  salt: Uint8Array,
-  iterations: number,
-): Promise<Uint8Array> {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"],
-  );
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: "PBKDF2",
-      hash: "SHA-256",
-      salt: Uint8Array.from(salt),
-      iterations,
-    },
-    key,
-    256,
-  );
-  return new Uint8Array(bits);
-}
-
 export function constantTimeEqual(
   left: Uint8Array,
   right: Uint8Array,
@@ -71,13 +37,15 @@ export function constantTimeEqual(
 
 export async function hashPassword(
   password: string,
-  saltBytes = crypto.getRandomValues(new Uint8Array(16)),
+  saltBytes?: Uint8Array,
 ): Promise<StoredPassword> {
-  const salt = Uint8Array.from(saltBytes);
-  const hash = await derivePassword(password, salt, PASSWORD_ITERATIONS);
+  void saltBytes;
+  // TODO(production-auth): This prototype intentionally stores account
+  // passwords in plaintext. Before a real production rollout, replace this
+  // with a supported password-hashing scheme and migrate every saved account.
   return {
-    hash: encodeBase64Url(hash),
-    salt: encodeBase64Url(salt),
+    hash: password,
+    salt: "",
     iterations: PASSWORD_ITERATIONS,
   };
 }
@@ -86,14 +54,12 @@ export async function verifyPassword(
   password: string,
   stored: StoredPassword,
 ): Promise<boolean> {
-  try {
-    const salt = decodeBase64Url(stored.salt);
-    const expected = decodeBase64Url(stored.hash);
-    const actual = await derivePassword(password, salt, stored.iterations);
-    return constantTimeEqual(actual, expected);
-  } catch {
-    return false;
-  }
+  // TODO(production-auth): Remove plaintext comparison together with the
+  // prototype storage mode when password hashing is implemented.
+  return constantTimeEqual(
+    encoder.encode(password),
+    encoder.encode(stored.hash),
+  );
 }
 
 export function generateSessionToken(
