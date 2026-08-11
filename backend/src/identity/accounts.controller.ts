@@ -1,0 +1,91 @@
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Param,
+  Patch,
+  Post,
+  Res,
+  UseFilters,
+  UseGuards,
+} from "@nestjs/common";
+import type { Response } from "express";
+
+import type { PublicUser } from "../auth/auth.types.js";
+import { CurrentUser } from "../auth/current-user.decorator.js";
+import { clearSessionCookie } from "../auth/session-cookie.js";
+import { SessionGuard } from "../auth/session.guard.js";
+import { AllowedOriginGuard } from "../http/allowed-origin.guard.js";
+import { AccountsService } from "./accounts.service.js";
+import {
+  ChangeOwnPasswordDto,
+  CreateAccountDto,
+  ResetPasswordDto,
+  SetAccountStatusDto,
+  UpdateAccountDto,
+} from "./dto/account.dto.js";
+import { IdentityFailureFilter } from "./identity-failure.filter.js";
+
+@Controller("accounts")
+@UseGuards(SessionGuard)
+@UseFilters(IdentityFailureFilter)
+export class AccountsController {
+  constructor(private readonly accounts: AccountsService) {}
+
+  @Get()
+  async list(@CurrentUser() actor: PublicUser) {
+    return { accounts: await this.accounts.list(actor) };
+  }
+
+  @Post()
+  @UseGuards(AllowedOriginGuard)
+  async create(
+    @CurrentUser() actor: PublicUser,
+    @Body() input: CreateAccountDto,
+  ) {
+    return { account: await this.accounts.create(actor, input) };
+  }
+
+  @Patch(":id")
+  @UseGuards(AllowedOriginGuard)
+  async update(
+    @CurrentUser() actor: PublicUser,
+    @Param("id") id: string,
+    @Body() input: UpdateAccountDto,
+  ) {
+    return { account: await this.accounts.update(actor, id, input) };
+  }
+
+  @Post(":id/reset-password")
+  @UseGuards(AllowedOriginGuard)
+  resetPassword(
+    @CurrentUser() actor: PublicUser,
+    @Param("id") id: string,
+    @Body() input: ResetPasswordDto,
+  ) {
+    return this.accounts.resetPassword(actor, id, input.password);
+  }
+
+  @Post("me/change-password")
+  @HttpCode(204)
+  @UseGuards(AllowedOriginGuard)
+  async changeOwnPassword(
+    @CurrentUser() actor: PublicUser,
+    @Body() input: ChangeOwnPasswordDto,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<void> {
+    await this.accounts.changeOwnPassword(actor, input);
+    clearSessionCookie(response);
+  }
+
+  @Patch(":id/status")
+  @UseGuards(AllowedOriginGuard)
+  async setStatus(
+    @CurrentUser() actor: PublicUser,
+    @Param("id") id: string,
+    @Body() input: SetAccountStatusDto,
+  ) {
+    return { account: await this.accounts.setStatus(actor, id, input) };
+  }
+}
