@@ -138,6 +138,36 @@ describe("production-local identity bootstrap", () => {
     }
   });
 
+  it("preserves an existing team's operational fields while creating only missing teams", async () => {
+    // This fails if bootstrap upserts a pre-existing team and overwrites
+    // operational data that does not belong to identity initialization.
+    await dataSource.getRepository(TeamEntity).save({
+      id: "TEAM-01",
+      name: "保留的现场团队名称",
+      status: "disabled",
+      unitPricePerMinute: "456.7890",
+    });
+
+    const result = await bootstrapLocalIdentity({
+      dataSource,
+      mode: "create-if-empty",
+    });
+
+    expect(result).toEqual({
+      applied: true,
+      teamsCreated: 1,
+      accountsCreated: 8,
+    });
+    expect(await dataSource.getRepository(TeamEntity).findOneByOrFail({ id: "TEAM-01" }))
+      .toMatchObject({
+        name: "保留的现场团队名称",
+        status: "disabled",
+        unitPricePerMinute: "456.7890",
+      });
+    expect(await dataSource.getRepository(TeamEntity).findOneByOrFail({ id: "TEAM-02" }))
+      .toMatchObject({ id: "TEAM-02" });
+  });
+
   it("leaves existing identities untouched after an API restart", async () => {
     await bootstrapLocalIdentity({
       dataSource,

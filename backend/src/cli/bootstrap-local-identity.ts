@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import * as argon2 from "argon2";
-import type { DataSource } from "typeorm";
+import { In, type DataSource } from "typeorm";
 
 import { createDataSource } from "../database/data-source.js";
 import { TeamEntity } from "../database/entities/team.entity.js";
@@ -41,8 +41,16 @@ export async function bootstrapLocalIdentity(options: {
       return { applied: false, teamsCreated: 0, accountsCreated: 0 };
     }
 
-    await manager.getRepository(TeamEntity).save(
-      LOCAL_STARTER_TEAMS.map((team) => ({
+    const teamRepository = manager.getRepository(TeamEntity);
+    const existingTeams = await teamRepository.findBy({
+      id: In(LOCAL_STARTER_TEAMS.map((team) => team.id)),
+    });
+    const existingTeamIds = new Set(existingTeams.map((team) => team.id));
+    const missingTeams = LOCAL_STARTER_TEAMS.filter(
+      (team) => !existingTeamIds.has(team.id),
+    );
+    await teamRepository.save(
+      missingTeams.map((team) => ({
         ...team,
         status: "active" as const,
         unitPricePerMinute: "0",
@@ -69,7 +77,7 @@ export async function bootstrapLocalIdentity(options: {
 
     return {
       applied: true,
-      teamsCreated: LOCAL_STARTER_TEAMS.length,
+      teamsCreated: missingTeams.length,
       accountsCreated: LOCAL_STARTER_ACCOUNTS.length,
     };
   });
