@@ -3,6 +3,8 @@ import type { DataSource } from "typeorm";
 
 import { bootstrapLocalIdentity } from "../src/cli/bootstrap-local-identity.js";
 import { createDataSource } from "../src/database/data-source.js";
+import { AuditLogEntity } from "../src/database/entities/audit-log.entity.js";
+import { SessionEntity } from "../src/database/entities/session.entity.js";
 import { TeamEntity } from "../src/database/entities/team.entity.js";
 import { UserEntity } from "../src/database/entities/user.entity.js";
 
@@ -201,5 +203,233 @@ describe("production-local identity bootstrap", () => {
       .findOneByOrFail({ usernameNormalized: "admin" });
     expect(preservedAdmin.displayName).toBe("已修改管理员");
     expect(preservedAdmin.passwordHash).toBe(preservedHash);
+  });
+
+  it("reconciles only starter identities once while preserving real accounts and sessions", async () => {
+    // This fails if reconciliation finds a canonical ID before the normalized
+    // username, rewrites non-starter records, leaves stale starter sessions,
+    // records credentials in audits, or changes rows again on a rerun.
+    const teams = dataSource.getRepository(TeamEntity);
+    const users = dataSource.getRepository(UserEntity);
+    const sessions = dataSource.getRepository(SessionEntity);
+    const audits = dataSource.getRepository(AuditLogEntity);
+    const expiredAt = new Date("2030-01-01T00:00:00.000Z");
+    const failedAt = new Date("2029-01-01T00:00:00.000Z");
+
+    await teams.save([
+      {
+        id: "TEAM-01",
+        name: "已配置团队",
+        status: "active",
+        unitPricePerMinute: "456.7890",
+      },
+      {
+        id: "TEAM-REAL",
+        name: "真实业务团队",
+        status: "active",
+        unitPricePerMinute: "12.5000",
+      },
+    ]);
+
+    const [legacyAdminHash, legacyLeaderHash, realAccountHash] =
+      await Promise.all([
+        argon2.hash("different-admin-password", { type: argon2.argon2id }),
+        argon2.hash("different-leader-password", { type: argon2.argon2id }),
+        argon2.hash("real-account-password", { type: argon2.argon2id }),
+      ]);
+    await users.save([
+      {
+        id: "U-LEGACY-ADMIN",
+        username: "admin",
+        usernameNormalized: "admin",
+        displayName: "旧管理员",
+        role: "admin",
+        teamId: null,
+        status: "disabled",
+        passwordHash: legacyAdminHash,
+        failedAttemptCount: 2,
+        firstFailedAt: failedAt,
+        lockedUntil: failedAt,
+      },
+      {
+        id: "U-LEGACY-LEADER",
+        username: "tuanzhang1",
+        usernameNormalized: "tuanzhang1",
+        displayName: "旧团长",
+        role: "collector",
+        teamId: "TEAM-01",
+        status: "disabled",
+        passwordHash: legacyLeaderHash,
+        failedAttemptCount: 5,
+        firstFailedAt: failedAt,
+        lockedUntil: failedAt,
+      },
+      {
+        id: "U-REAL-01",
+        username: "field-operator",
+        usernameNormalized: "field-operator",
+        displayName: "现场真实账号",
+        role: "leader",
+        teamId: "TEAM-REAL",
+        status: "active",
+        passwordHash: realAccountHash,
+        failedAttemptCount: 3,
+        firstFailedAt: failedAt,
+        lockedUntil: failedAt,
+      },
+    ]);
+    await sessions.save([
+      {
+        tokenHash: "a".repeat(64),
+        accountId: "U-LEGACY-LEADER",
+        expiresAt: expiredAt,
+      },
+      {
+        tokenHash: "b".repeat(64),
+        accountId: "U-REAL-01",
+        expiresAt: expiredAt,
+      },
+    ]);
+
+    await bootstrapLocalIdentity({
+      dataSource,
+      mode: "reconcile",
+    });
+
+    expect(await teams.findOneByOrFail({ id: "TEAM-01" })).toMatchObject({
+      name: "已配置团队",
+      status: "active",
+      unitPricePerMinute: "456.7890",
+    });
+    expect(await teams.findOneByOrFail({ id: "TEAM-02" })).toMatchObject({
+      id: "TEAM-02",
+      name: "团队2",
+      status: "active",
+      unitPricePerMinute: "0.0000",
+    });
+
+    const reconciledAccounts = await users.find({
+      order: { usernameNormalized: "ASC" },
+    });
+    expect(reconciledAccounts).toHaveLength(9);
+    for (const expected of expectedAccounts) {
+      const account = reconciledAccounts.find(
+        (candidate) => candidate.usernameNormalized === expected.username,
+      );
+      expect(account).toMatchObject({
+        username: expected.username,
+        usernameNormalized: expected.username,
+        displayName: expected.displayName,
+        role: expected.role,
+        teamId: expected.teamId,
+        status: "active",
+        failedAttemptCount: 0,
+        firstFailedAt: null,
+        lockedUntil: null,
+      });
+      expect(await argon2.verify(account!.passwordHash, expected.password)).toBe(
+        true,
+      );
+    }
+    expect(
+      reconciledAccounts.find(
+        (account) => account.usernameNormalized === "admin",
+      )!.id,
+    ).toBe("U-LEGACY-ADMIN");
+    expect(
+      reconciledAccounts.find(
+        (account) => account.usernameNormalized === "tuanzhang1",
+      )!.id,
+    ).toBe("U-LEGACY-LEADER");
+
+    expect(await users.findOneByOrFail({ id: "U-REAL-01" })).toMatchObject({
+      username: "field-operator",
+      displayName: "现场真实账号",
+      role: "leader",
+      teamId: "TEAM-REAL",
+      status: "active",
+      passwordHash: realAccountHash,
+      failedAttemptCount: 3,
+      firstFailedAt: failedAt,
+      lockedUntil: failedAt,
+    });
+    expect(await sessions.findOneBy({ tokenHash: "a".repeat(64) })).toBeNull();
+    expect(await sessions.findOneBy({ tokenHash: "b".repeat(64) })).toMatchObject({
+      accountId: "U-REAL-01",
+      expiresAt: expiredAt,
+    });
+
+    const reconcileAudits = await audits.find({
+      where: { action: "local_identity_reconcile" },
+      order: { targetAccountId: "ASC" },
+    });
+    expect(reconcileAudits).toHaveLength(expectedAccounts.length);
+    for (const account of reconciledAccounts.filter((candidate) =>
+      expectedAccounts.some(
+        (expected) => expected.username === candidate.usernameNormalized,
+      ),
+    )) {
+      const audit = reconcileAudits.find(
+        (candidate) => candidate.targetAccountId === account.id,
+      );
+      expect(audit).toMatchObject({
+        actorAccountId: "system",
+        actorName: "system",
+        action: "local_identity_reconcile",
+        targetAccountId: account.id,
+        targetName: account.displayName,
+      });
+      expect(JSON.stringify(audit)).not.toMatch(/password/i);
+    }
+
+    const snapshot = async () => ({
+      teams: (await teams.find({ order: { id: "ASC" } })).map((team) => ({
+        id: team.id,
+        name: team.name,
+        status: team.status,
+        unitPricePerMinute: team.unitPricePerMinute,
+        updatedAt: team.updatedAt.toISOString(),
+      })),
+      users: (await users.find({ order: { id: "ASC" } })).map((user) => ({
+        id: user.id,
+        username: user.username,
+        usernameNormalized: user.usernameNormalized,
+        displayName: user.displayName,
+        role: user.role,
+        teamId: user.teamId,
+        passwordHash: user.passwordHash,
+        status: user.status,
+        failedAttemptCount: user.failedAttemptCount,
+        firstFailedAt: user.firstFailedAt?.toISOString() ?? null,
+        lockedUntil: user.lockedUntil?.toISOString() ?? null,
+        updatedAt: user.updatedAt.toISOString(),
+      })),
+      sessions: (await sessions.find({ order: { tokenHash: "ASC" } })).map(
+        (session) => ({
+          tokenHash: session.tokenHash,
+          accountId: session.accountId,
+          expiresAt: session.expiresAt.toISOString(),
+        }),
+      ),
+      audits: (await audits.find({ order: { id: "ASC" } })).map((audit) => ({
+        id: audit.id,
+        actorAccountId: audit.actorAccountId,
+        actorName: audit.actorName,
+        action: audit.action,
+        targetAccountId: audit.targetAccountId,
+        targetName: audit.targetName,
+        summary: audit.summary,
+        beforeValue: audit.beforeValue,
+        afterValue: audit.afterValue,
+      })),
+    });
+    const stateAfterFirstReconcile = await snapshot();
+
+    await bootstrapLocalIdentity({
+      dataSource,
+      mode: "reconcile",
+    });
+
+    expect(await snapshot()).toEqual(stateAfterFirstReconcile);
   });
 });
