@@ -1,0 +1,60 @@
+{
+  "name": "embodied-video-data-platform-backend",
+  "version": "0.1.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "nest start --watch",
+    "build": "nest build",
+    "start": "node dist/main.js",
+    "start:local": "node --env-file=../.env scripts/start-local.mjs",
+    "test": "vitest run",
+    "test:e2e": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "migration:run": "tsx src/database/run-migrations.ts",
+    "migration:revert": "tsx src/database/revert-migration.ts",
+    "bootstrap:local-identity": "tsx src/cli/bootstrap-local-identity.ts",
+    "reconcile:local-identity": "tsx src/cli/bootstrap-local-identity.ts --reconcile",
+    "seed:identity": "tsx src/cli/seed-identity.ts",
+    "seed:video-test-data": "tsx src/cli/seed-video-test-data.ts",
+    "import:d1": "tsx src/cli/import-d1.ts",
+    "outbox:publish": "tsx src/cli/publish-outbox.ts",
+    "worker:media": "node dist/media/media-worker.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1104.0",
+    "@aws-sdk/s3-request-presigner": "^3.1104.0",
+    "@nestjs/common": "11.1.28",
+    "@nestjs/config": "4.0.4",
+    "@nestjs/core": "11.1.28",
+    "@nestjs/platform-express": "11.1.28",
+    "@nestjs/typeorm": "11.0.3",
+    "amqplib": "^2.0.1",
+    "argon2": "0.45.1",
+    "class-transformer": "0.5.1",
+    "class-validator": "0.15.1",
+    "express": "5.2.1",
+    "pg": "8.22.0",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2",
+    "typeorm": "1.1.0"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "11.0.16",
+    "@nestjs/testing": "11.1.28",
+    "@types/amqplib": "^0.10.8",
+    "@types/express": "5.0.6",
+    "@types/node": "22.19.19",
+    "@types/pg": "8.16.0",
+    "@types/supertest": "6.0.3",
+    "supertest": "7.2.2",
+    "tsx": "4.23.9",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  },
+  "packageManager": "pnpm@11.16.0"
+}
