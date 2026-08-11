@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { makeAccountPublic } from "../server/testFactories";
+import { makeAccountPublic } from "../testFactories";
 import {
   AccountApiError,
   createAccount,

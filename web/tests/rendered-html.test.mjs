@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
-import { access, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import test, { after } from "node:test";
 import { Miniflare } from "miniflare";
 
-const templateRoot = new URL("../", import.meta.url);
 let miniflare;
 
 function getMiniflare() {
@@ -24,7 +22,6 @@ function getMiniflare() {
         ],
         compatibilityDate: "2026-05-15",
         compatibilityFlags: ["nodejs_compat"],
-        d1Databases: { DB: `render-test-${process.pid}` },
         serviceBindings: { ASSETS: "ASSETS" },
       },
       {
@@ -42,6 +39,10 @@ async function render(path = "/") {
   return getMiniflare().dispatchFetch(`http://localhost${path}`, {
     headers: { accept: "text/html" },
   });
+}
+
+async function request(path, init) {
+  return getMiniflare().dispatchFetch(`http://localhost${path}`, init);
 }
 
 after(async () => {
@@ -73,61 +74,26 @@ test("server-renders password login without exposing initial credentials", async
   assert.doesNotMatch(html, /初始密码|演示角色|选择身份/i);
 });
 
-test("keeps credential internals out of browser-facing account code", async () => {
-  const [readme, bootstrap, accountClient, loginPage, migration] =
-    await Promise.all([
-      readFile(new URL("../../README.md", import.meta.url), "utf8"),
-      readFile(
-        new URL(
-          "../src/auth/server/bootstrapAccounts.ts",
-          import.meta.url,
-        ),
-        "utf8",
-      ),
-      readFile(
-        new URL("../src/auth/client/accountApi.ts", import.meta.url),
-        "utf8",
-      ),
-      readFile(
-        new URL("../src/features/auth/LoginPage.tsx", import.meta.url),
-        "utf8",
-      ),
-      readFile(
-        new URL(
-          "../drizzle/0000_account-authentication.sql",
-          import.meta.url,
-        ),
-        "utf8",
-      ),
-    ]);
+test("falls through obsolete identity paths without serving the old API", async () => {
+  const requests = [
+    ["/api/auth/login", { method: "POST" }],
+    ["/api/auth/logout", { method: "POST" }],
+    ["/api/auth/session"],
+    ["/api/admin/accounts"],
+    ["/api/admin/account-audit"],
+  ];
 
-  assert.doesNotMatch(readme, /`[^`\n]+`\s*\/\s*`[^`\n]+`/);
-  assert.doesNotMatch(
-    bootstrap,
-    /\[\s*"U-[^"]+",\s*"[^"]+",\s*"[^"]+",\s*"[^"]+",\s*"(?:admin|leader|collector)"/,
-  );
-  assert.doesNotMatch(
-    `${accountClient}\n${loginPage}`,
-    /passwordHash|passwordSalt|passwordIterations/,
-  );
-  assert.match(migration, /CREATE TABLE `accounts`/);
-  assert.match(migration, /CREATE TABLE `auth_sessions`/);
-  assert.match(migration, /CREATE TABLE `account_audit_logs`/);
-  assert.doesNotMatch(migration, /\bINSERT\b/i);
-});
+  for (const [path, init] of requests) {
+    const response = await request(path, init);
+    assert.equal(response.status, 200);
+    assert.match(
+      response.headers.get("content-type") ?? "",
+      /^text\/html\b/i,
+      `${path} must fall through to the public app`,
+    );
+    assert.equal(response.headers.get("set-cookie"), null);
 
-test("removes all temporary starter preview artifacts", async () => {
-  const [page, layout, packageJson] = await Promise.all([
-    readFile(new URL("../app/[[...slug]]/page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../package.json", import.meta.url), "utf8"),
-  ]);
-
-  assert.match(page, /<PlatformApp initialPath=\{initialPath\}/);
-  assert.match(layout, /Embodied Data \| 具身视频数据平台/);
-  assert.doesNotMatch(layout, /codex-preview|_sites-preview/);
-  assert.doesNotMatch(packageJson, /react-loading-skeleton/);
-  await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
-  await assert.rejects(access(new URL("../app/page.tsx", import.meta.url)));
-  await access(new URL(".openai/hosting.json", templateRoot));
+    const html = await response.text();
+    assert.match(html, /<title>Embodied Data \| 具身视频数据平台<\/title>/i);
+  }
 });

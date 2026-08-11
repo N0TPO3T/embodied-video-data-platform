@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { makeAccountPublic } from "./testFactories";
+import { makeAccountPublic } from "../testFactories";
 import {
   getBackendSession,
   listBackendAccounts,

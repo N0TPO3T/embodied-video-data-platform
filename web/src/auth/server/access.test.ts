@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { makeAccountPublic } from "../testFactories";
 import { resolveRouteAccess } from "./access";
-import { makeAccountPublic } from "./testFactories";
 
 describe("server route access", () => {
   it("allows public pages without an account", () => {
