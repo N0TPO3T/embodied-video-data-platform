@@ -62,6 +62,14 @@ describe("team member interactions", () => {
     expect(within(dialog).getByText("今日上传")).toBeVisible();
     expect(within(dialog).getByText("有效时长")).toBeVisible();
     expect(within(dialog).getByText("通过率")).toBeVisible();
+    expect(within(dialog).getByRole("note")).toHaveTextContent(
+      "示例数据：今日上传、有效时长和通过率为演示业务指标",
+    );
+    expect(
+      within(dialog).getByRole("group", { name: "成员表现" }),
+    ).toHaveAccessibleDescription(
+      "示例数据：今日上传、有效时长和通过率为演示业务指标",
+    );
   });
 
   it("shows the same administrator guidance from the team dashboard", async () => {

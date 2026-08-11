@@ -64,7 +64,15 @@ export function MemberDetailModal({
           <div><dt>所属团队</dt><dd>{team?.name ?? "未加入团队"}</dd></div>
           <div><dt>手机号</dt><dd>{member.phone}</dd></div>
         </dl>
-        <div className="member-detail-metrics">
+        <p id="member-detail-demo-metrics-note" role="note">
+          示例数据：今日上传、有效时长和通过率为演示业务指标
+        </p>
+        <div
+          className="member-detail-metrics"
+          role="group"
+          aria-label="成员表现"
+          aria-describedby="member-detail-demo-metrics-note"
+        >
           <div><span>今日上传</span><strong>{metrics.uploads} 条</strong></div>
           <div><span>有效时长</span><strong>{metrics.duration}</strong></div>
           <div><span>通过率</span><strong>{metrics.passRate}</strong></div>
