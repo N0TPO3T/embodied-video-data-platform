@@ -149,6 +149,110 @@ describe("account and team API", () => {
     expect(log.actorAccountId).toBe("U-ADMIN");
   });
 
+  it("accepts 8 and 64 character account passwords but rejects 65 characters", async () => {
+    const cookie = await login("admin");
+    const password8 = "12345678";
+    const password64 = "a".repeat(64);
+    const password65 = "b".repeat(65);
+
+    const minimum = await request(app.getHttpServer())
+      .post("/api/v1/accounts")
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", cookie)
+      .send({
+        displayName: "最短密码账号",
+        username: "password-minimum",
+        password: password8,
+        role: "collector",
+        teamId: "TEAM-01",
+      })
+      .expect(201);
+    const maximum = await request(app.getHttpServer())
+      .post("/api/v1/accounts")
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", cookie)
+      .send({
+        displayName: "最长密码账号",
+        username: "password-maximum",
+        password: password64,
+        role: "collector",
+        teamId: "TEAM-01",
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post("/api/v1/accounts")
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", cookie)
+      .send({
+        displayName: "超长密码账号",
+        username: "password-too-long",
+        password: password65,
+        role: "collector",
+        teamId: "TEAM-01",
+      })
+      .expect(400);
+
+    const users = dataSource.getRepository(UserEntity);
+    expect(
+      await argon2.verify(
+        (await users.findOneByOrFail({ id: minimum.body.account.id }))
+          .passwordHash,
+        password8,
+      ),
+    ).toBe(true);
+    expect(
+      await argon2.verify(
+        (await users.findOneByOrFail({ id: maximum.body.account.id }))
+          .passwordHash,
+        password64,
+      ),
+    ).toBe(true);
+    expect(
+      await users.findOneBy({ usernameNormalized: "password-too-long" }),
+    ).toBeNull();
+  });
+
+  it("accepts 8 and 64 character reset passwords but rejects 65 characters", async () => {
+    const cookie = await login("admin");
+    const password8 = "87654321";
+    const password64 = "c".repeat(64);
+    const password65 = "d".repeat(65);
+
+    await request(app.getHttpServer())
+      .post("/api/v1/accounts/U-OTHER/reset-password")
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", cookie)
+      .send({ password: password8 })
+      .expect(201);
+    let target = await dataSource
+      .getRepository(UserEntity)
+      .findOneByOrFail({ id: "U-OTHER" });
+    expect(await argon2.verify(target.passwordHash, password8)).toBe(true);
+
+    await request(app.getHttpServer())
+      .post("/api/v1/accounts/U-OTHER/reset-password")
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", cookie)
+      .send({ password: password64 })
+      .expect(201);
+    target = await dataSource
+      .getRepository(UserEntity)
+      .findOneByOrFail({ id: "U-OTHER" });
+    expect(await argon2.verify(target.passwordHash, password64)).toBe(true);
+
+    await request(app.getHttpServer())
+      .post("/api/v1/accounts/U-OTHER/reset-password")
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", cookie)
+      .send({ password: password65 })
+      .expect(400);
+    target = await dataSource
+      .getRepository(UserEntity)
+      .findOneByOrFail({ id: "U-OTHER" });
+    expect(await argon2.verify(target.passwordHash, password64)).toBe(true);
+  });
+
   it("limits a leader to visible own-team collectors", async () => {
     const cookie = await login("leader");
     const list = await request(app.getHttpServer())
@@ -214,6 +318,80 @@ describe("account and team API", () => {
       .send({ status: "disabled" })
       .expect(400);
     expect(response.body.code).toBe("VALIDATION");
+  });
+
+  it("keeps an active administrator when two administrators concurrently remove each other", async () => {
+    await dataSource.getRepository(UserEntity).save({
+      id: "U-ADMIN-2",
+      displayName: "第二管理员",
+      username: "admin-two",
+      usernameNormalized: "admin-two",
+      passwordHash,
+      role: "admin",
+      teamId: null,
+      status: "active",
+    });
+    const firstCookie = await login("admin");
+    const secondCookie = await login("admin-two");
+
+    await dataSource.query(`
+      CREATE OR REPLACE FUNCTION test_delay_active_admin_removal()
+      RETURNS trigger AS $$
+      BEGIN
+        IF OLD.role = 'admin' AND OLD.status = 'active'
+          AND (NEW.role <> 'admin' OR NEW.status <> 'active') THEN
+          PERFORM pg_sleep(0.5);
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql
+    `);
+    await dataSource.query(`
+      CREATE TRIGGER test_delay_active_admin_removal_trigger
+      BEFORE UPDATE OF role, status ON users
+      FOR EACH ROW EXECUTE FUNCTION test_delay_active_admin_removal()
+    `);
+
+    try {
+      const [disableSecond, demoteFirst] = await Promise.all([
+        request(app.getHttpServer())
+          .patch("/api/v1/accounts/U-ADMIN-2/status")
+          .set("Origin", WEB_ORIGIN)
+          .set("Cookie", firstCookie)
+          .send({ status: "disabled" }),
+        request(app.getHttpServer())
+          .patch("/api/v1/accounts/U-ADMIN")
+          .set("Origin", WEB_ORIGIN)
+          .set("Cookie", secondCookie)
+          .send({
+            displayName: "管理员",
+            username: "admin",
+            role: "leader",
+            teamId: "TEAM-01",
+          }),
+      ]);
+
+      expect([disableSecond.status, demoteFirst.status].sort()).toEqual([
+        200,
+        400,
+      ]);
+      expect(
+        await dataSource.getRepository(UserEntity).countBy({
+          role: "admin",
+          status: "active",
+        }),
+      ).toBe(1);
+      const rejected =
+        disableSecond.status === 400 ? disableSecond : demoteFirst;
+      expect(rejected.body.code).toBe("VALIDATION");
+    } finally {
+      await dataSource.query(
+        "DROP TRIGGER IF EXISTS test_delay_active_admin_removal_trigger ON users",
+      );
+      await dataSource.query(
+        "DROP FUNCTION IF EXISTS test_delay_active_admin_removal()",
+      );
+    }
   });
 
   it("revokes sessions when a leader disables an own-team collector", async () => {

@@ -24,7 +24,7 @@ export class CreateAccountDto {
 
   @IsString()
   @MinLength(8)
-  @MaxLength(200)
+  @MaxLength(64)
   password!: string;
 
   @IsIn(["admin", "leader", "collector"])
@@ -59,7 +59,7 @@ export class UpdateAccountDto {
 export class ResetPasswordDto {
   @IsString()
   @MinLength(8)
-  @MaxLength(200)
+  @MaxLength(64)
   password!: string;
 }
 

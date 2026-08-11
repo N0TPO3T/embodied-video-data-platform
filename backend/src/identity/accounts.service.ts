@@ -4,6 +4,7 @@ import { Injectable } from "@nestjs/common";
 import { InjectDataSource, InjectRepository } from "@nestjs/typeorm";
 import {
   DataSource,
+  EntityManager,
   Not,
   QueryFailedError,
   Repository,
@@ -26,6 +27,8 @@ import {
   IdentityFailure,
   IdentityPolicy,
 } from "./identity.policy.js";
+
+const ACTIVE_ADMIN_INVARIANT_LOCK_ID = "4996251375702723913";
 
 function isUniqueFailure(error: unknown): boolean {
   return (
@@ -133,6 +136,7 @@ export class AccountsService {
     input: UpdateAccountDto,
   ): Promise<PublicUser> {
     return this.dataSource.transaction(async (manager) => {
+      await this.lockActiveAdminInvariant(manager);
       const users = manager.getRepository(UserEntity);
       const target = await users.findOneBy({ id });
       if (!target) {
@@ -261,6 +265,7 @@ export class AccountsService {
     input: SetAccountStatusDto,
   ): Promise<PublicUser> {
     return this.dataSource.transaction(async (manager) => {
+      await this.lockActiveAdminInvariant(manager);
       const users = manager.getRepository(UserEntity);
       const target = await users.findOneBy({ id });
       if (!target) {
@@ -350,5 +355,14 @@ export class AccountsService {
         400,
       );
     }
+  }
+
+  private async lockActiveAdminInvariant(
+    manager: EntityManager,
+  ): Promise<void> {
+    await manager.query(
+      "SELECT pg_advisory_xact_lock($1::bigint)",
+      [ACTIVE_ADMIN_INVARIANT_LOCK_ID],
+    );
   }
 }
