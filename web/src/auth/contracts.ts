@@ -27,12 +27,20 @@ export type CreateTeamInput = Pick<
 export type UpdateTeamInput = CreateTeamInput &
   Pick<TeamPublic, "status">;
 
-export type AccountAuditAction =
+export type KnownAccountAuditAction =
   | "create"
   | "update"
   | "reset_password"
+  | "change_password"
   | "enable"
-  | "disable";
+  | "disable"
+  | "local_identity_reconcile"
+  | "team_create"
+  | "team_update";
+
+export type AccountAuditAction =
+  | KnownAccountAuditAction
+  | (string & {});
 
 export type AccountAuditLog = {
   id: string;
