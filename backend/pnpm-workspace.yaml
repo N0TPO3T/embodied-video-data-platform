@@ -1,0 +1,5 @@
+allowBuilds:
+  argon2: true
+  esbuild: true
+minimumReleaseAgeExclude:
+  - tsx@4.23.9
