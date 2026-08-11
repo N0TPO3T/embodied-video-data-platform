@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AccountPublic } from "../../auth/contracts";
 import * as accountApi from "../../auth/client/accountApi";
+import { IdentityProvider } from "../../auth/client/IdentityContext";
 import { DemoStoreProvider } from "../../data/DemoStoreContext";
 import { InteractionProvider } from "../../interactions/InteractionContext";
 import { UsersTeamsPage } from "./UsersTeamsPage";
@@ -47,14 +48,31 @@ afterEach(() => {
 });
 
 function renderAdminAccounts() {
+  const teams = [
+    {
+      id: "TEAM-01",
+      name: "星火一队",
+      status: "active" as const,
+      unitPricePerMinute: 12,
+      createdAt: 1_722_708_000_000,
+      updatedAt: 1_722_708_000_000,
+    },
+  ];
   return render(
     <InteractionProvider>
-      <DemoStoreProvider
+      <IdentityProvider
         currentAccount={adminAccount}
         accounts={[adminAccount, collectorAccount]}
+        teams={teams}
       >
-        <UsersTeamsPage />
-      </DemoStoreProvider>
+        <DemoStoreProvider
+          currentAccount={adminAccount}
+          accounts={[adminAccount, collectorAccount]}
+          teams={teams}
+        >
+          <UsersTeamsPage />
+        </DemoStoreProvider>
+      </IdentityProvider>
     </InteractionProvider>,
   );
 }

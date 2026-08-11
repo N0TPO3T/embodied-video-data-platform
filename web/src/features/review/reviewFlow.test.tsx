@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { PlatformApp } from "../../app/PlatformApp";
+import { IdentityProvider } from "../../auth/client/IdentityContext";
 import { DemoStoreProvider } from "../../data/DemoStoreContext";
 import type { Role } from "../../domain/types";
 import { accountForRole, demoAccounts } from "../../test/accountFixtures";
@@ -10,9 +11,11 @@ function renderRole(path: string, role: Role) {
   window.history.replaceState({}, "", path);
   const account = accountForRole(role);
   return render(
-    <DemoStoreProvider currentAccount={account} accounts={demoAccounts}>
-      <PlatformApp initialPath={path} />
-    </DemoStoreProvider>,
+    <IdentityProvider currentAccount={account} accounts={demoAccounts} teams={[]}>
+      <DemoStoreProvider currentAccount={account} accounts={demoAccounts}>
+        <PlatformApp initialPath={path} />
+      </DemoStoreProvider>
+    </IdentityProvider>,
   );
 }
 

@@ -5,7 +5,7 @@ import { useRef, useState, type ReactNode } from "react";
 import { navigationByRole } from "../app/navigation";
 import { BrandMark } from "../components/BrandMark";
 import { NotificationPanel } from "../components/NotificationPanel";
-import { useDemoStore } from "../data/DemoStoreContext";
+import { useIdentity } from "../auth/client/IdentityContext";
 import { useInteractions } from "../interactions/InteractionContext";
 
 const roleLabel = {
@@ -29,9 +29,9 @@ export function DashboardShell({
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const loggingOutRef = useRef(false);
-  const { currentUser } = useDemoStore();
+  const { currentAccount } = useIdentity();
   const { notify, unreadCount } = useInteractions();
-  const navigation = navigationByRole[currentUser.role];
+  const navigation = navigationByRole[currentAccount.role];
 
   function go(path: string) {
     setMobileOpen(false);
@@ -110,7 +110,7 @@ export function DashboardShell({
             <Menu size={21} />
           </button>
           <div className="topbar-context">
-            <span>{roleLabel[currentUser.role]}</span>
+            <span>{roleLabel[currentAccount.role]}</span>
             <small>具身视频数据生产与质量运营</small>
           </div>
           <div className="topbar-actions">
@@ -125,8 +125,8 @@ export function DashboardShell({
             </button>
             {notificationsOpen && <NotificationPanel />}
             <div className="user-chip">
-              <span>{currentUser.avatar}</span>
-              <div><strong>{currentUser.name}</strong><small>{roleLabel[currentUser.role]}</small></div>
+              <span>{currentAccount.displayName.slice(0, 1)}</span>
+              <div><strong>{currentAccount.displayName}</strong><small>{roleLabel[currentAccount.role]}</small></div>
             </div>
             <button
               className="logout-button"

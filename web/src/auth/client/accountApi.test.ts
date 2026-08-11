@@ -3,13 +3,16 @@ import { makeAccountPublic } from "../server/testFactories";
 import {
   AccountApiError,
   createAccount,
+  createTeam,
   login,
   listAccountAudit,
   listAccounts,
+  listTeams,
   logout,
   resetAccountPassword,
   setAccountStatus,
   updateAccount,
+  updateTeam,
 } from "./accountApi";
 
 const TEST_PASSWORD = "test-password-admin";
@@ -40,10 +43,10 @@ describe("account API client", () => {
       homePath: "/admin",
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/auth/login",
+      "http://localhost:4000/api/v1/auth/login",
       expect.objectContaining({
         method: "POST",
-        credentials: "same-origin",
+        credentials: "include",
         body: JSON.stringify({
           username: "admin",
           password: TEST_PASSWORD,
@@ -134,12 +137,52 @@ describe("account API client", () => {
     await expect(listAccountAudit()).resolves.toEqual([]);
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      "/api/admin/accounts",
-      "/api/admin/accounts",
-      "/api/admin/accounts/U%2FADMIN%2002",
-      "/api/admin/accounts/U%2FADMIN%2002/reset-password",
-      "/api/admin/accounts/U%2FADMIN%2002/status",
-      "/api/admin/account-audit",
+      "http://localhost:4000/api/v1/accounts",
+      "http://localhost:4000/api/v1/accounts",
+      "http://localhost:4000/api/v1/accounts/U%2FADMIN%2002",
+      "http://localhost:4000/api/v1/accounts/U%2FADMIN%2002/reset-password",
+      "http://localhost:4000/api/v1/accounts/U%2FADMIN%2002/status",
+      "http://localhost:4000/api/v1/audit-logs",
+    ]);
+  });
+
+  it("maps team list and mutations to typed values", async () => {
+    const team = {
+      id: "TEAM-01",
+      name: "星火一队",
+      status: "active" as const,
+      unitPricePerMinute: 12,
+      createdAt: 1_722_708_000_000,
+      updatedAt: 1_722_708_000_000,
+    };
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ team, teams: [team] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(listTeams()).resolves.toEqual([team]);
+    await expect(
+      createTeam({ name: "星火一队", unitPricePerMinute: 12 }),
+    ).resolves.toEqual(team);
+    await expect(
+      updateTeam("TEAM/01", {
+        name: "星火一队",
+        unitPricePerMinute: 13,
+        status: "disabled",
+      }),
+    ).resolves.toEqual(team);
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://localhost:4000/api/v1/teams",
+      "http://localhost:4000/api/v1/teams",
+      "http://localhost:4000/api/v1/teams/TEAM%2F01",
     ]);
   });
 });

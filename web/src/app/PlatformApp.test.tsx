@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { AccountPublic } from "../auth/contracts";
+import { IdentityProvider } from "../auth/client/IdentityContext";
 import { DemoStoreProvider } from "../data/DemoStoreContext";
 import type { Role } from "../domain/types";
 import { PlatformApp } from "./PlatformApp";
@@ -42,13 +43,33 @@ function account(role: Role): AccountPublic {
 function renderPlatform(path: string, role?: Role) {
   window.history.replaceState({}, "", path);
   const current = role ? account(role) : undefined;
-  return render(
+  const teams = current?.teamId
+    ? [
+        {
+          id: current.teamId,
+          name: "真实团队",
+          status: "active" as const,
+          unitPricePerMinute: 12,
+          createdAt: 1_722_708_000_000,
+          updatedAt: 1_722_708_000_000,
+        },
+      ]
+    : [];
+  const app = (
     <DemoStoreProvider
       currentAccount={current}
       accounts={current ? [current] : undefined}
+      teams={teams}
     >
       <PlatformApp initialPath={path} />
-    </DemoStoreProvider>,
+    </DemoStoreProvider>
+  );
+  return render(
+    current ? (
+      <IdentityProvider currentAccount={current} accounts={[current]} teams={teams}>
+        {app}
+      </IdentityProvider>
+    ) : app,
   );
 }
 

@@ -10,6 +10,23 @@ export type AccountPublic = {
   updatedAt: number;
 };
 
+export type TeamPublic = {
+  id: string;
+  name: string;
+  status: "active" | "disabled";
+  unitPricePerMinute: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type CreateTeamInput = Pick<
+  TeamPublic,
+  "name" | "unitPricePerMinute"
+>;
+
+export type UpdateTeamInput = CreateTeamInput &
+  Pick<TeamPublic, "status">;
+
 export type AccountRecord = AccountPublic & {
   usernameNormalized: string;
   passwordHash: string;

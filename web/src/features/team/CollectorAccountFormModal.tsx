@@ -6,27 +6,26 @@ import {
   type FormEvent,
   type RefObject,
 } from "react";
+
 import type {
   AccountPublic,
   CreateAccountInput,
   UpdateAccountInput,
 } from "../../auth/contracts";
 import { Modal } from "../../components/Modal";
-import { useIdentity } from "../../auth/client/IdentityContext";
-import type { Role } from "../../domain/types";
 
-export function UserFormModal({
-  open,
+export function CollectorAccountFormModal({
   mode,
   account,
+  team,
   onCreate,
   onUpdate,
   onClose,
   returnFocusRef,
 }: {
-  open: boolean;
   mode: "create" | "edit";
   account?: AccountPublic;
+  team: Pick<import("../../auth/contracts").TeamPublic, "id" | "name">;
   onCreate(input: CreateAccountInput): Promise<AccountPublic>;
   onUpdate(
     id: string,
@@ -35,18 +34,11 @@ export function UserFormModal({
   onClose(): void;
   returnFocusRef: RefObject<HTMLButtonElement | null>;
 }) {
-  const { teams } = useIdentity();
   const [displayName, setDisplayName] = useState(
     account?.displayName ?? "",
   );
   const [username, setUsername] = useState(account?.username ?? "");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<Role>(
-    account?.role ?? "collector",
-  );
-  const [teamId, setTeamId] = useState(
-    account?.teamId ?? teams[0]?.id ?? "",
-  );
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
@@ -54,8 +46,8 @@ export function UserFormModal({
 
   function close() {
     if (submittingRef.current) return;
-    setPassword("");
     setError("");
+    setPassword("");
     onClose();
   }
 
@@ -65,21 +57,23 @@ export function UserFormModal({
     submittingRef.current = true;
     setSubmitting(true);
     setError("");
-
-    const fields = {
-      displayName,
-      username,
-      role,
-      teamId: role === "admin" ? undefined : teamId,
-    };
-
     try {
       if (mode === "create") {
-        await onCreate({ ...fields, password });
+        await onCreate({
+          displayName,
+          username,
+          password,
+          role: "collector",
+          teamId: team.id,
+        });
       } else if (account) {
-        await onUpdate(account.id, fields);
+        await onUpdate(account.id, {
+          displayName,
+          username: account.username,
+          role: "collector",
+          teamId: team.id,
+        });
       }
-      setPassword("");
       submittingRef.current = false;
       setSubmitting(false);
       onClose();
@@ -87,21 +81,22 @@ export function UserFormModal({
       setError(
         reason instanceof Error ? reason.message : "保存失败，请重试",
       );
-      setSubmitting(false);
       submittingRef.current = false;
+      setSubmitting(false);
     }
   }
 
-  const title = mode === "create" ? "新增账号" : "编辑账号";
+  const title = mode === "create" ? "新增数采账号" : "编辑数采账号";
   return (
     <Modal
-      open={open}
+      open
       title={title}
       onClose={close}
       returnFocusRef={returnFocusRef}
       initialFocusRef={firstInputRef}
     >
       <form className="modal-form" onSubmit={submit}>
+        <p>账号将自动归属{team.name}</p>
         <label>
           显示名称
           <input
@@ -118,6 +113,7 @@ export function UserFormModal({
             value={username}
             onChange={(event) => setUsername(event.target.value)}
             autoComplete="username"
+            disabled={mode === "edit"}
             required
           />
         </label>
@@ -133,39 +129,6 @@ export function UserFormModal({
               maxLength={64}
               required
             />
-          </label>
-        )}
-        <label>
-          角色
-          <select
-            value={role}
-            onChange={(event) => {
-              const nextRole = event.target.value as Role;
-              setRole(nextRole);
-              if (nextRole !== "admin" && !teamId) {
-                setTeamId(teams[0]?.id ?? "");
-              }
-            }}
-          >
-            <option value="collector">数采人员</option>
-            <option value="leader">团长</option>
-            <option value="admin">管理员</option>
-          </select>
-        </label>
-        {role !== "admin" && (
-          <label>
-            所属团队
-            <select
-              value={teamId}
-              onChange={(event) => setTeamId(event.target.value)}
-              required
-            >
-              {teams.map((team) => (
-                <option key={team.id} value={team.id}>
-                  {team.name}
-                </option>
-              ))}
-            </select>
           </label>
         )}
         {error && (
@@ -190,8 +153,8 @@ export function UserFormModal({
             {submitting
               ? "保存中…"
               : mode === "create"
-                ? "创建账号"
-                : "保存账号"}
+                ? "创建数采账号"
+                : "保存名称"}
           </button>
         </div>
       </form>

@@ -8,17 +8,14 @@ import {
 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import * as accountApi from "../../auth/client/accountApi";
+import { useIdentity } from "../../auth/client/IdentityContext";
 import type {
   AccountPublic,
   CreateAccountInput,
   UpdateAccountInput,
 } from "../../auth/contracts";
 import { StatusBadge } from "../../components/StatusBadge";
-import {
-  accountToUser,
-  useDemoStore,
-} from "../../data/DemoStoreContext";
-import type { AccountStatus, Role, User } from "../../domain/types";
+import type { AccountStatus, Role } from "../../domain/types";
 import { useInteractions } from "../../interactions/InteractionContext";
 import { AccountStatusModal } from "./AccountStatusModal";
 import { ResetPasswordModal } from "./ResetPasswordModal";
@@ -29,18 +26,6 @@ const roleLabel: Record<Role, string> = {
   leader: "团长",
   admin: "管理员",
 };
-
-function userToAccount(user: User): AccountPublic {
-  return {
-    id: user.id,
-    displayName: user.name,
-    username: user.account,
-    role: user.role,
-    teamId: user.teamId,
-    status: user.status,
-    updatedAt: user.updatedAt,
-  };
-}
 
 function formatUpdatedAt(timestamp: number): string {
   return new Intl.DateTimeFormat("zh-CN", {
@@ -54,7 +39,7 @@ function formatUpdatedAt(timestamp: number): string {
 }
 
 export function UsersTeamsPage() {
-  const { state, currentUser, syncAccount } = useDemoStore();
+  const { accounts, currentAccount, teams, upsertAccount } = useIdentity();
   const { notify } = useInteractions();
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<AccountPublic>();
@@ -68,10 +53,6 @@ export function UsersTeamsPage() {
   const createTriggerRef = useRef<HTMLButtonElement>(null);
   const actionTriggerRef = useRef<HTMLButtonElement>(null);
 
-  const accounts = useMemo(
-    () => state.users.map(userToAccount),
-    [state.users],
-  );
   const filteredAccounts = useMemo(() => {
     const query = search.trim().toLowerCase();
     return accounts.filter((account) => {
@@ -87,21 +68,16 @@ export function UsersTeamsPage() {
     });
   }, [accounts, roleFilter, search, statusFilter]);
 
-  function synchronize(account: AccountPublic) {
-    const existing = state.users.find((user) => user.id === account.id);
-    syncAccount(accountToUser(account, existing));
-  }
-
   async function create(input: CreateAccountInput) {
     const account = await accountApi.createAccount(input);
-    synchronize(account);
+    upsertAccount(account);
     notify("success", "账号已创建");
     return account;
   }
 
   async function update(id: string, input: UpdateAccountInput) {
     const account = await accountApi.updateAccount(id, input);
-    synchronize(account);
+    upsertAccount(account);
     notify("success", "账号信息已更新");
     return account;
   }
@@ -139,16 +115,16 @@ export function UsersTeamsPage() {
         <article>
           <ShieldCheck size={22} />
           <span>
-            <strong>{state.teams.length}</strong>
+            <strong>{teams.length}</strong>
             <small>运营团队</small>
           </span>
         </article>
         <div>
-          {state.teams.map((team) => (
+          {teams.map((team) => (
             <span key={team.id}>
               <strong>{team.name}</strong>
               <small>
-                {team.memberIds.length + 1} 名成员 · ¥
+                {accounts.filter((account) => account.teamId === team.id).length} 名成员 · ¥
                 {team.unitPricePerMinute}/分钟
               </small>
             </span>
@@ -231,7 +207,7 @@ export function UsersTeamsPage() {
                   <td>{account.username}</td>
                   <td>{roleLabel[account.role]}</td>
                   <td>
-                    {state.teams.find(
+                    {teams.find(
                       (team) => team.id === account.teamId,
                     )?.name ?? "平台"}
                   </td>
@@ -273,11 +249,11 @@ export function UsersTeamsPage() {
                       <button
                         className="table-action"
                         disabled={
-                          account.id === currentUser.id &&
+                          account.id === currentAccount.id &&
                           account.status === "active"
                         }
                         title={
-                          account.id === currentUser.id &&
+                          account.id === currentAccount.id &&
                           account.status === "active"
                             ? "不能停用当前登录账号"
                             : undefined
@@ -356,7 +332,7 @@ export function UsersTeamsPage() {
               statusTarget.id,
               nextStatus,
             );
-            synchronize(account);
+            upsertAccount(account);
             notify(
               "success",
               nextStatus === "active" ? "账号已启用" : "账号已停用",

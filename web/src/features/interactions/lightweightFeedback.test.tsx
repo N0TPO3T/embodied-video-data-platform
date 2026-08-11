@@ -2,19 +2,23 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { PlatformApp } from "../../app/PlatformApp";
+import { IdentityProvider } from "../../auth/client/IdentityContext";
 import { DemoStoreProvider } from "../../data/DemoStoreContext";
 import { accountForRole, demoAccounts } from "../../test/accountFixtures";
 
 function renderPath(path: string, admin = false) {
   window.history.replaceState({}, "", path);
   const account = admin ? accountForRole("admin") : undefined;
-  return render(
+  const app = (
     <DemoStoreProvider
       currentAccount={account}
       accounts={account ? demoAccounts : undefined}
     >
       <PlatformApp initialPath={path} />
-    </DemoStoreProvider>,
+    </DemoStoreProvider>
+  );
+  return render(
+    account ? <IdentityProvider currentAccount={account} accounts={demoAccounts} teams={[]}>{app}</IdentityProvider> : app,
   );
 }
 

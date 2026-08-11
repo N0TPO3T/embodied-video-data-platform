@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import * as accountApi from "../auth/client/accountApi";
-import { useDemoStore } from "../data/DemoStoreContext";
+import { useIdentity } from "../auth/client/IdentityContext";
 import type { Role } from "../domain/types";
 import { LoginPage } from "../features/auth/LoginPage";
 import { AdminDashboard } from "../features/admin/AdminDashboard";
@@ -51,7 +51,6 @@ export function PlatformApp({ initialPath }: { initialPath: string }) {
 
 function PlatformContent({ initialPath }: { initialPath: string }) {
   const [path, setPath] = useState(initialPath || "/");
-  const { currentUser } = useDemoStore();
 
   function navigate(nextPath: string) {
     window.history.pushState({}, "", nextPath);
@@ -70,13 +69,27 @@ function PlatformContent({ initialPath }: { initialPath: string }) {
     );
   }
 
+  return <AuthenticatedPlatformContent initialPath={initialPath} path={path} navigate={navigate} />;
+}
+
+function AuthenticatedPlatformContent({
+  initialPath,
+  path,
+  navigate,
+}: {
+  initialPath: string;
+  path: string;
+  navigate(path: string): void;
+}) {
+  const { currentAccount } = useIdentity();
+
   const gatedRole = requiredRole(path);
-  const safePath = gatedRole && gatedRole !== currentUser.role ? roleHome[currentUser.role] : path;
+  const safePath = gatedRole && gatedRole !== currentAccount.role ? roleHome[currentAccount.role] : path;
 
   let page = <CollectorDashboard navigate={navigate} />;
   if (safePath === "/collector" && initialPath.startsWith("/admin")) {
     page = <CollectorDashboard navigate={navigate} title />;
-  } else if (currentUser.role === "collector") {
+  } else if (currentAccount.role === "collector") {
     if (safePath === "/collector/upload") page = <UploadPage />;
     else if (safePath === "/collector/submissions") page = <SubmissionsPage navigate={navigate} />;
     else if (safePath.startsWith("/collector/submissions/")) page = <SubmissionDetail id={safePath.split("/").at(-1) ?? ""} navigate={navigate} />;
@@ -84,14 +97,14 @@ function PlatformContent({ initialPath }: { initialPath: string }) {
     else if (safePath === "/collector/earnings") page = <EarningsPage />;
     else if (safePath === "/collector/guide") page = <GuidePage />;
     else if (safePath === "/collector/profile") page = <ProfilePage />;
-  } else if (currentUser.role === "leader") {
+  } else if (currentAccount.role === "leader") {
     if (safePath === "/team/members") page = <MembersPage />;
     else if (safePath === "/team/submissions") page = <TeamSubmissionsPage />;
     else if (safePath === "/team/review") page = <ReviewPage />;
     else if (safePath === "/team/analytics") page = <TeamAnalyticsPage />;
     else if (safePath === "/team/income") page = <TeamIncomePage />;
     else page = <TeamDashboard />;
-  } else if (currentUser.role === "admin") {
+  } else if (currentAccount.role === "admin") {
     if (safePath === "/admin/submissions") page = <SubmissionsAdminPage />;
     else if (safePath === "/admin/ai") page = <AiQueuePage />;
     else if (safePath === "/admin/review") page = <QualityReviewPage />;
