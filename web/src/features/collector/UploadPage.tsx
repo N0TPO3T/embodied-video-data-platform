@@ -3,22 +3,71 @@
 import { CheckCircle2, CloudUpload, FileVideo, Info, ShieldCheck, XCircle } from "lucide-react";
 import { useRef, useState } from "react";
 import { useDemoStore } from "../../data/DemoStoreContext";
+import { uploadVideo } from "../../submissions/upload/multipartUploader";
 
 const isSupported = (file: File) => /\.(mov|mp4)$/i.test(file.name);
 
 export function UploadPage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState("");
-  const [uploadedNames, setUploadedNames] = useState<string[]>([]);
-  const { addUploads } = useDemoStore();
+  const [uploads, setUploads] = useState<Array<{
+    key: string;
+    name: string;
+    progress: number;
+    status: "hashing" | "uploading" | "queued" | "failed";
+    error?: string;
+  }>>([]);
+  const { upsertSubmission } = useDemoStore();
+
+  function updateUpload(
+    key: string,
+    values: Partial<(typeof uploads)[number]>,
+  ) {
+    setUploads((current) =>
+      current.map((item) =>
+        item.key === key ? { ...item, ...values } : item,
+      ),
+    );
+  }
+
+  async function upload(file: File, key: string) {
+    try {
+      const submission = await uploadVideo(file, {
+        onProgress: (progress) =>
+          updateUpload(key, { progress, status: "uploading" }),
+      });
+      upsertSubmission(submission);
+      updateUpload(key, { progress: 100, status: "queued" });
+    } catch (reason) {
+      updateUpload(key, {
+        status: "failed",
+        error: reason instanceof Error ? reason.message : "上传失败，请重试",
+      });
+    }
+  }
 
   function acceptFiles(files: File[]) {
     const valid = files.filter(isSupported);
     if (valid.length !== files.length) setError("仅支持 MOV 和 MP4 视频");
     else setError("");
     if (!valid.length) return;
-    addUploads(valid);
-    setUploadedNames((current) => [...valid.map((file) => file.name), ...current]);
+    const created = valid.map((file, index) => ({
+      key: `${Date.now()}-${index}-${file.name}`,
+      name: file.name,
+      progress: 0,
+      status: "hashing" as const,
+      file,
+    }));
+    setUploads((current) => [
+      ...created.map(({ key, name, progress, status }) => ({
+        key,
+        name,
+        progress,
+        status,
+      })),
+      ...current,
+    ]);
+    for (const item of created) void upload(item.file, item.key);
   }
 
   return (
@@ -35,8 +84,26 @@ export function UploadPage() {
           </button>
           {error && <div className="inline-alert inline-alert-error"><XCircle size={16} />{error}</div>}
           <div className="upload-queue">
-            <div className="card-heading"><div><h2>本次上传</h2><p>{uploadedNames.length ? `已创建 ${uploadedNames.length} 个处理任务` : "选择文件后在此查看上传进度"}</p></div></div>
-            {uploadedNames.length ? uploadedNames.map((name, index) => <div className="upload-item" key={`${name}-${index}`}><span><FileVideo size={18} /></span><div><strong>{name}</strong><small>上传完成，已进入 AI 分析队列</small><i><b style={{ width: "100%" }} /></i></div><CheckCircle2 size={18} /></div>) : <div className="empty-inline">暂无待上传文件</div>}
+            <div className="card-heading"><div><h2>本次上传</h2><p>{uploads.length ? `${uploads.length} 个视频上传任务` : "选择文件后在此查看上传进度"}</p></div></div>
+            {uploads.length ? uploads.map((item) => (
+              <div className="upload-item" key={item.key}>
+                <span><FileVideo size={18} /></span>
+                <div>
+                  <strong>{item.name}</strong>
+                  <small>
+                    {item.status === "hashing"
+                      ? "正在计算文件校验值"
+                      : item.status === "uploading"
+                        ? `正在上传 ${item.progress}%`
+                        : item.status === "queued"
+                          ? "上传完成，等待媒体处理"
+                          : item.error ?? "上传失败，请重试"}
+                  </small>
+                  <i><b style={{ width: `${item.progress}%` }} /></i>
+                </div>
+                {item.status === "queued" ? <CheckCircle2 size={18} /> : item.status === "failed" ? <XCircle size={18} /> : <CloudUpload size={18} />}
+              </div>
+            )) : <div className="empty-inline">暂无待上传文件</div>}
           </div>
         </div>
         <aside className="content-card upload-guide-card">

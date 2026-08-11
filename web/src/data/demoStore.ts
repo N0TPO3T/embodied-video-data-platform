@@ -112,6 +112,19 @@ export class DemoStore {
     this.notify();
   }
 
+  upsertSubmission(submission: Submission): void {
+    this.state = {
+      ...this.state,
+      submissions: [
+        submission,
+        ...this.state.submissions.filter(
+          (item) => item.id !== submission.id,
+        ),
+      ],
+    };
+    this.notify();
+  }
+
   inviteMember(input: InviteMemberInput): User {
     const current = this.currentUser();
     if (current.role !== "leader") {
