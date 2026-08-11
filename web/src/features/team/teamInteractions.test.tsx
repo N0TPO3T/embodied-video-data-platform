@@ -23,6 +23,17 @@ function renderLeader(path: string) {
 }
 
 describe("team member interactions", () => {
+  it("labels synthetic member contribution values as demo business metrics", () => {
+    renderLeader("/team/members");
+
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "示例数据：今日上传、有效时长和通过率为演示业务指标",
+    );
+    expect(screen.getByRole("table")).toHaveAccessibleDescription(
+      "示例数据：今日上传、有效时长和通过率为演示业务指标",
+    );
+  });
+
   it("opens the own-team collector account form", async () => {
     const user = userEvent.setup();
     renderLeader("/team/members");

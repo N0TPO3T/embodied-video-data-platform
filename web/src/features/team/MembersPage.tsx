@@ -112,8 +112,18 @@ export function MembersPage() {
             {members.length} 位成员
           </span>
         </div>
+        <p
+          id="member-demo-metrics-note"
+          className="table-summary"
+          role="note"
+        >
+          示例数据：今日上传、有效时长和通过率为演示业务指标
+        </p>
         <div className="table-scroll">
-          <table className="data-table">
+          <table
+            className="data-table"
+            aria-describedby="member-demo-metrics-note"
+          >
             <thead>
               <tr>
                 <th>成员</th>

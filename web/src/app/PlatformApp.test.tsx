@@ -40,9 +40,10 @@ function account(role: Role): AccountPublic {
   };
 }
 
-function renderPlatform(path: string, role?: Role) {
+function renderPlatform(path: string, role?: Role, demoRole = role) {
   window.history.replaceState({}, "", path);
   const current = role ? account(role) : undefined;
+  const demoCurrent = demoRole ? account(demoRole) : undefined;
   const teams = current?.teamId
     ? [
         {
@@ -57,8 +58,8 @@ function renderPlatform(path: string, role?: Role) {
     : [];
   const app = (
     <DemoStoreProvider
-      currentAccount={current}
-      accounts={current ? [current] : undefined}
+      currentAccount={demoCurrent}
+      accounts={demoCurrent ? [demoCurrent] : undefined}
       teams={teams}
     >
       <PlatformApp initialPath={path} />
@@ -98,7 +99,7 @@ describe("platform routing", () => {
   });
 
   it("redirects a collector away from the admin area in the client fallback", () => {
-    renderPlatform("/admin", "collector");
+    renderPlatform("/admin", "collector", "admin");
     expect(screen.getByRole("heading", { name: "我的工作台" })).toBeVisible();
     expect(screen.queryByText("提现审核")).not.toBeInTheDocument();
   });
