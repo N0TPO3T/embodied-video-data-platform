@@ -1,10 +1,13 @@
 import * as argon2 from "argon2";
 import type { DataSource } from "typeorm";
 
+import { AuthService } from "../src/auth/auth.service.js";
+import { PasswordService } from "../src/auth/password.service.js";
 import { bootstrapLocalIdentity } from "../src/cli/bootstrap-local-identity.js";
 import { createDataSource } from "../src/database/data-source.js";
 import { AuditLogEntity } from "../src/database/entities/audit-log.entity.js";
 import { SessionEntity } from "../src/database/entities/session.entity.js";
+import { SubmissionEntity } from "../src/database/entities/submission.entity.js";
 import { TeamEntity } from "../src/database/entities/team.entity.js";
 import { UserEntity } from "../src/database/entities/user.entity.js";
 
@@ -205,14 +208,15 @@ describe("production-local identity bootstrap", () => {
     expect(preservedAdmin.passwordHash).toBe(preservedHash);
   });
 
-  it("reconciles only starter identities once while preserving real accounts and sessions", async () => {
+  it("reconciles only starter identities once when a real account owns a canonical starter ID", async () => {
     // This fails if reconciliation finds a canonical ID before the normalized
-    // username, rewrites non-starter records, leaves stale starter sessions,
-    // records credentials in audits, or changes rows again on a rerun.
+    // username, overwrites an unrelated owner of that ID, leaves stale starter
+    // sessions, records credentials in audits, or changes rows again on a rerun.
     const teams = dataSource.getRepository(TeamEntity);
     const users = dataSource.getRepository(UserEntity);
     const sessions = dataSource.getRepository(SessionEntity);
     const audits = dataSource.getRepository(AuditLogEntity);
+    const submissions = dataSource.getRepository(SubmissionEntity);
     const expiredAt = new Date("2030-01-01T00:00:00.000Z");
     const failedAt = new Date("2029-01-01T00:00:00.000Z");
 
@@ -265,7 +269,7 @@ describe("production-local identity bootstrap", () => {
         lockedUntil: failedAt,
       },
       {
-        id: "U-REAL-01",
+        id: "U-COL-05",
         username: "field-operator",
         usernameNormalized: "field-operator",
         displayName: "现场真实账号",
@@ -278,6 +282,23 @@ describe("production-local identity bootstrap", () => {
         lockedUntil: failedAt,
       },
     ]);
+    await submissions.save({
+      id: "SUB-REAL-01",
+      ownerId: "U-COL-05",
+      teamId: "TEAM-REAL",
+      originalFileName: "real-video.mp4",
+      contentType: "video/mp4",
+      expectedSizeBytes: "1024",
+      checksumSha256: "c".repeat(64),
+      objectKey: "real/submission.mp4",
+      multipartUploadId: null,
+      uploadStatus: "uploaded",
+      processingStatus: "completed",
+      failureCode: null,
+      failureMessage: null,
+      isTestData: false,
+      uploadedAt: failedAt,
+    });
     await sessions.save([
       {
         tokenHash: "a".repeat(64),
@@ -286,7 +307,7 @@ describe("production-local identity bootstrap", () => {
       },
       {
         tokenHash: "b".repeat(64),
-        accountId: "U-REAL-01",
+        accountId: "U-COL-05",
         expiresAt: expiredAt,
       },
     ]);
@@ -294,6 +315,28 @@ describe("production-local identity bootstrap", () => {
     await bootstrapLocalIdentity({
       dataSource,
       mode: "reconcile",
+    });
+
+    expect(await users.findOneByOrFail({ id: "U-COL-05" })).toMatchObject({
+      username: "field-operator",
+      usernameNormalized: "field-operator",
+      displayName: "现场真实账号",
+      role: "leader",
+      teamId: "TEAM-REAL",
+      status: "active",
+      passwordHash: realAccountHash,
+      failedAttemptCount: 3,
+      firstFailedAt: failedAt,
+      lockedUntil: failedAt,
+    });
+    expect(
+      await submissions.findOneByOrFail({ id: "SUB-REAL-01" }),
+    ).toMatchObject({
+      ownerId: "U-COL-05",
+      teamId: "TEAM-REAL",
+      originalFileName: "real-video.mp4",
+      objectKey: "real/submission.mp4",
+      isTestData: false,
     });
 
     expect(await teams.findOneByOrFail({ id: "TEAM-01" })).toMatchObject({
@@ -342,20 +385,28 @@ describe("production-local identity bootstrap", () => {
       )!.id,
     ).toBe("U-LEGACY-LEADER");
 
-    expect(await users.findOneByOrFail({ id: "U-REAL-01" })).toMatchObject({
-      username: "field-operator",
-      displayName: "现场真实账号",
-      role: "leader",
-      teamId: "TEAM-REAL",
-      status: "active",
-      passwordHash: realAccountHash,
-      failedAttemptCount: 3,
-      firstFailedAt: failedAt,
-      lockedUntil: failedAt,
+    const newlyCreatedStarter = await users.findOneByOrFail({
+      usernameNormalized: "ceshirenyuan5",
     });
+    expect(newlyCreatedStarter.id).not.toBe("U-COL-05");
+    expect(newlyCreatedStarter.id).toMatch(/^U-/);
+    const login = await new AuthService(
+      users,
+      sessions,
+      new PasswordService(),
+    ).login("ceshirenyuan5", "user1234", failedAt);
+    expect(login.user).toMatchObject({
+      id: newlyCreatedStarter.id,
+      username: "ceshirenyuan5",
+      displayName: "数采人员5",
+      role: "collector",
+      teamId: "TEAM-02",
+      status: "active",
+    });
+
     expect(await sessions.findOneBy({ tokenHash: "a".repeat(64) })).toBeNull();
     expect(await sessions.findOneBy({ tokenHash: "b".repeat(64) })).toMatchObject({
-      accountId: "U-REAL-01",
+      accountId: "U-COL-05",
       expiresAt: expiredAt,
     });
 
@@ -411,6 +462,19 @@ describe("production-local identity bootstrap", () => {
           expiresAt: session.expiresAt.toISOString(),
         }),
       ),
+      submissions: (
+        await submissions.find({ order: { id: "ASC" } })
+      ).map((submission) => ({
+        id: submission.id,
+        ownerId: submission.ownerId,
+        teamId: submission.teamId,
+        originalFileName: submission.originalFileName,
+        objectKey: submission.objectKey,
+        uploadStatus: submission.uploadStatus,
+        processingStatus: submission.processingStatus,
+        isTestData: submission.isTestData,
+        updatedAt: submission.updatedAt.toISOString(),
+      })),
       audits: (await audits.find({ order: { id: "ASC" } })).map((audit) => ({
         id: audit.id,
         actorAccountId: audit.actorAccountId,

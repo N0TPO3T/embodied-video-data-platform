@@ -104,8 +104,11 @@ export async function bootstrapLocalIdentity(options: {
           const passwordHash = await argon2.hash(starter.password, {
             type: argon2.argon2id,
           });
+          const accountId = await users.findOneBy({ id: starter.id })
+            ? `U-${randomUUID()}`
+            : starter.id;
           const created = await users.save({
-            id: starter.id,
+            id: accountId,
             username: starter.username,
             usernameNormalized: starter.username,
             displayName: starter.displayName,
