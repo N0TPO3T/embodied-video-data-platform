@@ -17,6 +17,15 @@ const LOCK_DURATION_MS = 15 * 60 * 1_000;
 const MAX_FAILED_ATTEMPTS = 5;
 export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 
+type LoginTransactionResult =
+  | {
+      ok: true;
+      user: PublicUser;
+      token: string;
+      expiresAt: Date;
+    }
+  | { ok: false; failure: AuthFailure };
+
 export function normalizeUsername(username: string): string {
   return username.normalize("NFKC").trim().toLocaleLowerCase("en-US");
 }
@@ -57,52 +66,82 @@ export class AuthService {
     expiresAt: Date;
   }> {
     const normalized = normalizeUsername(username);
-    const user = normalized
-      ? await this.users.findOneBy({ usernameNormalized: normalized })
-      : null;
+    const result: LoginTransactionResult = await this.users.manager.transaction(
+      async (manager): Promise<LoginTransactionResult> => {
+        const users = manager.getRepository(UserEntity);
+        const sessions = manager.getRepository(SessionEntity);
+        const user = normalized
+          ? await users.findOne({
+              where: { usernameNormalized: normalized },
+              lock: { mode: "pessimistic_write" },
+            })
+          : null;
 
-    if (!user) {
-      await this.passwords.verifyUnknown(password);
-      throw new AuthFailure(
-        "INVALID_CREDENTIALS",
-        "用户名或密码错误",
-        401,
-      );
-    }
-    if (user.status === "disabled") {
-      throw new AuthFailure("DISABLED", "账号已停用，请联系管理员", 403);
-    }
-    if (user.lockedUntil && user.lockedUntil > now) {
-      throw new AuthFailure(
-        "LOCKED",
-        "登录尝试过多，请稍后再试",
-        429,
-        Math.max(
-          1,
-          Math.ceil((user.lockedUntil.getTime() - now.getTime()) / 1_000),
-        ),
-      );
-    }
+        if (!user) {
+          await this.passwords.verifyUnknown(password);
+          return {
+            ok: false,
+            failure: new AuthFailure(
+              "INVALID_CREDENTIALS",
+              "用户名或密码错误",
+              401,
+            ),
+          };
+        }
+        if (user.status === "disabled") {
+          return {
+            ok: false,
+            failure: new AuthFailure(
+              "DISABLED",
+              "账号已停用，请联系管理员",
+              403,
+            ),
+          };
+        }
+        if (user.lockedUntil && user.lockedUntil > now) {
+          return {
+            ok: false,
+            failure: new AuthFailure(
+              "LOCKED",
+              "登录尝试过多，请稍后再试",
+              429,
+              Math.max(
+                1,
+                Math.ceil(
+                  (user.lockedUntil.getTime() - now.getTime()) / 1_000,
+                ),
+              ),
+            ),
+          };
+        }
 
-    if (!(await this.passwords.verify(user.passwordHash, password))) {
-      await this.recordFailure(user, now);
-    }
+        if (!(await this.passwords.verify(user.passwordHash, password))) {
+          return {
+            ok: false,
+            failure: await this.recordFailure(users, user, now),
+          };
+        }
 
-    user.failedAttemptCount = 0;
-    user.firstFailedAt = null;
-    user.lockedUntil = null;
-    await this.users.save(user);
+        user.failedAttemptCount = 0;
+        user.firstFailedAt = null;
+        user.lockedUntil = null;
+        await users.save(user);
 
-    const token = randomBytes(32).toString("base64url");
-    const expiresAt = new Date(now.getTime() + SESSION_TTL_MS);
-    await this.sessions.save(
-      this.sessions.create({
-        tokenHash: digestToken(token),
-        accountId: user.id,
-        expiresAt,
-      }),
+        const token = randomBytes(32).toString("base64url");
+        const expiresAt = new Date(now.getTime() + SESSION_TTL_MS);
+        await sessions.save(
+          sessions.create({
+            tokenHash: digestToken(token),
+            accountId: user.id,
+            expiresAt,
+          }),
+        );
+        return { ok: true, user: toPublicUser(user), token, expiresAt };
+      },
     );
-    return { user: toPublicUser(user), token, expiresAt };
+
+    if (!result.ok) throw result.failure;
+    return result;
   }
 
   async authenticate(
@@ -128,7 +167,11 @@ export class AuthService {
     await this.sessions.delete({ tokenHash: digestToken(token) });
   }
 
-  private async recordFailure(user: UserEntity, now: Date): Promise<never> {
+  private async recordFailure(
+    users: Repository<UserEntity>,
+    user: UserEntity,
+    now: Date,
+  ): Promise<AuthFailure> {
     const withinWindow =
       user.firstFailedAt !== null &&
       now.getTime() - user.firstFailedAt.getTime() <= FAILURE_WINDOW_MS;
@@ -139,8 +182,8 @@ export class AuthService {
 
     if (user.failedAttemptCount >= MAX_FAILED_ATTEMPTS) {
       user.lockedUntil = new Date(now.getTime() + LOCK_DURATION_MS);
-      await this.users.save(user);
-      throw new AuthFailure(
+      await users.save(user);
+      return new AuthFailure(
         "LOCKED",
         "登录尝试过多，请稍后再试",
         429,
@@ -149,8 +192,8 @@ export class AuthService {
     }
 
     user.lockedUntil = null;
-    await this.users.save(user);
-    throw new AuthFailure(
+    await users.save(user);
+    return new AuthFailure(
       "INVALID_CREDENTIALS",
       "用户名或密码错误",
       401,

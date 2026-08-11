@@ -180,4 +180,29 @@ describe("authentication API", () => {
     expect(locked.body.code).toBe("LOCKED");
     expect(Number(locked.headers["retry-after"])).toBeGreaterThan(0);
   });
+
+  it("counts concurrent failed attempts and locks on the fifth failure", async () => {
+    const attempts = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        request(app.getHttpServer())
+          .post("/api/v1/auth/login")
+          .set("Origin", WEB_ORIGIN)
+          .send({ username: "admin", password: "Wrong-password-2026" }),
+      ),
+    );
+
+    expect(attempts.map((response) => response.status).sort()).toEqual([
+      401,
+      401,
+      401,
+      401,
+      429,
+    ]);
+
+    const user = await dataSource.getRepository(UserEntity).findOneByOrFail({
+      id: "U-ADMIN",
+    });
+    expect(user.failedAttemptCount).toBe(5);
+    expect(user.lockedUntil).not.toBeNull();
+  });
 });
