@@ -117,6 +117,19 @@ describe("platform routing", () => {
     expect(screen.getByRole("link", { name: /^提现审核/ })).toBeVisible();
   });
 
+  it.each(["admin", "leader", "collector"] as const)(
+    "renders the shared account profile for an authenticated %s",
+    (role) => {
+      renderPlatform("/account/profile", role);
+
+      expect(screen.getByRole("heading", { name: "个人资料" })).toBeVisible();
+      expect(screen.getByRole("link", { name: /^个人资料/ })).toHaveAttribute(
+        "href",
+        "/account/profile",
+      );
+    },
+  );
+
   it("opens notifications and clears the unread state", async () => {
     const user = userEvent.setup();
     renderPlatform("/admin", "admin");

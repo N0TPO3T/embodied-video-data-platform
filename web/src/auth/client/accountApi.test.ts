@@ -4,6 +4,7 @@ import {
   AccountApiError,
   createAccount,
   createTeam,
+  changeOwnPassword,
   login,
   listAccountAudit,
   listAccounts,
@@ -84,6 +85,26 @@ describe("account API client", () => {
     );
 
     await expect(logout()).resolves.toBeUndefined();
+  });
+
+  it("posts an authenticated password change and accepts the revoked-session response", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      changeOwnPassword("current-password", "new-password"),
+    ).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/v1/accounts/me/change-password",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        body: JSON.stringify({
+          currentPassword: "current-password",
+          newPassword: "new-password",
+        }),
+      }),
+    );
   });
 
   it("maps administrator account responses to typed values", async () => {

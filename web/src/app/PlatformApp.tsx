@@ -19,7 +19,7 @@ import { WithdrawalsPage } from "../features/admin/WithdrawalsPage";
 import { CollectorDashboard } from "../features/collector/CollectorDashboard";
 import { EarningsPage } from "../features/collector/EarningsPage";
 import { GuidePage } from "../features/collector/GuidePage";
-import { ProfilePage } from "../features/collector/ProfilePage";
+import { AccountProfilePage } from "../features/account/AccountProfilePage";
 import { SubmissionDetail } from "../features/collector/SubmissionDetail";
 import { SubmissionsPage } from "../features/collector/SubmissionsPage";
 import { UploadPage } from "../features/collector/UploadPage";
@@ -35,6 +35,7 @@ import { InteractionProvider } from "../interactions/InteractionContext";
 import { roleHome } from "./navigation";
 
 function requiredRole(path: string): Role | null {
+  if (path === "/account/profile") return null;
   if (path.startsWith("/collector")) return "collector";
   if (path.startsWith("/team")) return "leader";
   if (path.startsWith("/admin")) return "admin";
@@ -87,7 +88,9 @@ function AuthenticatedPlatformContent({
   const safePath = gatedRole && gatedRole !== currentAccount.role ? roleHome[currentAccount.role] : path;
 
   let page = <CollectorDashboard navigate={navigate} />;
-  if (safePath === "/collector" && initialPath.startsWith("/admin")) {
+  if (safePath === "/account/profile") {
+    page = <AccountProfilePage />;
+  } else if (safePath === "/collector" && initialPath.startsWith("/admin")) {
     page = <CollectorDashboard navigate={navigate} title />;
   } else if (currentAccount.role === "collector") {
     if (safePath === "/collector/upload") page = <UploadPage />;
@@ -96,7 +99,6 @@ function AuthenticatedPlatformContent({
     else if (safePath === "/collector/quality") page = <SubmissionsPage qualityOnly navigate={navigate} />;
     else if (safePath === "/collector/earnings") page = <EarningsPage />;
     else if (safePath === "/collector/guide") page = <GuidePage />;
-    else if (safePath === "/collector/profile") page = <ProfilePage />;
   } else if (currentAccount.role === "leader") {
     if (safePath === "/team/members") page = <MembersPage />;
     else if (safePath === "/team/submissions") page = <TeamSubmissionsPage />;

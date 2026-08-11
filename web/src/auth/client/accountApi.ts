@@ -88,6 +88,16 @@ export function logout(): Promise<void> {
   });
 }
 
+export function changeOwnPassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  return requestJson("/accounts/me/change-password", {
+    method: "POST",
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+}
+
 export async function listAccounts(): Promise<AccountPublic[]> {
   const result = await requestJson<{ accounts: AccountPublic[] }>(
     "/accounts",
