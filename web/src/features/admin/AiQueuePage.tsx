@@ -18,9 +18,20 @@ function jobStatus(item: Submission): {
   if (status === "system_failed" || item.processingStatus === "failed") {
     return { label: "执行异常", tone: "danger" };
   }
-  if (status === "running") return { label: "AI 质检中", tone: "info" };
-  if (item.processingStatus === "processing") {
+  if (status === "running" || item.pipelineStage === "ai_processing") {
+    return { label: "AI 质检中", tone: "info" };
+  }
+  if (item.pipelineStage === "probing") {
     return { label: "媒体分析中", tone: "info" };
+  }
+  if (status === "queued" || item.pipelineStage === "awaiting_ai") {
+    return { label: "等待 AI 质检", tone: "warning" };
+  }
+  if (item.pipelineStage === "uploading") {
+    return { label: "上传中", tone: "info" };
+  }
+  if (item.pipelineStage === "queued") {
+    return { label: "等待媒体分析", tone: "warning" };
   }
   return { label: "等待处理", tone: "warning" };
 }
@@ -30,12 +41,16 @@ export function AiQueuePage() {
   const jobs = state.submissions;
   const queued = jobs.filter(
     (item) =>
-      item.processingStatus === "queued" ||
+      item.pipelineStage === "queued" ||
+      item.pipelineStage === "awaiting_ai" ||
       item.qualityResult?.status === "queued",
   ).length;
-  const running = jobs.filter(
+  const mediaRunning = jobs.filter(
+    (item) => item.pipelineStage === "probing",
+  ).length;
+  const aiRunning = jobs.filter(
     (item) =>
-      item.processingStatus === "processing" ||
+      item.pipelineStage === "ai_processing" ||
       item.qualityResult?.status === "running",
   ).length;
   const completed = jobs.filter((item) =>
@@ -57,7 +72,7 @@ export function AiQueuePage() {
       </div>
       <div className="metric-grid">
         <MetricCard label="等待处理" value={String(queued)} detail="等待媒体或 AI 队列" icon={Clock3} tone="amber" />
-        <MetricCard label="执行中" value={String(running)} detail="最多同时执行 2 条" icon={Cpu} />
+        <MetricCard label="AI 执行中" value={String(aiRunning)} detail={`最多同时执行 2 条 · 媒体分析中 ${mediaRunning} 条`} icon={Cpu} />
         <MetricCard label="已出结果" value={String(completed)} detail="包含通过、退回和待复核" icon={CheckCircle2} tone="green" />
         <MetricCard label="异常任务" value={String(failed)} detail="已持久化失败原因" icon={CircleX} tone="violet" />
       </div>

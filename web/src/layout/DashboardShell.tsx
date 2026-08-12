@@ -88,7 +88,7 @@ export function DashboardShell({
         </nav>
         <div className="sidebar-foot">
           <div className="system-pulse"><span />系统运行正常</div>
-          <small>演示版 v0.1.0</small>
+          <small>本地运行版 v0.1.0</small>
         </div>
       </aside>
 

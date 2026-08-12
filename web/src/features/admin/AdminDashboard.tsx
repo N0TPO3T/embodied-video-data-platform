@@ -9,10 +9,18 @@ export function AdminDashboard() {
   const { state } = useDemoStore();
   const submissions = state.submissions;
   const queued = submissions.filter(
-    (item) => item.processingStatus === "queued" || item.qualityResult?.status === "queued",
+    (item) =>
+      item.pipelineStage === "queued" ||
+      item.pipelineStage === "awaiting_ai" ||
+      item.qualityResult?.status === "queued",
   ).length;
-  const running = submissions.filter(
-    (item) => item.processingStatus === "processing" || item.qualityResult?.status === "running",
+  const mediaRunning = submissions.filter(
+    (item) => item.pipelineStage === "probing",
+  ).length;
+  const aiRunning = submissions.filter(
+    (item) =>
+      item.pipelineStage === "ai_processing" ||
+      item.qualityResult?.status === "running",
   ).length;
   const finished = submissions.filter((item) =>
     ["scored", "hard_reject", "review_pending"].includes(item.qualityResult?.status ?? ""),
@@ -35,7 +43,7 @@ export function AdminDashboard() {
       </div>
       <div className="dashboard-grid">
         <section className="content-card content-card-wide"><div className="card-heading"><div><h2>正式 AI 质检</h2><p>当前主流程使用 Qwen3.7 模型路由</p></div></div><div className="pipeline-list"><div><span>初检模型</span><strong>qwen3.7-plus</strong><em>正式任务</em></div><div><span>条件复核</span><strong>qwen3.7-flash</strong><em>按规则触发</em></div><div><span>并发上限</span><strong>2</strong><em>单 Worker 实例</em></div><div><span>结果存储</span><strong>PostgreSQL</strong><em>重启后保留</em></div></div></section>
-        <aside className="content-card"><div className="card-heading"><div><h2>处理流水线</h2><p>当前正式任务状态</p></div></div><div className="pipeline-list"><div><span>等待处理</span><strong>{queued}</strong><em>媒体或 AI 队列</em></div><div><span>分析中</span><strong>{running}</strong><em>最多并发 2 条</em></div><div><span>已出结果</span><strong>{finished}</strong><em>持久化完成</em></div><div><span>异常任务</span><strong className="danger-text">{failed}</strong><em>可查看原因</em></div></div></aside>
+        <aside className="content-card"><div className="card-heading"><div><h2>处理流水线</h2><p>当前正式任务状态</p></div></div><div className="pipeline-list"><div><span>等待处理</span><strong>{queued}</strong><em>媒体或 AI 队列</em></div><div><span>媒体分析中</span><strong>{mediaRunning}</strong><em>解析视频元数据</em></div><div><span>AI 执行中</span><strong>{aiRunning}</strong><em>最多并发 2 条</em></div><div><span>已出结果</span><strong>{finished}</strong><em>持久化完成</em></div><div><span>异常任务</span><strong className="danger-text">{failed}</strong><em>可查看原因</em></div></div></aside>
       </div>
     </div>
   );

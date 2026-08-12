@@ -68,7 +68,7 @@ export function LoginPage({
           </h1>
           <p>
             使用平台账号登录，系统会按照账号角色进入对应工作台。
-            视频业务流程当前仍使用演示数据。
+            账号、视频提交和 AI 质检结果都会保存到本地数据库。
           </p>
         </div>
         <button className="back-link" onClick={() => navigate("/")}>

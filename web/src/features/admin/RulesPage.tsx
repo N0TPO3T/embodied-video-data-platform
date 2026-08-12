@@ -25,7 +25,7 @@ export function RulesPage() {
       </div>
       <div className="rule-cards">
         <article className="content-card"><span><Tags size={19}/></span><div><small>标签体系</small><strong>v3.2</strong><em>{state.labels.filter((label) => label.enabled).length} 个核心标签启用</em></div></article>
-        <article className="content-card"><span><Bot size={19}/></span><div><small>AI 模型</small><strong>model-2.8</strong><em>发布于 2026-07-28</em></div></article>
+        <article className="content-card"><span><Bot size={19}/></span><div><small>AI 模型</small><strong>Qwen3.7</strong><em>Plus 初检 · Flash 条件复核</em></div></article>
         <article className="content-card"><span><CircleGauge size={19}/></span><div><small>通过阈值</small><strong>{state.rule.passThreshold} 分</strong><em>质量系数分 3 档</em></div></article>
         <article className="content-card"><span><BadgeCheck size={19}/></span><div><small>当前规则</small><strong>{state.rule.version}</strong><em>正在生产使用</em></div></article>
       </div>

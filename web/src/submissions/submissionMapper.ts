@@ -126,6 +126,7 @@ export function backendSubmissionToDomain(
       ? `${source.media.width}×${source.media.height}`
       : "解析中",
     processingStatus: processingStatus(source.processingStatus),
+    pipelineStage: source.processingStatus,
     qualityStatus: mappedQualityStatus(source),
     aiScore: source.quality?.finalScore ?? 0,
     finalScore: source.quality?.finalScore ?? 0,

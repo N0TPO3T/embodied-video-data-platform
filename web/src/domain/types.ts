@@ -8,6 +8,15 @@ export type ProcessingStatus =
   | "completed"
   | "failed";
 
+export type ProcessingPipelineStage =
+  | "uploading"
+  | "queued"
+  | "probing"
+  | "awaiting_ai"
+  | "ai_processing"
+  | "completed"
+  | "system_failed";
+
 export type QualityStatus = "pending" | "passed" | "failed";
 export type SettlementStatus = "unsettled" | "settled";
 export type WithdrawalStatus =
@@ -62,6 +71,7 @@ export interface Submission {
   sizeMb: number;
   resolution: string;
   processingStatus: ProcessingStatus;
+  pipelineStage?: ProcessingPipelineStage;
   qualityStatus: QualityStatus;
   aiScore: number;
   finalScore: number;

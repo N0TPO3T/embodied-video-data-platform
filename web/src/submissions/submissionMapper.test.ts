@@ -65,6 +65,7 @@ describe("backend submission mapping", () => {
       sizeMb: 10,
       resolution: "1920×1080",
       processingStatus: "processing",
+      pipelineStage: "awaiting_ai",
       qualityStatus: "pending",
       aiScore: 0,
       finalScore: 0,
