@@ -3,6 +3,33 @@ import { describe, expect, it } from "vitest";
 import { backendSubmissionToDomain } from "./submissionMapper";
 
 describe("backend submission mapping", () => {
+  it("formats submission times in Asia/Shanghai regardless of the runtime timezone", () => {
+    const previousTimezone = process.env.TZ;
+    process.env.TZ = "UTC";
+
+    try {
+      const submission = backendSubmissionToDomain({
+        id: "SUB-TIMEZONE",
+        fileName: "timezone.mp4",
+        ownerId: "U-01",
+        ownerName: "测试数采",
+        teamId: "TEAM-01",
+        teamName: "测试团队",
+        sizeBytes: "1048576",
+        uploadStatus: "uploaded",
+        processingStatus: "queued",
+        isTestData: false,
+        createdAt: Date.parse("2026-08-11T11:00:00.000Z"),
+        segments: [],
+      });
+
+      expect(submission.createdAt).toBe("2026/08/11 19:00");
+    } finally {
+      if (previousTimezone === undefined) delete process.env.TZ;
+      else process.env.TZ = previousTimezone;
+    }
+  });
+
   it("maps media state and unions overlapping invalid intervals", () => {
     const submission = backendSubmissionToDomain({
       id: "SUB-01",
