@@ -3,6 +3,7 @@ import {
   CreateDateColumn,
   Entity,
   JoinColumn,
+  ManyToOne,
   OneToOne,
   PrimaryColumn,
   UpdateDateColumn,
@@ -37,7 +38,7 @@ export class VideoQualityResultEntity {
   @Column({ name: "prompt_version_id", type: "varchar", length: 64 })
   promptVersionId!: string;
 
-  @OneToOne(() => VideoQualityPromptVersionEntity, { onDelete: "RESTRICT" })
+  @ManyToOne(() => VideoQualityPromptVersionEntity, { onDelete: "RESTRICT" })
   @JoinColumn({ name: "prompt_version_id" })
   prompt?: VideoQualityPromptVersionEntity;
 
