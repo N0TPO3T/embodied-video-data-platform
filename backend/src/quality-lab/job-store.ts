@@ -22,6 +22,8 @@ export type PublicQualityLabJob = {
   stage: QualityStage;
   createdAt: string;
   updatedAt: string;
+  promptRevision?: number;
+  promptContentSha256?: string;
   result?: Omit<NormalizedVideoQcResultV1, "rawModelResult">;
   error?: string;
   diagnostics: BailianCallDiagnostic[];
@@ -97,6 +99,8 @@ export class QualityLabJobStore {
     sizeBytes: number;
     filePath: string;
     workDirectory: string;
+    promptRevision?: number;
+    promptContentSha256?: string;
   }): QualityLabJobRecord {
     this.sweep();
     const timestamp = this.now().toISOString();
@@ -110,6 +114,12 @@ export class QualityLabJobStore {
         stage: "queued",
         createdAt: timestamp,
         updatedAt: timestamp,
+        ...(input.promptRevision
+          ? { promptRevision: input.promptRevision }
+          : {}),
+        ...(input.promptContentSha256
+          ? { promptContentSha256: input.promptContentSha256 }
+          : {}),
         diagnostics: [],
       },
       filePath: input.filePath,

@@ -37,6 +37,8 @@ describe("quality lab persistent job store", () => {
       sizeBytes: 123,
       filePath: "/tmp/private-video.mp4",
       workDirectory: "/tmp/private-frames",
+      promptRevision: 3,
+      promptContentSha256: "b".repeat(64),
     });
     store.appendDiagnostic(record.public.id, {
       taskId: record.public.id,
@@ -63,6 +65,8 @@ describe("quality lab persistent job store", () => {
       id: record.public.id,
       fileName: "26018_68.mp4",
       stage: "system_failed",
+      promptRevision: 3,
+      promptContentSha256: "b".repeat(64),
       diagnostics: [
         {
           taskId: record.public.id,

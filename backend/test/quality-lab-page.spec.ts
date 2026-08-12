@@ -72,4 +72,25 @@ describe("quality lab page", () => {
     expect(html).toContain('plus_review:"复核（历史）"');
     expect(html).toContain('"initial_review","secondary_review"');
   });
+
+  it("selects history cards, shows their total score, and renders one detail", () => {
+    const html = renderQualityLabPage();
+
+    expect(html).toContain("selectedId");
+    expect(html).toContain("selectEntry(entry)");
+    expect(html).toContain('node("div","queue-score"');
+    expect(html).toContain("entry.result.finalScore");
+    expect(html).toContain("const selected=selectedEntry()");
+    expect(html).not.toContain("for(const entry of completed)");
+  });
+
+  it("loads and publishes the system prompt from the page", () => {
+    const html = renderQualityLabPage();
+
+    expect(html).toContain('id="prompt-editor"');
+    expect(html).toContain('id="save-prompt"');
+    expect(html).toContain('fetch("/api/prompt")');
+    expect(html).toContain('fetch("/api/prompt",{method:"PUT"');
+    expect(html).toContain("只影响保存后新开始的任务");
+  });
 });

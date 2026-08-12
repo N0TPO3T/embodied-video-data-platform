@@ -13,6 +13,10 @@ import type {
 import type { NormalizedVideoQcResultV1 } from "../video-quality/video-quality.types.js";
 import type { QualityLabEnvironment } from "./environment.js";
 import {
+  QualityLabPromptStore,
+  type QualityLabPromptSnapshot,
+} from "./prompt-store.js";
+import {
   QualityLabJobStore,
   isTerminalQualityStage,
   type QualityLabJobRecord,
@@ -35,6 +39,8 @@ type UploadRequest = Request & {
 type QualityLabAppOptions = {
   environment: QualityLabEnvironment;
   evaluator: VideoQualityEvaluator | null;
+  evaluatorFactory?: (prompt: QualityLabPromptSnapshot) => VideoQualityEvaluator;
+  promptStore?: QualityLabPromptStore;
   store?: QualityLabJobStore;
   logger?: (event: Record<string, unknown>) => void;
 };
@@ -70,6 +76,7 @@ export function createQualityLabApp(options: QualityLabAppOptions): Express {
   const store = options.store ?? new QualityLabJobStore();
   const logger = options.logger ?? (() => undefined);
   const pending: string[] = [];
+  const jobEvaluators = new Map<string, VideoQualityEvaluator>();
   const maxConcurrency = 2;
   let activeJobs = 0;
 
@@ -96,6 +103,7 @@ export function createQualityLabApp(options: QualityLabAppOptions): Express {
   }).single("video");
 
   app.disable("x-powered-by");
+  app.use(express.json({ limit: "128kb" }));
   app.use((_request, response, next) => {
     response.setHeader("X-Content-Type-Options", "nosniff");
     response.setHeader("Cache-Control", "no-store");
@@ -111,10 +119,12 @@ export function createQualityLabApp(options: QualityLabAppOptions): Express {
     if (!record) return;
     if (record.public.stage === "cancelled") {
       await clean(record);
+      jobEvaluators.delete(id);
       return;
     }
     try {
-      const result = await options.evaluator?.evaluate(
+      const evaluator = jobEvaluators.get(id) ?? options.evaluator;
+      const result = await evaluator?.evaluate(
         {
           videoId: id,
           filePath: record.filePath,
@@ -153,6 +163,8 @@ export function createQualityLabApp(options: QualityLabAppOptions): Express {
           error: message,
         });
       }
+    } finally {
+      jobEvaluators.delete(id);
     }
   }
 
@@ -168,6 +180,7 @@ export function createQualityLabApp(options: QualityLabAppOptions): Express {
     }
   }
   app.get("/api/health", (_request, response) => {
+    const activePrompt = options.promptStore?.getCurrent();
     response.json({
       status: "ok",
       modelStatus: options.environment.modelConfigured
@@ -177,6 +190,7 @@ export function createQualityLabApp(options: QualityLabAppOptions): Express {
       reviewModel: options.environment.reviewModel,
       ruleVersion: "video_qc_v1",
       promptVersion: "qwen_video_qc_prompt_v1",
+      promptRevision: activePrompt?.revision ?? 1,
       concurrency: maxConcurrency,
     });
   });
@@ -192,8 +206,72 @@ export function createQualityLabApp(options: QualityLabAppOptions): Express {
     });
   });
 
+  app.get("/api/prompt", (_request, response) => {
+    const prompt = options.promptStore?.getCurrent();
+    if (!prompt) {
+      response.status(503).json({ error: "系统提示词编辑尚未配置" });
+      return;
+    }
+    response.json({
+      prompt: {
+        revision: prompt.revision,
+        systemPrompt: prompt.systemPrompt,
+        contentSha256: prompt.contentSha256,
+        promptVersion: prompt.promptVersion,
+        ruleVersion: prompt.ruleVersion,
+        outputSchema: prompt.outputSchema,
+        initialModel: prompt.initialModel,
+        reviewModel: prompt.reviewModel,
+        updatedAt: prompt.updatedAt,
+      },
+    });
+  });
+
+  app.put("/api/prompt", (request, response) => {
+    if (!options.promptStore) {
+      response.status(503).json({ error: "系统提示词编辑尚未配置" });
+      return;
+    }
+    if (
+      !request.body ||
+      typeof request.body !== "object" ||
+      typeof request.body.systemPrompt !== "string"
+    ) {
+      response.status(400).json({ error: "systemPrompt 必须是字符串" });
+      return;
+    }
+    try {
+      const prompt = options.promptStore.update(request.body.systemPrompt);
+      logger({
+        event: "quality_lab_prompt_updated",
+        revision: prompt.revision,
+        contentSha256: prompt.contentSha256,
+      });
+      response.json({
+        prompt: {
+          revision: prompt.revision,
+          systemPrompt: prompt.systemPrompt,
+          contentSha256: prompt.contentSha256,
+          promptVersion: prompt.promptVersion,
+          ruleVersion: prompt.ruleVersion,
+          outputSchema: prompt.outputSchema,
+          initialModel: prompt.initialModel,
+          reviewModel: prompt.reviewModel,
+          updatedAt: prompt.updatedAt,
+        },
+      });
+    } catch (error) {
+      response.status(400).json({
+        error: error instanceof Error ? error.message : "系统提示词保存失败",
+      });
+    }
+  });
+
   app.post("/api/jobs", (request: UploadRequest, response: Response) => {
-    if (!options.evaluator || !options.environment.modelConfigured) {
+    if (
+      (!options.evaluator && !options.evaluatorFactory) ||
+      !options.environment.modelConfigured
+    ) {
       response.status(503).json({ error: "百炼模型尚未配置" });
       return;
     }
@@ -223,13 +301,19 @@ export function createQualityLabApp(options: QualityLabAppOptions): Express {
           ? request.body.batchId.trim()
           : "";
       const batchId = rawBatchId.slice(0, 128) || "standalone";
+      const prompt = options.promptStore?.getCurrent();
       const record = store.create({
         batchId,
         fileName: request.file.originalname.slice(0, 255),
         sizeBytes: request.file.size,
         filePath: request.file.path,
         workDirectory: request.qualityTempDirectory,
+        promptRevision: prompt?.revision,
+        promptContentSha256: prompt?.contentSha256,
       });
+      if (prompt && options.evaluatorFactory) {
+        jobEvaluators.set(record.public.id, options.evaluatorFactory(prompt));
+      }
       pending.push(record.public.id);
       logger({
         event: "quality_lab_job_created",

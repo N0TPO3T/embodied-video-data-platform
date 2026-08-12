@@ -9,6 +9,8 @@ import {
 } from "../src/quality-lab/environment.js";
 import { createQualityLabApp } from "../src/quality-lab/server.js";
 import type { VideoQualityEvaluator } from "../src/quality-lab/server.js";
+import { QualityLabPromptStore } from "../src/quality-lab/prompt-store.js";
+import type { LoadedVideoQualityPrompt } from "../src/video-quality/prompt-loader.js";
 import type { NormalizedVideoQcResultV1 } from "../src/video-quality/video-quality.types.js";
 
 function environment(
@@ -103,10 +105,94 @@ describe("quality lab environment", () => {
     expect(parsed.qwenApiKey).toBeUndefined();
     expect(parsed.initialModel).toBe("qwen3.7-plus");
     expect(parsed.reviewModel).toBe("qwen3.7-flash");
+    expect(parsed.promptStatePath).toBeUndefined();
+
+    const persisted = parseQualityLabEnvironment({
+      QUALITY_LAB_HISTORY_PATH: "/data/quality-lab/jobs.json",
+    });
+    expect(persisted.promptStatePath).toBe("/data/quality-lab/prompt.json");
   });
 });
 
 describe("quality lab server", () => {
+  it("exposes versioned prompts and locks each job to its creation revision", async () => {
+    const committedPrompt: LoadedVideoQualityPrompt = {
+      systemPrompt: "video_qc_v1 初始规则，返回 JSON。",
+      outputExample: { schema_version: "video_qc_result_v1" },
+      promptVersion: "qwen_video_qc_prompt_v1",
+      ruleVersion: "video_qc_v1",
+      outputSchema: "video_qc_result_v1",
+      initialModel: "qwen3.7-plus",
+      reviewModel: "qwen3.7-flash",
+      contentSha256: "a".repeat(64),
+    };
+    const promptStore = new QualityLabPromptStore({ committedPrompt });
+    const revisions: number[] = [];
+    const app = createQualityLabApp({
+      environment: environment(),
+      evaluator: null,
+      promptStore,
+      evaluatorFactory: (prompt) => ({
+        evaluate: vi.fn(async (input) => {
+          revisions.push(prompt.revision);
+          return result(input.videoId);
+        }),
+      }),
+    });
+
+    const initial = await request(app).get("/api/prompt").expect(200);
+    expect(initial.body.prompt).toMatchObject({ revision: 1, systemPrompt: committedPrompt.systemPrompt });
+    const first = await request(app)
+      .post("/api/jobs")
+      .field("batchId", "prompt-one")
+      .attach("video", Buffer.from("video"), "one.mp4")
+      .expect(202);
+    await request(app)
+      .put("/api/prompt")
+      .send({ systemPrompt: "video_qc_v1 第二版规则，返回 JSON。" })
+      .expect(200)
+      .expect(({ body }) => expect(body.prompt.revision).toBe(2));
+    const second = await request(app)
+      .post("/api/jobs")
+      .field("batchId", "prompt-two")
+      .attach("video", Buffer.from("video"), "two.mp4")
+      .expect(202);
+
+    const [firstResult, secondResult] = await Promise.all([
+      waitForTerminal(app, first.body.jobId),
+      waitForTerminal(app, second.body.jobId),
+    ]);
+    expect(revisions).toEqual([1, 2]);
+    expect(firstResult.body.promptRevision).toBe(1);
+    expect(firstResult.body.promptContentSha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(secondResult.body.promptRevision).toBe(2);
+    expect(secondResult.body.promptContentSha256).not.toBe(
+      firstResult.body.promptContentSha256,
+    );
+  });
+
+  it("rejects invalid prompt updates without changing the active revision", async () => {
+    const committedPrompt: LoadedVideoQualityPrompt = {
+      systemPrompt: "video_qc_v1 初始规则，返回 JSON。",
+      outputExample: {},
+      promptVersion: "qwen_video_qc_prompt_v1",
+      ruleVersion: "video_qc_v1",
+      outputSchema: "video_qc_result_v1",
+      initialModel: "qwen3.7-plus",
+      reviewModel: "qwen3.7-flash",
+      contentSha256: "a".repeat(64),
+    };
+    const promptStore = new QualityLabPromptStore({ committedPrompt });
+    const app = createQualityLabApp({
+      environment: environment(),
+      evaluator: { evaluate: vi.fn() },
+      promptStore,
+    });
+
+    await request(app).put("/api/prompt").send({ systemPrompt: "中文" }).expect(400);
+    expect((await request(app).get("/api/prompt")).body.prompt.revision).toBe(1);
+  });
+
   it("runs two evaluations in parallel and holds the third", async () => {
     const started: string[] = [];
     const releases: Array<() => void> = [];

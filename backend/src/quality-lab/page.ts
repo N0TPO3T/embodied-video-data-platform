@@ -9,7 +9,7 @@ export function renderQualityLabPage(): string {
     :root { color-scheme:light; --ink:#162033; --muted:#748197; --line:#e4eaf2; --blue:#3868f5; --navy:#0d1729; --green:#16885d; --amber:#b77716; --red:#c84f4a; --canvas:#f4f7fb; }
     * { box-sizing:border-box; }
     body { margin:0; color:var(--ink); background:var(--canvas); font-family:Inter,"PingFang SC","Microsoft YaHei",system-ui,sans-serif; }
-    button,input { font:inherit; } button { cursor:pointer; }
+    button,input,textarea { font:inherit; } button { cursor:pointer; }
     .shell { width:min(1180px,calc(100% - 36px)); margin:0 auto; padding:32px 0 64px; }
     .hero { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; padding:30px; color:#fff; background:radial-gradient(circle at 80% 10%,#244b9c 0,transparent 35%),linear-gradient(135deg,#0d1729,#152847); border-radius:22px; box-shadow:0 22px 60px rgb(16 35 73 / 18%); }
     .eyebrow { color:#81a6ff; font-size:12px; font-weight:750; letter-spacing:.08em; }
@@ -18,11 +18,20 @@ export function renderQualityLabPage(): string {
     .health { display:flex; min-width:max-content; align-items:center; gap:9px; padding:10px 13px; color:#c4d2e7; background:rgb(255 255 255 / 7%); border:1px solid rgb(255 255 255 / 12%); border-radius:999px; font-size:11px; }
     .health i { width:8px; height:8px; background:#e3a342; border-radius:50%; box-shadow:0 0 0 5px rgb(227 163 66 / 12%); }
     .health.ready i { background:#58d29a; box-shadow:0 0 0 5px rgb(88 210 154 / 12%); }
-    .grid { display:grid; margin-top:20px; grid-template-columns:minmax(300px,.78fr) minmax(0,1.22fr); gap:18px; align-items:start; }
-    .panel { padding:22px; background:#fff; border:1px solid var(--line); border-radius:17px; box-shadow:0 10px 35px rgb(20 44 84 / 5%); }
+    .grid { display:grid; margin-top:18px; grid-template-columns:minmax(300px,.78fr) minmax(0,1.22fr); gap:18px; align-items:start; }
+    .panel { min-width:0; padding:22px; background:#fff; border:1px solid var(--line); border-radius:17px; box-shadow:0 10px 35px rgb(20 44 84 / 5%); }
     .panel h2 { margin:0; font-size:16px; }
-    .panel-head { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+    .panel-head { display:flex; min-width:0; align-items:center; justify-content:space-between; gap:16px; }
+    .panel-head > div { min-width:0; }
     .panel-head p { margin:6px 0 0; color:var(--muted); font-size:11px; }
+    .prompt-panel { margin-top:20px; }
+    .prompt-meta { display:flex; margin-top:14px; flex-wrap:wrap; gap:8px; color:var(--muted); font-size:9px; }
+    .prompt-meta span { padding:6px 9px; background:#f3f6fb; border-radius:999px; }
+    .prompt-editor { width:100%; min-height:250px; margin-top:12px; padding:14px; color:#26344b; background:#f8fafe; border:1px solid var(--line); border-radius:11px; outline:0; font:10px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace; resize:vertical; }
+    .prompt-editor:focus { border-color:#8ca9f5; box-shadow:0 0 0 3px rgb(56 104 245 / 9%); }
+    .prompt-footer { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+    .prompt-footer p { margin:10px 0 0; color:#8995a7; font-size:9px; line-height:1.6; }
+    .prompt-message { color:#3159c4; font-weight:700; }
     .drop-zone { display:grid; min-height:190px; margin-top:18px; padding:24px; place-items:center; text-align:center; background:#f7f9fd; border:1.5px dashed #bdcae0; border-radius:15px; transition:.16s ease; }
     .drop-zone.dragging { background:#eef3ff; border-color:var(--blue); transform:translateY(-1px); }
     .drop-zone strong { display:block; font-size:14px; }
@@ -34,13 +43,18 @@ export function renderQualityLabPage(): string {
     .queue,.results { display:grid; margin-top:17px; gap:9px; }
     .results { gap:14px; }
     .queue-empty,.result-empty { padding:22px; color:#8b96a8; text-align:center; background:#fafbfc; border-radius:11px; font-size:11px; }
-    .queue-item { display:grid; padding:13px; background:#fafbfe; border:1px solid #edf0f5; border-radius:11px; grid-template-columns:minmax(0,1fr) auto; gap:7px 12px; }
+    .queue-item { display:grid; padding:13px; cursor:pointer; background:#fafbfe; border:1px solid #edf0f5; border-radius:11px; grid-template-columns:minmax(0,1fr) auto; gap:7px 12px; transition:.15s ease; }
+    .queue-item:hover { border-color:#bdcae0; transform:translateY(-1px); }
+    .queue-item.selected { background:#f0f4ff; border-color:#7f9ef2; box-shadow:0 0 0 3px rgb(56 104 245 / 7%); }
+    .queue-item:focus-visible { outline:3px solid rgb(56 104 245 / 20%); outline-offset:2px; }
     .queue-item strong { display:block; overflow:hidden; font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
     .queue-meta { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:9px; }
+    .queue-score { grid-row:1 / 3; grid-column:2; align-self:center; min-width:46px; color:var(--blue); text-align:right; font-size:16px; font-weight:800; }
+    .queue-score small { display:block; margin-top:2px; color:#98a3b4; font-size:8px; font-weight:600; }
     .task-id { margin-top:4px; color:#3159c4; font:9px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; overflow-wrap:anywhere; }
     .status { display:inline-flex; padding:4px 7px; border-radius:999px; font-size:9px; font-weight:700; }
     .status.active { color:#315fd2; background:#eaf0ff; } .status.ok { color:var(--green); background:#e7f7ef; } .status.warn { color:var(--amber); background:#fff3df; } .status.bad { color:var(--red); background:#fdeaea; } .status.idle { color:#68758a; background:#eef1f5; }
-    .mini-button { grid-row:1 / 3; grid-column:2; align-self:center; padding:6px 8px; color:#7b8799; background:#fff; border:1px solid var(--line); border-radius:8px; font-size:9px; }
+    .mini-button { margin-left:auto; padding:5px 7px; color:#7b8799; background:#fff; border:1px solid var(--line); border-radius:7px; font-size:8px; }
     .result-card { padding:19px; border:1px solid var(--line); border-radius:14px; }
     .result-title { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; }
     .result-title h3 { max-width:560px; margin:0; overflow:hidden; font-size:13px; text-overflow:ellipsis; white-space:nowrap; }
@@ -64,7 +78,7 @@ export function renderQualityLabPage(): string {
     .result-actions { display:flex; justify-content:flex-end; gap:8px; }
     .download { margin-top:11px; padding:7px 10px; color:#3159c4; background:#edf2ff; border:0; border-radius:8px; font-size:9px; font-weight:700; }
     .download.danger { color:var(--red); background:#fdeaea; }
-    @media (max-width:820px) { .grid{grid-template-columns:1fr}.hero{align-items:flex-start;flex-direction:column}.health{min-width:0}.summary-grid{grid-template-columns:1fr}.dimension{grid-template-columns:115px 1fr 30px}.shell{width:min(100% - 22px,1180px);padding-top:12px} }
+    @media (max-width:960px) { .grid{grid-template-columns:1fr}.hero{align-items:flex-start;flex-direction:column}.health{min-width:0}.summary-grid{grid-template-columns:1fr}.dimension{grid-template-columns:115px 1fr 30px}.shell{width:min(100% - 22px,1180px);padding-top:12px}.prompt-footer{align-items:stretch;flex-direction:column}.prompt-footer .button{width:100%} }
   </style>
 </head>
 <body>
@@ -73,22 +87,29 @@ export function renderQualityLabPage(): string {
       <div><span class="eyebrow">LOCAL QUALITY LAB · VIDEO_QC_V1</span><h1>AI 视频质检实验页</h1><p>使用正式千问模型、V1 系统提示词和服务端复算规则。队列最多双并发，任务结果与脱敏诊断保留 30 天。</p></div>
       <div id="health" class="health"><i></i><span>正在读取模型状态</span></div>
     </section>
+    <section class="panel prompt-panel">
+      <div class="panel-head"><div><h2>系统提示词</h2><p>直接编辑实验页后续任务使用的判断规则</p></div><span id="prompt-message" class="prompt-message"></span></div>
+      <div id="prompt-meta" class="prompt-meta"><span>正在读取当前版本</span></div>
+      <label for="prompt-editor" class="privacy">AI 系统提示词</label>
+      <textarea id="prompt-editor" class="prompt-editor" spellcheck="false" disabled></textarea>
+      <div class="prompt-footer"><p>保存会创建新版本，只影响保存后新开始的任务；已上传、排队中和历史任务继续使用各自锁定的版本。</p><button id="save-prompt" class="button" type="button" disabled>保存新版本</button></div>
+    </section>
     <div class="grid">
       <section class="panel">
-        <div class="panel-head"><div><h2>本地视频</h2><p>可一次选择多个文件，最多同时处理 2 个</p></div></div>
+        <div class="panel-head"><div><h2>视频与历史任务</h2><p>点击任务，在右侧查看对应评分详情</p></div></div>
         <div id="drop-zone" class="drop-zone" tabindex="0" role="button"><div><strong>拖放 MP4 / MOV 到这里</strong><span>单文件最大 1 GB，不会写入正式数据库</span><button id="choose-button" class="button" type="button">选择视频</button></div></div>
         <input id="file-input" type="file" accept="video/mp4,video/quicktime,.mp4,.mov" multiple hidden />
         <p class="privacy">视频完成、失败或取消后会删除原视频和抽帧；任务结果与脱敏调用诊断保留 30 天，刷新页面不会丢失。百炼调用可能产生模型费用。</p>
         <div id="queue-list" class="queue"></div>
       </section>
       <section class="panel">
-        <div class="panel-head"><div><h2>检测结果</h2><p>任务 ID、评分结果和调用诊断均可下载</p></div><button id="download-all" class="button secondary" type="button" disabled>下载整批 JSON</button></div>
+        <div class="panel-head"><div><h2>评分详情</h2><p>右侧仅显示当前选中的任务</p></div><button id="download-all" class="button secondary" type="button" disabled>下载整批 JSON</button></div>
         <div id="results-list" class="results"></div>
       </section>
     </div>
   </main>
   <script>
-    const state = { batchId:crypto.randomUUID(), queue:[], running:0, results:[], retentionDays:30 };
+    const state = { batchId:crypto.randomUUID(), queue:[], running:0, results:[], retentionDays:30, selectedId:null, prompt:null };
     const terminalStages = new Set(["completed","review_pending","system_failed","cancelled"]);
     const stageLabels = { waiting:"等待中", uploading:"上传中", queued:"排队中", media_analysis:"媒体分析", initial_review:"初审", secondary_review:"复核", flash_review:"初审（历史）", plus_review:"复核（历史）", completed:"已完成", review_pending:"待复核", system_failed:"系统失败", cancelled:"已取消" };
     const dimensionLabels = { first_person_and_composition:"第一人称与构图", hand_forearm_object_integrity:"手部、前臂与对象", frame_and_video_quality:"视频与帧质量", task_authenticity_completeness:"任务真实性与完整度", task_value_uniqueness:"任务价值与独特性" };
@@ -100,6 +121,10 @@ export function renderQualityLabPage(): string {
     const queueList = document.getElementById("queue-list");
     const resultsList = document.getElementById("results-list");
     const downloadAll = document.getElementById("download-all");
+    const promptEditor = document.getElementById("prompt-editor");
+    const promptMeta = document.getElementById("prompt-meta");
+    const promptMessage = document.getElementById("prompt-message");
+    const savePrompt = document.getElementById("save-prompt");
 
     function node(tag,className,text) { const element=document.createElement(tag); if(className) element.className=className; if(text!==undefined) element.textContent=text; return element; }
     function formatBytes(value) { if(value>=1073741824) return (value/1073741824).toFixed(2)+" GB"; if(value>=1048576) return (value/1048576).toFixed(1)+" MB"; return (value/1024).toFixed(1)+" KB"; }
@@ -109,26 +134,29 @@ export function renderQualityLabPage(): string {
     function reasonLabel(value) { return reasonLabels[value]||"其他质量问题"; }
     function severityLabel(value) { return severityLabels[value]||"未分级"; }
     function addMetric(grid,label,value) { const box=node("div"); box.append(node("span","",label),node("strong","",value)); grid.append(box); }
-    function addFiles(files) { for(const file of files) { const lower=file.name.toLowerCase(); if(!lower.endsWith(".mp4")&&!lower.endsWith(".mov")) continue; state.queue.push({ localId:crypto.randomUUID(), file, fileName:file.name, sizeBytes:file.size, stage:"waiting", jobId:null, result:null, error:null, diagnostics:[], controller:null }); } render(); void runQueue(); }
+    function addFiles(files) { let first=null; for(const file of files) { const lower=file.name.toLowerCase(); if(!lower.endsWith(".mp4")&&!lower.endsWith(".mov")) continue; const entry={ localId:crypto.randomUUID(), file, fileName:file.name, sizeBytes:file.size, stage:"waiting", jobId:null, result:null, error:null, diagnostics:[], controller:null }; state.queue.push(entry); if(!first) first=entry; } if(first) state.selectedId=first.localId; render(); void runQueue(); }
     function exportEntry(entry) { return { taskId:entry.jobId, batchId:entry.batchId, fileName:entry.fileName, sizeBytes:entry.sizeBytes, stage:entry.stage, createdAt:entry.createdAt, updatedAt:entry.updatedAt, error:entry.error, diagnostics:entry.diagnostics, result:entry.result }; }
-    function applyJob(entry,job) { entry.jobId=job.id; entry.batchId=job.batchId; entry.fileName=job.fileName; entry.sizeBytes=job.sizeBytes; entry.stage=job.stage; entry.createdAt=job.createdAt; entry.updatedAt=job.updatedAt; entry.result=job.result||null; entry.error=job.error||null; entry.diagnostics=job.diagnostics||[]; }
+    function applyJob(entry,job) { entry.jobId=job.id; entry.batchId=job.batchId; entry.fileName=job.fileName; entry.sizeBytes=job.sizeBytes; entry.stage=job.stage; entry.createdAt=job.createdAt; entry.updatedAt=job.updatedAt; entry.promptRevision=job.promptRevision; entry.promptContentSha256=job.promptContentSha256; entry.result=job.result||null; entry.error=job.error||null; entry.diagnostics=job.diagnostics||[]; }
+    function selectedEntry() { return state.queue.find((entry)=>entry.localId===state.selectedId)||null; }
+    function selectEntry(entry) { state.selectedId=entry.localId; render(); }
 
     function renderQueue() {
       queueList.replaceChildren();
       if(state.queue.length===0) { queueList.append(node("div","queue-empty","尚未添加视频")); return; }
       for(const entry of state.queue) {
-        const item=node("article","queue-item"); const heading=node("div");
+        const item=node("article","queue-item"+(entry.localId===state.selectedId?" selected":"")); const heading=node("div");
         heading.append(node("strong","",entry.fileName),node("div","task-id",entry.jobId?"任务 ID · "+entry.jobId:"任务 ID · 上传后生成")); item.append(heading);
-        const badge=node("span","status "+statusTone(entry.stage),stageLabels[entry.stage]||entry.stage); const meta=node("div","queue-meta"); meta.append(node("span","",formatBytes(entry.sizeBytes)),badge); item.append(meta);
-        if(!terminalStages.has(entry.stage)) { const cancel=node("button","mini-button",entry.stage==="waiting"?"移除":"取消"); cancel.type="button"; cancel.addEventListener("click",()=>void cancelEntry(entry)); item.append(cancel); }
-        item.dataset.localId=entry.localId; queueList.append(item);
+        const badge=node("span","status "+statusTone(entry.stage),stageLabels[entry.stage]||entry.stage); const meta=node("div","queue-meta"); meta.append(node("span","",formatBytes(entry.sizeBytes)),badge); if(entry.promptRevision) meta.append(node("span","","提示词 V"+entry.promptRevision));
+        if(!terminalStages.has(entry.stage)) { const cancel=node("button","mini-button",entry.stage==="waiting"?"移除":"取消"); cancel.type="button"; cancel.addEventListener("click",(event)=>{ event.stopPropagation(); void cancelEntry(entry); }); meta.append(cancel); } item.append(meta);
+        const queueScore=node("div","queue-score",entry.result?String(entry.result.finalScore):"—"); queueScore.append(node("small","",entry.result?"总分 / 100":"暂无总分")); item.append(queueScore);
+        item.dataset.localId=entry.localId; item.tabIndex=0; item.setAttribute("role","button"); item.setAttribute("aria-pressed",String(entry.localId===state.selectedId)); item.addEventListener("click",()=>selectEntry(entry)); item.addEventListener("keydown",(event)=>{ if(event.key==="Enter"||event.key===" ") { event.preventDefault(); selectEntry(entry); } }); queueList.append(item);
       }
     }
 
     function renderResults() {
-      resultsList.replaceChildren(); const completed=state.queue.filter((entry)=>terminalStages.has(entry.stage)); state.results=completed.map(exportEntry); downloadAll.disabled=state.results.length===0;
-      if(completed.length===0) { resultsList.append(node("div","result-empty","结果会在每个视频处理结束后显示")); return; }
-      for(const entry of completed) {
+      resultsList.replaceChildren(); const completed=state.queue.filter((entry)=>terminalStages.has(entry.stage)); state.results=completed.map(exportEntry); downloadAll.disabled=state.results.length===0; const selected=selectedEntry();
+      if(!selected) { resultsList.append(node("div","result-empty","请从左侧选择一个任务")); return; }
+      const entry=selected;
         const card=node("article","result-card"); const title=node("div","result-title"); const copy=node("div");
         copy.append(node("h3","",entry.fileName),node("div","task-id","任务 ID · "+(entry.jobId||"未生成")),node("p","",entry.error||(entry.result?entry.result.summary:(stageLabels[entry.stage]||entry.stage)))); title.append(copy);
         if(entry.result) { const score=node("div","score",String(entry.result.finalScore)); score.append(node("small",""," / 100")); title.append(score); } card.append(title);
@@ -144,7 +172,6 @@ export function renderQualityLabPage(): string {
         const download=node("button","download","下载此项 JSON"); download.type="button"; download.addEventListener("click",()=>downloadJson(entry.fileName.replace(/\.[^.]+$/u,"")+"-video-qc.json",exportEntry(entry))); actions.append(download);
         if(entry.jobId) { const remove=node("button","download danger","删除记录"); remove.type="button"; remove.addEventListener("click",()=>void deleteEntry(entry)); actions.append(remove); }
         card.append(actions); resultsList.append(card);
-      }
     }
 
     function render() { renderQueue(); renderResults(); }
@@ -154,17 +181,23 @@ export function renderQualityLabPage(): string {
     async function watchHistory() { while(state.queue.some((entry)=>entry.jobId&&!terminalStages.has(entry.stage))) { await new Promise((resolve)=>setTimeout(resolve,1000)); const response=await fetch("/api/jobs"); if(!response.ok) throw new Error(await readError(response)); const body=await response.json(); const jobsById=new Map((body.jobs||[]).map((job)=>[job.id,job])); for(const entry of state.queue) { if(entry.jobId&&jobsById.has(entry.jobId)) applyJob(entry,jobsById.get(entry.jobId)); } render(); } }
     async function processEntry(entry) { entry.stage="uploading"; entry.controller=new AbortController(); render(); const form=new FormData(); form.append("batchId",state.batchId); form.append("video",entry.file); const created=await fetch("/api/jobs",{method:"POST",body:form,signal:entry.controller.signal}); if(!created.ok) throw new Error(await readError(created)); const body=await created.json(); entry.jobId=body.jobId; entry.stage="queued"; render(); await watchEntry(entry); }
     function runQueue() { while(state.running<2) { const entry=state.queue.find((item)=>item.stage==="waiting"); if(!entry) return; state.running+=1; entry.stage="uploading"; void processEntry(entry).catch((error)=>{ if(entry.stage!=="cancelled") { entry.stage="system_failed"; entry.error=error&&error.message?error.message:"处理失败"; } }).finally(()=>{ entry.controller=null; state.running-=1; render(); runQueue(); }); } }
-    async function cancelEntry(entry) { if(entry.stage==="waiting") { state.queue=state.queue.filter((item)=>item!==entry); render(); return; } entry.stage="cancelled"; entry.controller?.abort(); if(entry.jobId) { try { await fetch("/api/jobs/"+encodeURIComponent(entry.jobId),{method:"DELETE"}); } catch {} } render(); }
-    async function deleteEntry(entry) { if(!entry.jobId) return; const response=await fetch("/api/jobs/"+encodeURIComponent(entry.jobId),{method:"DELETE"}); if(!response.ok&&response.status!==404) throw new Error(await readError(response)); state.queue=state.queue.filter((item)=>item!==entry); render(); }
-    async function loadHistory() { const response=await fetch("/api/jobs"); if(!response.ok) throw new Error(await readError(response)); const body=await response.json(); state.retentionDays=body.retentionDays||30; const local=state.queue.filter((entry)=>!entry.jobId); const restored=(body.jobs||[]).map((job)=>({ localId:job.id, file:null, fileName:job.fileName, sizeBytes:job.sizeBytes, stage:job.stage, jobId:job.id, batchId:job.batchId, createdAt:job.createdAt, updatedAt:job.updatedAt, result:job.result||null, error:job.error||null, diagnostics:job.diagnostics||[], controller:null })); state.queue=[...local,...restored]; render(); const active=state.queue.filter((entry)=>entry.jobId&&!terminalStages.has(entry.stage)); if(active.length) { void watchHistory().catch((error)=>{ for(const entry of active) { if(!terminalStages.has(entry.stage)) { entry.stage="system_failed"; entry.error=error&&error.message?error.message:"状态读取失败"; } } }).finally(()=>{ render(); runQueue(); }); } else { runQueue(); } }
+    function selectFallback() { if(!selectedEntry()) state.selectedId=state.queue[0]?.localId||null; }
+    async function cancelEntry(entry) { if(entry.stage==="waiting") { state.queue=state.queue.filter((item)=>item!==entry); selectFallback(); render(); return; } entry.stage="cancelled"; entry.controller?.abort(); if(entry.jobId) { try { await fetch("/api/jobs/"+encodeURIComponent(entry.jobId),{method:"DELETE"}); } catch {} } render(); }
+    async function deleteEntry(entry) { if(!entry.jobId) return; const response=await fetch("/api/jobs/"+encodeURIComponent(entry.jobId),{method:"DELETE"}); if(!response.ok&&response.status!==404) throw new Error(await readError(response)); state.queue=state.queue.filter((item)=>item!==entry); selectFallback(); render(); }
+    async function loadHistory() { const response=await fetch("/api/jobs"); if(!response.ok) throw new Error(await readError(response)); const body=await response.json(); state.retentionDays=body.retentionDays||30; const local=state.queue.filter((entry)=>!entry.jobId); const restored=(body.jobs||[]).map((job)=>({ localId:job.id, file:null, fileName:job.fileName, sizeBytes:job.sizeBytes, stage:job.stage, jobId:job.id, batchId:job.batchId, createdAt:job.createdAt, updatedAt:job.updatedAt, promptRevision:job.promptRevision, promptContentSha256:job.promptContentSha256, result:job.result||null, error:job.error||null, diagnostics:job.diagnostics||[], controller:null })); state.queue=[...local,...restored]; selectFallback(); render(); const active=state.queue.filter((entry)=>entry.jobId&&!terminalStages.has(entry.stage)); if(active.length) { void watchHistory().catch((error)=>{ for(const entry of active) { if(!terminalStages.has(entry.stage)) { entry.stage="system_failed"; entry.error=error&&error.message?error.message:"状态读取失败"; } } }).finally(()=>{ render(); runQueue(); }); } else { runQueue(); } }
+    function showPrompt(prompt) { state.prompt=prompt; promptEditor.value=prompt.systemPrompt; promptEditor.disabled=false; savePrompt.disabled=false; promptMeta.replaceChildren(); for(const value of ["当前 V"+prompt.revision,"初审 "+prompt.initialModel,"复核 "+prompt.reviewModel,"更新于 "+new Date(prompt.updatedAt).toLocaleString("zh-CN")]) promptMeta.append(node("span","",value)); }
+    async function loadPrompt() { const response=await fetch("/api/prompt"); if(!response.ok) throw new Error(await readError(response)); const body=await response.json(); showPrompt(body.prompt); }
+    async function publishPrompt() { savePrompt.disabled=true; promptMessage.textContent="正在保存"; try { const response=await fetch("/api/prompt",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({systemPrompt:promptEditor.value})}); if(!response.ok) throw new Error(await readError(response)); const body=await response.json(); showPrompt(body.prompt); promptMessage.textContent="已发布 V"+body.prompt.revision; } catch(error) { promptMessage.textContent=error&&error.message?error.message:"保存失败"; } finally { savePrompt.disabled=false; } }
 
     document.getElementById("choose-button").addEventListener("click",()=>input.click()); input.addEventListener("change",()=>{ addFiles(input.files||[]); input.value=""; });
     for(const eventName of ["dragenter","dragover"]) dropZone.addEventListener(eventName,(event)=>{ event.preventDefault(); dropZone.classList.add("dragging"); });
     for(const eventName of ["dragleave","drop"]) dropZone.addEventListener(eventName,(event)=>{ event.preventDefault(); dropZone.classList.remove("dragging"); });
     dropZone.addEventListener("drop",(event)=>addFiles(event.dataTransfer.files)); dropZone.addEventListener("keydown",(event)=>{ if(event.key==="Enter"||event.key===" ") input.click(); });
     downloadAll.addEventListener("click",()=>downloadJson("video-quality-history.json",{ retentionDays:state.retentionDays, exportedAt:new Date().toISOString(), items:state.results }));
+    savePrompt.addEventListener("click",()=>void publishPrompt());
     void fetch("/api/health").then((response)=>response.json()).then((health)=>{ const element=document.getElementById("health"); element.classList.toggle("ready",health.modelStatus==="configured"); element.querySelector("span").textContent=health.modelStatus==="configured"?"模型已配置 · "+health.initialModel:"模型未配置"; }).catch(()=>{ document.querySelector("#health span").textContent="服务状态读取失败"; });
     render();
+    void loadPrompt().catch((error)=>{ promptMessage.textContent=error&&error.message?error.message:"提示词读取失败"; });
     void loadHistory().catch(()=>undefined);
   </script>
 </body>

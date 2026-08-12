@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
 export type RawQualityLabEnvironment = Record<string, string | undefined>;
 
@@ -14,6 +14,7 @@ export type QualityLabEnvironment = {
   reviewModel: string;
   modelConfigured: boolean;
   historyPath?: string;
+  promptStatePath?: string;
   historyRetentionDays: number;
 };
 
@@ -47,6 +48,7 @@ export function parseQualityLabEnvironment(
   if (host !== "127.0.0.1" && host !== "0.0.0.0") {
     throw new Error("QUALITY_LAB_HOST 只能是 127.0.0.1 或 0.0.0.0");
   }
+  const historyPath = source.QUALITY_LAB_HISTORY_PATH?.trim() || undefined;
   return {
     host,
     port: integer(source, "QUALITY_LAB_PORT", 4010, 1, 65_535),
@@ -79,7 +81,10 @@ export function parseQualityLabEnvironment(
       source.VIDEO_QUALITY_REVIEW_MODEL?.trim() ||
       "qwen3.7-flash",
     modelConfigured: Boolean(qwenApiKey),
-    historyPath: source.QUALITY_LAB_HISTORY_PATH?.trim() || undefined,
+    historyPath,
+    promptStatePath:
+      source.QUALITY_LAB_PROMPT_STATE_PATH?.trim() ||
+      (historyPath ? resolve(dirname(historyPath), "prompt.json") : undefined),
     historyRetentionDays: integer(
       source,
       "QUALITY_LAB_HISTORY_RETENTION_DAYS",
