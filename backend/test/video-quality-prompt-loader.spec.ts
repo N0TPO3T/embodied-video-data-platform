@@ -31,9 +31,7 @@ describe("video quality prompt loader", () => {
     expect(prompt.initialModel).toBe("qwen3.7-plus");
     expect(prompt.reviewModel).toBe("qwen3.7-flash");
     expect(prompt.systemPrompt).toContain("具身视频数据质量评估器");
-    expect(prompt.systemPrompt).toContain("简体中文");
-    expect(prompt.systemPrompt).toContain("task_summary");
-    expect(prompt.systemPrompt).toContain("recommendations");
+    expect(prompt.systemPrompt).toContain("请用中文输出");
     expect(prompt.systemPrompt).not.toContain("## 用户输入模板");
     expect(prompt.outputExample.schema_version).toBe("video_qc_result_v1");
     expect(prompt.outputExample).toHaveProperty("hard_veto.triggered", false);

@@ -177,88 +177,8 @@ function outputInstructions(prompt: LoadedVideoQualityPrompt): {
       "严格使用 output_contract 中的字段名和嵌套层级，不得改名或遗漏字段。",
       "没有内容的数组返回 []；不得为了填充示例而输出空白占位对象。",
       "数值和枚举必须符合系统提示词；不要输出 pass/fail 或结算字段。",
-      "task_summary、summary、description、calculation_trace、recommendations、review_reasons 等所有自然语言字段必须使用简体中文；字段名、枚举和 reason_code 保持原值。",
     ],
   };
-}
-
-const simplifiedChinesePattern = /[\u3400-\u9fff]/u;
-
-function formattedDecimal(value: number, maximumFractionDigits: number): string {
-  return Number(value.toFixed(maximumFractionDigits)).toString();
-}
-
-function normalizeDimensionCalculationTraces(raw: RawVideoQcResultV1): void {
-  for (const dimension of Object.values(raw.dimensions)) {
-    const score = Math.round((20 * dimension.coefficient + Number.EPSILON) * 10) / 10;
-    dimension.calculation_trace = [
-      "该维度得分按公式计算：20 × ",
-      formattedDecimal(dimension.coefficient, 4),
-      " = ",
-      formattedDecimal(score, 1),
-    ].join("");
-  }
-}
-
-function chineseLanguageIssues(raw: RawVideoQcResultV1): string[] {
-  const issues: string[] = [];
-  const check = (path: string, value: string): void => {
-    if (value.trim() && !simplifiedChinesePattern.test(value)) {
-      issues.push(`${path}: 自然语言内容必须使用简体中文`);
-    }
-  };
-
-  check("detected_task.task_summary", raw.detected_task.task_summary);
-  check("summary", raw.summary);
-  raw.recommendations.forEach((value, index) =>
-    check(`recommendations.${index}`, value),
-  );
-  raw.review_reasons.forEach((value, index) =>
-    check(`review_reasons.${index}`, value),
-  );
-  for (const [dimension, value] of Object.entries(raw.dimensions)) {
-    check(`dimensions.${dimension}.calculation_trace`, value.calculation_trace);
-    value.issues.forEach((issue, index) =>
-      check(`dimensions.${dimension}.issues.${index}.description`, issue.description),
-    );
-    value.segments.forEach((segment, index) => {
-      for (const [key, field] of Object.entries(segment)) {
-        if (
-          typeof field === "string" &&
-          ["description", "summary", "calculation_trace"].includes(key)
-        ) {
-          check(`dimensions.${dimension}.segments.${index}.${key}`, field);
-        }
-      }
-    });
-  }
-  raw.billing_observations.candidate_invalid_segments.forEach((segment, index) =>
-    check(`billing_observations.candidate_invalid_segments.${index}.description`, segment.description),
-  );
-  raw.billing_observations.candidate_valid_waiting_segments.forEach(
-    (segment, index) =>
-      check(
-        `billing_observations.candidate_valid_waiting_segments.${index}.description`,
-        segment.description,
-      ),
-  );
-  raw.deductions.forEach((deduction, index) =>
-    check(`deductions.${index}.description`, deduction.description),
-  );
-  return issues;
-}
-
-function parseChineseRawVideoQcResult(value: unknown): RawVideoQcResultV1 {
-  const raw = parseRawVideoQcResult(value);
-  // The service is authoritative for dimension scores. Generate the matching
-  // user-facing trace locally so a formula-only or English model trace cannot
-  // trigger an extra paid repair call or fail an otherwise valid evaluation.
-  normalizeDimensionCalculationTraces(raw);
-  const issues = chineseLanguageIssues(raw);
-  if (issues.length > 0) {
-    throw new VideoQcSchemaError("模型自然语言结果不是简体中文", issues);
-  }
-  return raw;
 }
 
 export class QwenVideoQualityProvider {
@@ -387,7 +307,7 @@ export class QwenVideoQualityProvider {
     let raw: RawVideoQcResultV1;
     let finalRequestId = first.requestId;
     try {
-      raw = parseChineseRawVideoQcResult(extractJson(first.content));
+      raw = parseRawVideoQcResult(extractJson(first.content));
     } catch (error) {
       const validationIssues =
         error instanceof VideoQcSchemaError
@@ -404,7 +324,6 @@ export class QwenVideoQualityProvider {
               text: [
                 "上一个输出不符合 video_qc_result_v1。请只返回修正后的合法 JSON。",
                 "必须严格保留下面 output_contract 的所有字段名和嵌套层级；没有内容的数组返回 []。",
-                "所有自然语言字段必须改写为简体中文；字段名、枚举和 reason_code 保持原值。",
                 ...validationIssues.slice(0, 20),
                 `output_contract=${JSON.stringify(this.prompt.outputExample)}`,
               ].join("\n"),
@@ -422,7 +341,7 @@ export class QwenVideoQualityProvider {
       });
       finalRequestId = repaired.requestId;
       try {
-        raw = parseChineseRawVideoQcResult(extractJson(repaired.content));
+        raw = parseRawVideoQcResult(extractJson(repaired.content));
       } catch (repairError) {
         const issues =
           repairError instanceof VideoQcSchemaError
