@@ -6,6 +6,7 @@ import type { DataSource } from "typeorm";
 import { createDataSource } from "../src/database/data-source.js";
 import { MediaMetadataEntity } from "../src/database/entities/media-metadata.entity.js";
 import { MediaSegmentEntity } from "../src/database/entities/media-segment.entity.js";
+import { JobOutboxEntity } from "../src/database/entities/job-outbox.entity.js";
 import { SubmissionEntity } from "../src/database/entities/submission.entity.js";
 import { TeamEntity } from "../src/database/entities/team.entity.js";
 import { UserEntity } from "../src/database/entities/user.entity.js";
@@ -150,6 +151,15 @@ describe("media analysis service", () => {
         submissionId,
       }),
     ).toBe(2);
+    expect(
+      await dataSource.getRepository(JobOutboxEntity).findOneByOrFail({
+        aggregateId: submissionId,
+        eventType: "ai.quality.v1",
+      }),
+    ).toMatchObject({
+      status: "pending",
+      payload: { submissionId },
+    });
 
     runner.result.segments = [
       { type: "black", startSeconds: 10, endSeconds: 12 },
@@ -165,5 +175,11 @@ describe("media analysis service", () => {
       endSeconds: "12.000",
     });
     expect(runner.calls).toBe(2);
+    expect(
+      await dataSource.getRepository(JobOutboxEntity).countBy({
+        aggregateId: submissionId,
+        eventType: "ai.quality.v1",
+      }),
+    ).toBe(1);
   });
 });

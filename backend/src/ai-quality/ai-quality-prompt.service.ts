@@ -1,6 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import { fileURLToPath } from "node:url";
-
 import { Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { DataSource, Repository } from "typeorm";
@@ -11,20 +9,9 @@ import { UserEntity } from "../database/entities/user.entity.js";
 import { VideoQualityPromptVersionEntity } from "../database/entities/video-quality-prompt-version.entity.js";
 import { IdentityFailure } from "../identity/identity.policy.js";
 import { loadVideoQualityPrompt } from "../video-quality/prompt-loader.js";
+import { videoQualityPromptPath } from "./ai-quality.config.js";
 
 const PROMPT_LOCK_KEY = 7_326_195_420;
-
-function promptPath(): string {
-  return (
-    process.env.VIDEO_QUALITY_PROMPT_PATH?.trim() ||
-    fileURLToPath(
-      new URL(
-        "../../../docs/quality/qwen-video-ai-quality-prompt-v1.md",
-        import.meta.url,
-      ),
-    )
-  );
-}
 
 function normalizeSystemPrompt(value: string): string {
   const prompt = value.trim();
@@ -54,7 +41,7 @@ export class AiQualityPromptService {
     const current = await this.prompts.findOneBy({ active: true });
     if (current) return current;
 
-    const loaded = await loadVideoQualityPrompt(promptPath());
+    const loaded = await loadVideoQualityPrompt(videoQualityPromptPath());
     return this.dataSource.transaction(async (manager) => {
       await manager.query("SELECT pg_advisory_xact_lock($1)", [PROMPT_LOCK_KEY]);
       const repository = manager.getRepository(VideoQualityPromptVersionEntity);
@@ -95,7 +82,7 @@ export class AiQualityPromptService {
   ): Promise<VideoQualityPromptVersionEntity> {
     this.requireAdmin(actor);
     const systemPrompt = normalizeSystemPrompt(value);
-    const committed = await loadVideoQualityPrompt(promptPath());
+    const committed = await loadVideoQualityPrompt(videoQualityPromptPath());
     return this.dataSource.transaction(async (manager) => {
       await manager.query("SELECT pg_advisory_xact_lock($1)", [PROMPT_LOCK_KEY]);
       const repository = manager.getRepository(VideoQualityPromptVersionEntity);
