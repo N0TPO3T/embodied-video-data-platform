@@ -12,7 +12,7 @@ import type {
   UpdateAccountInput,
 } from "../../auth/contracts";
 import { Modal } from "../../components/Modal";
-import { useDemoStore } from "../../data/DemoStoreContext";
+import { useIdentity } from "../../auth/client/IdentityContext";
 import type { Role } from "../../domain/types";
 
 export function UserFormModal({
@@ -35,7 +35,7 @@ export function UserFormModal({
   onClose(): void;
   returnFocusRef: RefObject<HTMLButtonElement | null>;
 }) {
-  const { state } = useDemoStore();
+  const { teams } = useIdentity();
   const [displayName, setDisplayName] = useState(
     account?.displayName ?? "",
   );
@@ -45,7 +45,7 @@ export function UserFormModal({
     account?.role ?? "collector",
   );
   const [teamId, setTeamId] = useState(
-    account?.teamId ?? state.teams[0]?.id ?? "",
+    account?.teamId ?? teams[0]?.id ?? "",
   );
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -143,7 +143,7 @@ export function UserFormModal({
               const nextRole = event.target.value as Role;
               setRole(nextRole);
               if (nextRole !== "admin" && !teamId) {
-                setTeamId(state.teams[0]?.id ?? "");
+                setTeamId(teams[0]?.id ?? "");
               }
             }}
           >
@@ -160,7 +160,7 @@ export function UserFormModal({
               onChange={(event) => setTeamId(event.target.value)}
               required
             >
-              {state.teams.map((team) => (
+              {teams.map((team) => (
                 <option key={team.id} value={team.id}>
                   {team.name}
                 </option>

@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { AccountPublic } from "../auth/contracts";
+import type { BackendSubmission } from "../submissions/contracts";
 import {
   accountToUser,
   DemoStoreProvider,
@@ -75,6 +76,17 @@ function AuthenticatedProbe({
   );
 }
 
+function SubmissionProbe({ next }: { next: BackendSubmission }) {
+  const { state, upsertSubmission } = useDemoStore();
+  return (
+    <div>
+      <span>视频 {state.submissions.length}</span>
+      <span>{state.submissions[0]?.fileName}</span>
+      <button onClick={() => upsertSubmission(next)}>upsert video</button>
+    </div>
+  );
+}
+
 describe("DemoStoreProvider", () => {
   it("re-renders consumers when the store state changes", async () => {
     const user = userEvent.setup();
@@ -124,6 +136,50 @@ describe("DemoStoreProvider", () => {
     expect(screen.getByText("用户 1")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "sync" }));
     expect(screen.getByText("用户 2")).toBeVisible();
+  });
+
+  it("hydrates real backend submissions and upserts upload results", async () => {
+    const user = userEvent.setup();
+    const collector: AccountPublic = {
+      id: "U-COL-01",
+      displayName: "测试人员1",
+      username: "ceshirenyuan1",
+      role: "collector",
+      teamId: "TEAM-01",
+      status: "active",
+      updatedAt: 1_722_708_000_000,
+    };
+    const first: BackendSubmission = {
+      id: "SUB-REAL-01",
+      fileName: "real-one.mp4",
+      ownerId: collector.id,
+      ownerName: collector.displayName,
+      teamId: "TEAM-01",
+      teamName: "星火一队",
+      sizeBytes: "1024",
+      uploadStatus: "uploaded",
+      processingStatus: "queued",
+      isTestData: true,
+      createdAt: 1_786_118_400_000,
+      segments: [],
+    };
+    const next = { ...first, id: "SUB-REAL-02", fileName: "real-two.mov" };
+
+    render(
+      <DemoStoreProvider
+        currentAccount={collector}
+        accounts={[collector]}
+        backendSubmissions={[first]}
+      >
+        <SubmissionProbe next={next} />
+      </DemoStoreProvider>,
+    );
+
+    expect(screen.getByText("视频 1")).toBeVisible();
+    expect(screen.getByText("real-one.mp4")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "upsert video" }));
+    expect(screen.getByText("视频 2")).toBeVisible();
+    expect(screen.getByText("real-two.mov")).toBeVisible();
   });
 
   it("exposes all session workflow commands and publishes their state", async () => {

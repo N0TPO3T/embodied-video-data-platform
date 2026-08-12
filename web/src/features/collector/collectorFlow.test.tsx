@@ -1,15 +1,46 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PlatformApp } from "../../app/PlatformApp";
+import { IdentityProvider } from "../../auth/client/IdentityContext";
 import { DemoStoreProvider } from "../../data/DemoStoreContext";
+import { accountForRole, demoAccounts } from "../../test/accountFixtures";
+import { uploadVideo } from "../../submissions/upload/multipartUploader";
+
+vi.mock("../../submissions/upload/multipartUploader", () => ({
+  uploadVideo: vi.fn(),
+}));
+
+beforeEach(() => {
+  vi.mocked(uploadVideo).mockReset();
+  vi.mocked(uploadVideo).mockImplementation(async (file, options) => {
+    options?.onProgress?.(100);
+    return {
+      id: `SUB-${file.name}`,
+      fileName: file.name,
+      ownerId: "U-COL-01",
+      ownerName: "测试人员1",
+      teamId: "TEAM-01",
+      teamName: "星火一队",
+      sizeBytes: String(file.size),
+      uploadStatus: "uploaded",
+      processingStatus: "queued",
+      isTestData: false,
+      createdAt: Date.now(),
+      segments: [],
+    };
+  });
+});
 
 function renderCollector(path: string) {
   window.history.replaceState({}, "", path);
+  const collector = accountForRole("collector");
   return render(
-    <DemoStoreProvider>
-      <PlatformApp initialPath={path} />
-    </DemoStoreProvider>,
+    <IdentityProvider currentAccount={collector} accounts={demoAccounts} teams={[]}>
+      <DemoStoreProvider>
+        <PlatformApp initialPath={path} />
+      </DemoStoreProvider>
+    </IdentityProvider>,
   );
 }
 
@@ -27,7 +58,7 @@ describe("collector journey", () => {
     expect(screen.queryByText("notes.txt")).not.toBeInTheDocument();
   });
 
-  it("creates one visible upload item for each supported file", async () => {
+  it("uploads each supported file through the real multipart boundary", async () => {
     const user = userEvent.setup();
     renderCollector("/collector/upload");
 
@@ -38,6 +69,10 @@ describe("collector journey", () => {
 
     expect(screen.getByText("kitchen.mov")).toBeVisible();
     expect(screen.getByText("cleaning.mp4")).toBeVisible();
+    await waitFor(() => expect(uploadVideo).toHaveBeenCalledTimes(2));
+    expect(
+      await screen.findAllByText("上传完成，等待媒体处理"),
+    ).toHaveLength(2);
   });
 
   it("only lists the current collector's submissions", () => {

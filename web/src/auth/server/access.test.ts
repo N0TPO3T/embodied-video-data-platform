@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { makeAccountPublic } from "../testFactories";
 import { resolveRouteAccess } from "./access";
-import { makeAccountPublic } from "./testFactories";
 
 describe("server route access", () => {
   it("allows public pages without an account", () => {
@@ -43,4 +43,13 @@ describe("server route access", () => {
       location: "/collector",
     });
   });
+
+  it.each(["admin", "leader", "collector"] as const)(
+    "allows an authenticated %s to open the role-neutral account profile",
+    (role) => {
+      expect(
+        resolveRouteAccess("/account/profile", makeAccountPublic({ role })),
+      ).toEqual({ kind: "allow" });
+    },
+  );
 });

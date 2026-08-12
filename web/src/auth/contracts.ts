@@ -10,23 +10,37 @@ export type AccountPublic = {
   updatedAt: number;
 };
 
-export type AccountRecord = AccountPublic & {
-  usernameNormalized: string;
-  passwordHash: string;
-  passwordSalt: string;
-  passwordIterations: number;
-  failedAttemptCount: number;
-  firstFailedAt: number | null;
-  lockedUntil: number | null;
+export type TeamPublic = {
+  id: string;
+  name: string;
+  status: "active" | "disabled";
+  unitPricePerMinute: number;
   createdAt: number;
+  updatedAt: number;
 };
 
-export type AccountAuditAction =
+export type CreateTeamInput = Pick<
+  TeamPublic,
+  "name" | "unitPricePerMinute"
+>;
+
+export type UpdateTeamInput = CreateTeamInput &
+  Pick<TeamPublic, "status">;
+
+export type KnownAccountAuditAction =
   | "create"
   | "update"
   | "reset_password"
+  | "change_password"
   | "enable"
-  | "disable";
+  | "disable"
+  | "local_identity_reconcile"
+  | "team_create"
+  | "team_update";
+
+export type AccountAuditAction =
+  | KnownAccountAuditAction
+  | (string & {});
 
 export type AccountAuditLog = {
   id: string;
@@ -48,53 +62,3 @@ export type CreateAccountInput = {
 };
 
 export type UpdateAccountInput = Omit<CreateAccountInput, "password">;
-
-export type AccountScope =
-  | { kind: "all" }
-  | { kind: "team"; teamId: string }
-  | { kind: "self"; accountId: string };
-
-export interface AccountRepository {
-  isAccountTableEmpty(): Promise<boolean>;
-  insertSeedAccounts(records: AccountRecord[]): Promise<void>;
-  findById(id: string): Promise<AccountRecord | null>;
-  findByNormalizedUsername(username: string): Promise<AccountRecord | null>;
-  listAccounts(scope: AccountScope): Promise<AccountPublic[]>;
-  countActiveAdmins(): Promise<number>;
-  createAccount(
-    record: AccountRecord,
-    audit: AccountAuditLog,
-  ): Promise<AccountPublic>;
-  updateAccount(
-    record: AccountRecord,
-    audit: AccountAuditLog,
-  ): Promise<AccountPublic>;
-  updateLoginSecurity(
-    id: string,
-    values: Pick<
-      AccountRecord,
-      "failedAttemptCount" | "firstFailedAt" | "lockedUntil"
-    >,
-  ): Promise<void>;
-  createSession(
-    tokenHash: string,
-    accountId: string,
-    createdAt: number,
-    expiresAt: number,
-  ): Promise<void>;
-  findSessionAccount(
-    tokenHash: string,
-    now: number,
-  ): Promise<AccountRecord | null>;
-  deleteSession(tokenHash: string): Promise<void>;
-  deleteSessionsForAccount(accountId: string): Promise<void>;
-  resetPassword(
-    record: AccountRecord,
-    audit: AccountAuditLog,
-  ): Promise<void>;
-  setStatus(
-    record: AccountRecord,
-    audit: AccountAuditLog,
-  ): Promise<AccountPublic>;
-  listAuditLogs(limit: number): Promise<AccountAuditLog[]>;
-}

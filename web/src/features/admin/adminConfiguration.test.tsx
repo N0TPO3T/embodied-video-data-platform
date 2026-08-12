@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { PlatformApp } from "../../app/PlatformApp";
+import { IdentityProvider } from "../../auth/client/IdentityContext";
 import { DemoStoreProvider } from "../../data/DemoStoreContext";
 import { accountForRole, demoAccounts } from "../../test/accountFixtures";
 
@@ -9,9 +10,11 @@ function renderAdmin(path: string) {
   window.history.replaceState({}, "", path);
   const admin = accountForRole("admin");
   return render(
-    <DemoStoreProvider currentAccount={admin} accounts={demoAccounts}>
-      <PlatformApp initialPath={path} />
-    </DemoStoreProvider>,
+    <IdentityProvider currentAccount={admin} accounts={demoAccounts} teams={[]}>
+      <DemoStoreProvider currentAccount={admin} accounts={demoAccounts}>
+        <PlatformApp initialPath={path} />
+      </DemoStoreProvider>
+    </IdentityProvider>,
   );
 }
 

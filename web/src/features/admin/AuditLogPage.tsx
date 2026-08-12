@@ -4,8 +4,8 @@ import { FileClock, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { listAccountAudit } from "../../auth/client/accountApi";
 import type {
-  AccountAuditAction,
   AccountAuditLog,
+  KnownAccountAuditAction,
 } from "../../auth/contracts";
 import { StatusBadge } from "../../components/StatusBadge";
 import { useDemoStore } from "../../data/DemoStoreContext";
@@ -20,13 +20,21 @@ type AuditRow = {
   reason: string;
 };
 
-const accountActionLabels: Record<AccountAuditAction, string> = {
+const accountActionLabels: Record<KnownAccountAuditAction, string> = {
   create: "创建账号",
   update: "更新账号",
   reset_password: "重置密码",
+  change_password: "修改密码",
   enable: "启用账号",
   disable: "停用账号",
+  local_identity_reconcile: "本地账号校准",
+  team_create: "创建团队",
+  team_update: "更新团队",
 };
+
+function accountActionLabel(action: string): string {
+  return accountActionLabels[action as KnownAccountAuditAction] ?? "未知操作";
+}
 
 function formatCreatedAt(timestamp: number): string {
   return new Intl.DateTimeFormat("zh-CN", {
@@ -47,7 +55,7 @@ function accountLogToRow(log: AccountAuditLog): AuditRow {
     id: log.id,
     createdAt: formatCreatedAt(log.createdAt),
     actor: log.actorName,
-    action: accountActionLabels[log.action],
+    action: accountActionLabel(log.action),
     target: log.targetName,
     reason: log.summary,
   };

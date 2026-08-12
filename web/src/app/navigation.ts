@@ -44,7 +44,7 @@ export const navigationByRole: Record<Role, NavigationItem[]> = {
     { label: "质检结果", path: "/collector/quality", icon: BadgeCheck },
     { label: "收入与提现", path: "/collector/earnings", icon: Wallet },
     { label: "采集指南", path: "/collector/guide", icon: Compass },
-    { label: "个人资料", path: "/collector/profile", icon: User },
+    { label: "个人资料", path: "/account/profile", icon: User },
   ],
   leader: [
     { label: "团队工作台", path: "/team", icon: LayoutDashboard },
@@ -58,6 +58,7 @@ export const navigationByRole: Record<Role, NavigationItem[]> = {
     },
     { label: "团队分析", path: "/team/analytics", icon: BarChart3 },
     { label: "团队收入", path: "/team/income", icon: CircleDollarSign },
+    { label: "个人资料", path: "/account/profile", icon: User },
   ],
   admin: [
     { label: "运营总览", path: "/admin", icon: LayoutDashboard },
@@ -71,5 +72,6 @@ export const navigationByRole: Record<Role, NavigationItem[]> = {
     { label: "提现审核", path: "/admin/withdrawals", icon: HandCoins, badge: "5" },
     { label: "公开数据配置", path: "/admin/public", icon: Globe },
     { label: "操作日志", path: "/admin/audit", icon: ScrollText },
+    { label: "个人资料", path: "/account/profile", icon: User },
   ],
 };

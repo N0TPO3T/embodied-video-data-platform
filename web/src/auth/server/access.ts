@@ -12,6 +12,7 @@ export function roleHome(role: Role): string {
 }
 
 function requiredRole(path: string): Role | null {
+  if (path === "/account/profile") return null;
   if (path === "/admin" || path.startsWith("/admin/")) return "admin";
   if (path === "/team" || path.startsWith("/team/")) return "leader";
   if (path === "/collector" || path.startsWith("/collector/")) {

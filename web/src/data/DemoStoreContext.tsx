@@ -7,10 +7,11 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import type { AccountPublic } from "../auth/contracts";
+import type { AccountPublic, TeamPublic } from "../auth/contracts";
 import type { User, WithdrawalStatus } from "../domain/types";
+import type { BackendSubmission } from "../submissions/contracts";
+import { backendSubmissionToDomain } from "../submissions/submissionMapper";
 import {
-  alignAccountTeams,
   createDemoStore,
   demoSeed,
   type DeliveryPackageInput,
@@ -24,6 +25,7 @@ type DemoStoreValue = {
   currentUser: ReturnType<DemoStore["getState"]>["users"][number];
   currentTeam?: ReturnType<DemoStore["getState"]>["teams"][number];
   syncAccount(user: User): void;
+  upsertSubmission(submission: BackendSubmission): void;
   createRuleVersion(
     input: RuleVersionInput,
   ): ReturnType<DemoStore["createRuleVersion"]>;
@@ -61,6 +63,8 @@ export function accountToUser(
 function authenticatedSeed(
   currentAccount: AccountPublic,
   accounts: AccountPublic[],
+  teams: TeamPublic[] | undefined,
+  backendSubmissions?: BackendSubmission[],
 ) {
   const snapshot = accounts.some(
     (account) => account.id === currentAccount.id,
@@ -73,11 +77,28 @@ function authenticatedSeed(
       demoSeed.users.find((user) => user.id === account.id),
     ),
   );
+  const seed = structuredClone(demoSeed);
   return {
-    ...structuredClone(demoSeed),
+    ...seed,
     currentUserId: currentAccount.id,
     users,
-    teams: alignAccountTeams(demoSeed.teams, users),
+    teams: (teams === undefined ? demoSeed.teams : teams).map((team) => {
+      const assigned = users.filter((user) => user.teamId === team.id);
+      const leader = assigned.find((user) => user.role === "leader");
+      return {
+        id: team.id,
+        name: team.name,
+        leaderId: leader?.id ?? ("leaderId" in team ? team.leaderId : ""),
+        memberIds: assigned
+          .filter((user) => user.id !== leader?.id)
+          .map((user) => user.id),
+        unitPricePerMinute: team.unitPricePerMinute,
+      };
+    }),
+    submissions:
+      backendSubmissions === undefined
+        ? seed.submissions
+        : backendSubmissions.map(backendSubmissionToDomain),
   };
 }
 
@@ -85,15 +106,24 @@ export function DemoStoreProvider({
   children,
   currentAccount,
   accounts,
+  teams,
+  backendSubmissions,
 }: {
   children: ReactNode;
   currentAccount?: AccountPublic;
   accounts?: AccountPublic[];
+  teams?: TeamPublic[];
+  backendSubmissions?: BackendSubmission[];
 }) {
   const [store] = useState(() =>
     createDemoStore(
       currentAccount
-        ? authenticatedSeed(currentAccount, accounts ?? [currentAccount])
+        ? authenticatedSeed(
+            currentAccount,
+            accounts ?? [currentAccount],
+            teams,
+            backendSubmissions,
+          )
         : demoSeed,
     ),
   );
@@ -114,6 +144,8 @@ export function DemoStoreProvider({
         currentUser,
         currentTeam,
         syncAccount: (user) => store.syncAccount(user),
+        upsertSubmission: (submission) =>
+          store.upsertSubmission(backendSubmissionToDomain(submission)),
         createRuleVersion: (input) => store.createRuleVersion(input),
         updateLabel: (input) => store.updateLabel(input),
         createSettlementBatch: () => store.createSettlementBatch(),

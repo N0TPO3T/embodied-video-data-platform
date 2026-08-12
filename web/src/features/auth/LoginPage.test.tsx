@@ -1,8 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { makeAccountPublic } from "../../auth/server/testFactories";
 import * as accountApi from "../../auth/client/accountApi";
+import { makeAccountPublic } from "../../auth/testFactories";
 import { LoginPage } from "./LoginPage";
 
 const TEST_PASSWORD = "test-password-admin";
