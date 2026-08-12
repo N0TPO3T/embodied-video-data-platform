@@ -4,9 +4,9 @@
 
 适配规则：`video_qc_v1`
 
-推荐模型：`qwen3-vl-flash-2026-01-22`
+推荐模型：`qwen3.7-plus`
 
-复核模型：`qwen3-vl-plus-2025-12-19`
+复核模型：`qwen3.7-flash`
 
 ## 使用说明
 

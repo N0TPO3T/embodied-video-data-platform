@@ -84,7 +84,7 @@ pnpm start:local
 docker compose --profile ai-test up --build ai-quality-lab
 ```
 
-打开 `http://localhost:4010`，可一次选择多个 MP4/MOV；浏览器和服务端都按单并发逐个处理。页面使用 `docs/quality/` 中的 `video_qc_v1` 评分规则与 `qwen_video_qc_prompt_v1` 提示词，Flash 初审固定调用 `qwen3-vl-flash-2026-01-22`，满足复核条件时调用 `qwen3-vl-plus-2025-12-19`。
+打开 `http://localhost:4010`，可一次选择多个 MP4/MOV；浏览器和服务端都按单并发逐个处理。页面使用 `docs/quality/` 中的 `video_qc_v1` 评分规则与 `qwen_video_qc_prompt_v1` 提示词，初审固定调用 `qwen3.7-plus`，满足复核条件时调用 `qwen3.7-flash`。
 
 实验模式不写正式数据库。每次上传由服务端生成固定的 `LAB-...` 任务 ID；页面刷新后会从本地历史恢复，容器重启后仍可查询。任务状态、评分结果和脱敏百炼调用诊断通过 Docker 命名卷保留 30 天，也可以在页面手动删除并下载单项或整批 JSON。诊断包含每次尝试的阶段、模型、耗时、HTTP 状态、百炼 `request_id` 和底层网络错误码，但不保存 API Key、Authorization 请求头、Base64 帧、请求正文或完整模型回复。
 

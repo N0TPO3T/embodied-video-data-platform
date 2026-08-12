@@ -60,7 +60,7 @@ type ProviderOptions = {
 type CallInput = {
   taskId: string;
   model: string;
-  modelStage: "flash" | "plus";
+  modelStage: "initial" | "review";
   operation: "analysis" | "review" | "repair";
   messages: ChatMessage[];
   signal?: AbortSignal;
@@ -268,7 +268,7 @@ export class QwenVideoQualityProvider {
     const messages = this.messagesForAnalysis(request);
     return this.run({
       model: this.config.initialModel,
-      stage: "flash",
+      stage: "initial",
       messages,
       frameCount: request.frames.length,
       taskId: request.input.video_id,
@@ -283,7 +283,7 @@ export class QwenVideoQualityProvider {
     const messages = this.messagesForReview(request);
     return this.run({
       model: this.config.reviewModel,
-      stage: "plus",
+      stage: "review",
       messages,
       frameCount: request.frames.length,
       taskId: request.input.video_id,
@@ -349,7 +349,7 @@ export class QwenVideoQualityProvider {
 
   private async run(input: {
     model: string;
-    stage: "flash" | "plus";
+    stage: "initial" | "review";
     messages: ChatMessage[];
     frameCount: number;
     taskId: string;
@@ -360,7 +360,7 @@ export class QwenVideoQualityProvider {
       taskId: input.taskId,
       model: input.model,
       modelStage: input.stage,
-      operation: input.stage === "flash" ? "analysis" : "review",
+      operation: input.stage === "initial" ? "analysis" : "review",
       messages: input.messages,
       signal: input.signal,
     });

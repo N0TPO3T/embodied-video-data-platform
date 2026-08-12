@@ -102,7 +102,7 @@ function reviewReasons(
   normalized: NormalizedVideoQcResultV1,
 ): string[] {
   const reasons = [...raw.review_reasons];
-  if (raw.hard_veto.triggered) reasons.push("Flash 检出硬性否决候选");
+  if (raw.hard_veto.triggered) reasons.push("初审模型检出硬性否决候选");
   if (raw.detected_task.confidence < 0.75) reasons.push("任务分类置信度不足");
   for (const [key, dimension] of Object.entries(raw.dimensions)) {
     if (dimension.confidence < 0.75) reasons.push(`${key} 置信度不足`);
@@ -141,45 +141,48 @@ export class VideoQualityService {
       exactBatchDuplicate,
     });
 
-    observer("flash_review");
-    const flash = await this.provider.analyze(
+    observer("initial_review");
+    const initialRun = await this.provider.analyze(
       { input: videoInput, frames: evidence.fullVideoFrames },
       signal,
     );
     const initial = normalizeVideoQcResult({
-      raw: flash.raw,
+      raw: initialRun.raw,
       sourceInput: videoInput,
       evidence,
-      modelRuns: [flash.metadata],
+      modelRuns: [initialRun.metadata],
     });
-    if (!needsReview(flash.raw, initial)) {
+    if (!needsReview(initialRun.raw, initial)) {
       observer(initial.evaluationStatus === "review_pending" ? "review_pending" : "completed");
       return initial;
     }
 
-    observer("plus_review");
+    observer("secondary_review");
     try {
-      const windows = reviewWindows(flash.raw, evidence.metadata.duration_ms);
+      const windows = reviewWindows(
+        initialRun.raw,
+        evidence.metadata.duration_ms,
+      );
       const frames = await this.preprocessor.extractReviewFrames(
         request.filePath,
         windows,
         request.workDirectory,
         signal,
       );
-      const plus = await this.provider.review(
+      const reviewRun = await this.provider.review(
         {
           input: videoInput,
           frames,
-          initialResult: flash.raw,
-          reviewReasons: reviewReasons(flash.raw, initial),
+          initialResult: initialRun.raw,
+          reviewReasons: reviewReasons(initialRun.raw, initial),
         },
         signal,
       );
       const reviewed = normalizeVideoQcResult({
-        raw: plus.raw,
+        raw: reviewRun.raw,
         sourceInput: videoInput,
         evidence,
-        modelRuns: [flash.metadata, plus.metadata],
+        modelRuns: [initialRun.metadata, reviewRun.metadata],
       });
       observer(
         reviewed.evaluationStatus === "review_pending"
@@ -197,7 +200,7 @@ export class VideoQualityService {
         reviewRequired: true,
         reviewReasons: [
           ...initial.reviewReasons,
-          `Plus 复核失败：${error instanceof Error ? error.message : "unknown"}`,
+          `复核模型失败：${error instanceof Error ? error.message : "未知错误"}`,
         ],
       };
     }

@@ -77,6 +77,44 @@ describe("quality lab persistent job store", () => {
     expect(persisted).not.toContain("private-video");
   });
 
+  it("persists new review stages while still loading legacy diagnostics", async () => {
+    const now = () => new Date("2026-08-12T08:00:00.000Z");
+    const { store, persistencePath } = await setup(now);
+    const record = store.create({
+      batchId: "new-stage",
+      fileName: "new-stage.mp4",
+      sizeBytes: 123,
+      filePath: "/tmp/new-stage.mp4",
+      workDirectory: "/tmp/new-stage",
+    });
+    store.updateStage(record.public.id, "initial_review");
+    store.appendDiagnostic(record.public.id, {
+      taskId: record.public.id,
+      modelStage: "initial",
+      operation: "analysis",
+      model: "qwen3.7-plus",
+      attempt: 1,
+      startedAt: now().toISOString(),
+      finishedAt: now().toISOString(),
+      durationMs: 18,
+      outcome: "success",
+      httpStatus: 200,
+      requestId: "req-new",
+      retryable: false,
+    });
+
+    expect(store.getPublic(record.public.id)).toMatchObject({
+      stage: "initial_review",
+      diagnostics: [{ modelStage: "initial", model: "qwen3.7-plus" }],
+    });
+
+    const restored = new QualityLabJobStore({ persistencePath, now });
+    expect(restored.getPublic(record.public.id)).toMatchObject({
+      stage: "system_failed",
+      diagnostics: [{ modelStage: "initial", model: "qwen3.7-plus" }],
+    });
+  });
+
   it("marks non-terminal jobs as interrupted after a service restart", async () => {
     const now = () => new Date("2026-08-12T08:00:00.000Z");
     const { store, persistencePath } = await setup(now);

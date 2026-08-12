@@ -14,6 +14,9 @@ export type QualityStage =
   | "queued"
   | "uploading"
   | "media_analysis"
+  | "initial_review"
+  | "secondary_review"
+  // Legacy values are retained so 30-day persisted task history remains readable.
   | "flash_review"
   | "plus_review"
   | "completed"
@@ -222,7 +225,7 @@ export type NormalizedVideoQcResultV1 = {
 };
 
 export type ModelRunMetadata = {
-  stage: "flash" | "plus";
+  stage: "initial" | "review" | "flash" | "plus";
   model: string;
   requestId: string | null;
   durationMs: number;
@@ -248,7 +251,7 @@ export type VideoQualityModelConfig = {
 
 export type BailianCallDiagnostic = {
   taskId: string;
-  modelStage: "flash" | "plus";
+  modelStage: "initial" | "review" | "flash" | "plus";
   operation: "analysis" | "review" | "repair";
   model: string;
   attempt: number;

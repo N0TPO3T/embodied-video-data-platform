@@ -90,7 +90,7 @@ export function renderQualityLabPage(): string {
   <script>
     const state = { batchId:crypto.randomUUID(), queue:[], running:false, results:[], retentionDays:30 };
     const terminalStages = new Set(["completed","review_pending","system_failed","cancelled"]);
-    const stageLabels = { waiting:"等待中", uploading:"上传中", queued:"排队中", media_analysis:"媒体分析", flash_review:"Flash 初审", plus_review:"Plus 复核", completed:"已完成", review_pending:"待复核", system_failed:"系统失败", cancelled:"已取消" };
+    const stageLabels = { waiting:"等待中", uploading:"上传中", queued:"排队中", media_analysis:"媒体分析", initial_review:"初审", secondary_review:"复核", flash_review:"初审（历史）", plus_review:"复核（历史）", completed:"已完成", review_pending:"待复核", system_failed:"系统失败", cancelled:"已取消" };
     const dimensionLabels = { first_person_and_composition:"第一人称与构图", hand_forearm_object_integrity:"手部、前臂与对象", frame_and_video_quality:"视频与帧质量", task_authenticity_completeness:"任务真实性与完整度", task_value_uniqueness:"任务价值与独特性" };
     const evaluationStatusLabels = { scored:"已评分", hard_reject:"硬性否决", incomplete_input:"输入不完整", review_pending:"待复核", system_failed:"系统失败" };
     const severityLabels = { minor:"轻微", moderate:"中等", major:"较重", critical:"严重" };
@@ -104,7 +104,7 @@ export function renderQualityLabPage(): string {
     function node(tag,className,text) { const element=document.createElement(tag); if(className) element.className=className; if(text!==undefined) element.textContent=text; return element; }
     function formatBytes(value) { if(value>=1073741824) return (value/1073741824).toFixed(2)+" GB"; if(value>=1048576) return (value/1048576).toFixed(1)+" MB"; return (value/1024).toFixed(1)+" KB"; }
     function formatDuration(ms) { const seconds=Math.max(0,Math.round((ms||0)/1000)); return String(Math.floor(seconds/3600)).padStart(2,"0")+":"+String(Math.floor((seconds%3600)/60)).padStart(2,"0")+":"+String(seconds%60).padStart(2,"0"); }
-    function statusTone(stage) { if(stage==="completed") return "ok"; if(stage==="review_pending") return "warn"; if(stage==="system_failed"||stage==="cancelled") return "bad"; if(["uploading","queued","media_analysis","flash_review","plus_review"].includes(stage)) return "active"; return "idle"; }
+    function statusTone(stage) { if(stage==="completed") return "ok"; if(stage==="review_pending") return "warn"; if(stage==="system_failed"||stage==="cancelled") return "bad"; if(["uploading","queued","media_analysis","initial_review","secondary_review","flash_review","plus_review"].includes(stage)) return "active"; return "idle"; }
     function evaluationStatusLabel(value) { return evaluationStatusLabels[value]||"未知状态"; }
     function reasonLabel(value) { return reasonLabels[value]||"其他质量问题"; }
     function severityLabel(value) { return severityLabels[value]||"未分级"; }

@@ -90,8 +90,8 @@ const prompt: LoadedVideoQualityPrompt = {
   promptVersion: "qwen_video_qc_prompt_v1",
   ruleVersion: "video_qc_v1",
   outputSchema: "video_qc_result_v1",
-  initialModel: "qwen3-vl-flash-2026-01-22",
-  reviewModel: "qwen3-vl-plus-2025-12-19",
+  initialModel: "qwen3.7-plus",
+  reviewModel: "qwen3.7-flash",
   contentSha256: "c".repeat(64),
 };
 
@@ -136,7 +136,7 @@ function providerWithDiagnostics(fetcher: typeof fetch) {
 }
 
 describe("Qwen video quality provider", () => {
-  it("calls the fixed Flash model with frame-array video input", async () => {
+  it("calls Qwen3.7 Plus for initial review with frame-array video input", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       response(JSON.stringify(rawResult())),
     );
@@ -157,7 +157,7 @@ describe("Qwen video quality provider", () => {
     expect((init?.headers as Record<string, string>).Authorization).toBe(
       "Bearer secret-test-key",
     );
-    expect(body.model).toBe("qwen3-vl-flash-2026-01-22");
+    expect(body.model).toBe("qwen3.7-plus");
     expect(body.enable_thinking).toBe(false);
     expect(body.response_format).toEqual({ type: "json_object" });
     expect(body.messages[1].content[0]).toEqual({
@@ -176,6 +176,7 @@ describe("Qwen video quality provider", () => {
     expect(textInput.output_requirements.join(" ")).toContain("简体中文");
     expect(result.raw.final_score).toBe(80);
     expect(result.metadata.requestId).toBe("req-123");
+    expect(result.metadata.stage).toBe("initial");
     expect(JSON.stringify(result)).not.toContain("secret-test-key");
   });
 
@@ -221,7 +222,7 @@ describe("Qwen video quality provider", () => {
     const repairBody = JSON.parse(
       String(repairFetch.mock.calls[1]?.[1]?.body),
     ) as Record<string, any>;
-    expect(repairBody.model).toBe("qwen3-vl-flash-2026-01-22");
+    expect(repairBody.model).toBe("qwen3.7-plus");
     expect(repairBody.messages.at(-1).content[0].text).toContain(
       "video_qc_result_v1",
     );
@@ -253,7 +254,7 @@ describe("Qwen video quality provider", () => {
     expect(result.raw.summary).toBe("质量稳定");
   });
 
-  it("uses Plus only for review input and preserves initial observations", async () => {
+  it("uses Qwen3.7 Flash only for review input and preserves initial observations", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       response(JSON.stringify(rawResult()), 200, "req-plus"),
     );
@@ -269,11 +270,11 @@ describe("Qwen video quality provider", () => {
       string,
       any
     >;
-    expect(body.model).toBe("qwen3-vl-plus-2025-12-19");
+    expect(body.model).toBe("qwen3.7-flash");
     expect(body.messages[1].content[1].text).toContain("initial_result");
     expect(body.messages[1].content[1].text).toContain("low confidence");
     expect(body.messages[1].content[1].text).toContain("output_contract");
-    expect(result.metadata.stage).toBe("plus");
+    expect(result.metadata.stage).toBe("review");
   });
 
   it("emits task-scoped diagnostics for success and HTTP retries", async () => {
@@ -288,7 +289,7 @@ describe("Qwen video quality provider", () => {
     expect(diagnostics).toMatchObject([
       {
         taskId: "LAB-1",
-        modelStage: "flash",
+        modelStage: "initial",
         operation: "analysis",
         attempt: 1,
         outcome: "http_error",
@@ -298,7 +299,7 @@ describe("Qwen video quality provider", () => {
       },
       {
         taskId: "LAB-1",
-        modelStage: "flash",
+        modelStage: "initial",
         operation: "analysis",
         attempt: 2,
         outcome: "success",

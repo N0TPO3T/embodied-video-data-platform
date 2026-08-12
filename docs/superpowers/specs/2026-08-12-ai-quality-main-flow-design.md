@@ -2,7 +2,7 @@
 
 ## 目标
 
-把现有独立 AI 视频质检实验页中已经验证的千问调用、抽帧、Flash 初审、Plus 复核、结构化结果校验和服务端规则复算逻辑接入正式视频主流程。正式上传的视频在媒体解析完成后自动进入 AI 队列，最多同时处理 2 个任务，结果持久化到 PostgreSQL，并由现有管理员、团长和数采页面读取。
+把现有独立 AI 视频质检实验页中已经验证的千问调用、抽帧、Qwen3.7 Plus 初审、Qwen3.7 Flash 条件复核、结构化结果校验和服务端规则复算逻辑接入正式视频主流程。正式上传的视频在媒体解析完成后自动进入 AI 队列，最多同时处理 2 个任务，结果持久化到 PostgreSQL，并由现有管理员、团长和数采页面读取。
 
 管理员可以在“标签与规则”页面查看和修改当前 AI 系统提示词。保存生成新版本，只影响之后新开始的质检任务；已开始的任务始终使用启动时锁定的提示词快照。
 
@@ -33,7 +33,7 @@
 4. Outbox Pump 把事件发布到 `evdp.ai.quality.v1` 队列。
 5. AI Worker 收到任务后锁定提交记录，若已有终态结果则直接确认消息，保证重复消息幂等。
 6. Worker 读取当前启用的提示词版本，立即创建或更新该提交的运行记录，并把提示词版本、系统提示词内容哈希、模型 ID 锁定为任务快照。随后将提交状态改为 `ai_processing`。
-7. Worker 从 MinIO 下载原视频到独立临时目录，调用现有预处理器、Flash 初审、条件触发的 Plus 复核和服务端规则复算。
+7. Worker 从 MinIO 下载原视频到独立临时目录，调用现有预处理器、Qwen3.7 Plus 初审、条件触发的 Qwen3.7 Flash 复核和服务端规则复算。
 8. Worker 在事务中写入标准化结果、原始结构化结果、模型调用元数据和实际使用的提示词快照，并把提交状态改为 `completed`。
 9. 临时原视频和抽帧文件在成功、失败、重试或进程退出路径中清理。
 10. API 返回持久化结果，前端不再为真实提交伪造 0 分或演示结论。
@@ -95,7 +95,7 @@
 
 “标签与规则”页面新增“AI 系统提示词”配置卡和编辑区域：
 
-- 显示当前版本、内容哈希缩写、Flash/Plus 模型和最近修改信息。
+- 显示当前版本、内容哈希缩写、初审/复核模型和最近修改信息。
 - 通过多行文本框编辑完整系统提示词。
 - 保存前提示“仅影响保存后新开始的任务”。
 - 保存成功后刷新版本信息；失败时保留未保存内容并显示后端错误。
@@ -128,7 +128,7 @@
 - 媒体完成事务创建唯一 `ai.quality.v1` Outbox 事件。
 - RabbitMQ topology 和 AI Worker `prefetch(2)`。
 - 两个任务可并行执行，第三个任务在前两个之一结束前不开始。
-- 成功结果、Plus 复核、review pending、hard reject、可重试失败和终态失败写回。
+- 成功结果、条件复核、review pending、hard reject、可重试失败和终态失败写回。
 - 重复消息不会对终态提交再次调用 provider。
 - API 根据管理员、团长和数采角色继续执行数据范围隔离。
 - 前端提示词编辑、真实质量结果映射、AI 队列和旧的 60 分判断移除。
@@ -145,8 +145,8 @@ Dockerfile 新增正式 `ai-worker` target，安装 FFmpeg。Compose 新增常�
 AI_QUALITY_CONCURRENCY=2
 AI_QUALITY_MODEL_TIMEOUT_MS=600000
 VIDEO_QUALITY_PROMPT_PATH=/quality/qwen-video-ai-quality-prompt-v1.md
-VIDEO_QUALITY_INITIAL_MODEL=qwen3-vl-flash-2026-01-22
-VIDEO_QUALITY_REVIEW_MODEL=qwen3-vl-plus-2025-12-19
+VIDEO_QUALITY_INITIAL_MODEL=qwen3.7-plus
+VIDEO_QUALITY_REVIEW_MODEL=qwen3.7-flash
 ```
 
 `QWEN_API_KEY` 与工作空间专属 `QWEN_BASE_URL` 继续只存在于本地 `.env`，不提交 Git、不写数据库、不显示在管理页面。

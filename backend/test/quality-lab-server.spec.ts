@@ -22,8 +22,8 @@ function environment(
     promptPath: "/quality/prompt.md",
     qwenApiKey: "configured",
     qwenBaseUrl: "https://workspace.example.com/compatible-mode/v1",
-    initialModel: "qwen3-vl-flash-2026-01-22",
-    reviewModel: "qwen3-vl-plus-2025-12-19",
+    initialModel: "qwen3.7-plus",
+    reviewModel: "qwen3.7-flash",
     modelConfigured: true,
     historyPath: undefined,
     historyRetentionDays: 30,
@@ -93,6 +93,8 @@ describe("quality lab environment", () => {
     expect(parsed.port).toBe(4010);
     expect(parsed.modelConfigured).toBe(false);
     expect(parsed.qwenApiKey).toBeUndefined();
+    expect(parsed.initialModel).toBe("qwen3.7-plus");
+    expect(parsed.reviewModel).toBe("qwen3.7-flash");
   });
 });
 
@@ -104,7 +106,7 @@ describe("quality lab server", () => {
         temporaryPath = input.filePath;
         expect(existsSync(temporaryPath)).toBe(true);
         observer?.("media_analysis");
-        observer?.("flash_review");
+        observer?.("initial_review");
         return result(input.videoId);
       }),
     };

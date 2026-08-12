@@ -113,21 +113,21 @@ function setup(options: { review?: boolean; reviewFails?: boolean } = {}) {
     analyze: vi.fn().mockResolvedValue({
       raw: raw(options.review),
       metadata: {
-        stage: "flash",
-        model: "flash",
-        requestId: "flash-id",
+        stage: "initial",
+        model: "qwen3.7-plus",
+        requestId: "initial-id",
         durationMs: 5,
         frameCount: 4,
       },
     }),
     review: options.reviewFails
-      ? vi.fn().mockRejectedValue(new Error("plus failed"))
+      ? vi.fn().mockRejectedValue(new Error("secondary review failed"))
       : vi.fn().mockResolvedValue({
           raw: raw(false),
           metadata: {
-            stage: "plus",
-            model: "plus",
-            requestId: "plus-id",
+            stage: "review",
+            model: "qwen3.7-flash",
+            requestId: "review-id",
             durationMs: 5,
             frameCount: 1,
           },
@@ -137,7 +137,7 @@ function setup(options: { review?: boolean; reviewFails?: boolean } = {}) {
 }
 
 describe("video quality service", () => {
-  it("runs Flash once and returns a server-normalized result", async () => {
+  it("runs the initial model once and returns a server-normalized result", async () => {
     const { service, provider } = setup();
     const stages: string[] = [];
 
@@ -151,7 +151,7 @@ describe("video quality service", () => {
       (stage) => stages.push(stage),
     );
 
-    expect(stages).toEqual(["media_analysis", "flash_review", "completed"]);
+    expect(stages).toEqual(["media_analysis", "initial_review", "completed"]);
     expect(provider.analyze).toHaveBeenCalledOnce();
     expect(provider.review).not.toHaveBeenCalled();
     expect(result.finalScore).toBe(80);
@@ -181,7 +181,7 @@ describe("video quality service", () => {
     );
   });
 
-  it("runs Plus for review predicates and preserves pending state if Plus fails", async () => {
+  it("runs the review model for review predicates and preserves pending state if it fails", async () => {
     const reviewed = setup({ review: true });
     const stages: string[] = [];
     const result = await reviewed.service.evaluate(
@@ -195,12 +195,12 @@ describe("video quality service", () => {
     );
     expect(stages).toEqual([
       "media_analysis",
-      "flash_review",
-      "plus_review",
+      "initial_review",
+      "secondary_review",
       "completed",
     ]);
     expect(reviewed.provider.review).toHaveBeenCalledOnce();
-    expect(result.modelRuns.map((run) => run.stage)).toEqual(["flash", "plus"]);
+    expect(result.modelRuns.map((run) => run.stage)).toEqual(["initial", "review"]);
 
     const failed = setup({ review: true, reviewFails: true });
     const pending = await failed.service.evaluate({
@@ -211,6 +211,6 @@ describe("video quality service", () => {
     });
     expect(pending.evaluationStatus).toBe("review_pending");
     expect(pending.settlementRatio).toBeNull();
-    expect(pending.reviewReasons.join(" ")).toContain("Plus");
+    expect(pending.reviewReasons.join(" ")).toContain("复核模型");
   });
 });

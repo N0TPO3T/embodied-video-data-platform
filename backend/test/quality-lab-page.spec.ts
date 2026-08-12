@@ -61,4 +61,14 @@ describe("quality lab page", () => {
     expect(html).toContain("reasonLabel(issue.reason_code)");
     expect(html).toContain("severityLabel(issue.severity)");
   });
+
+  it("uses model-independent stage labels and keeps old history readable", () => {
+    const html = renderQualityLabPage();
+
+    expect(html).toContain('initial_review:"初审"');
+    expect(html).toContain('secondary_review:"复核"');
+    expect(html).toContain('flash_review:"初审（历史）"');
+    expect(html).toContain('plus_review:"复核（历史）"');
+    expect(html).toContain('"initial_review","secondary_review"');
+  });
 });
