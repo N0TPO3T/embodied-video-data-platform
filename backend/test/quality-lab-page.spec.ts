@@ -28,13 +28,14 @@ describe("quality lab page", () => {
     expect(html).not.toContain("质量不通过");
   });
 
-  it("runs one browser job at a time and renders user values with textContent", () => {
+  it("runs two browser jobs at a time and renders user values with textContent", () => {
     const html = renderQualityLabPage();
 
-    expect(html).toMatch(/if\s*\(state\.running\)\s*return/u);
-    expect(html).toMatch(/state\.running\s*=\s*true/u);
-    expect(html).toContain("await processEntry(entry)");
-    expect(html).toMatch(/state\.running\s*=\s*false/u);
+    expect(html).toContain("while(state.running<2)");
+    expect(html).toContain("state.running+=1");
+    expect(html).toContain("void processEntry(entry)");
+    expect(html).toContain("state.running-=1");
+    expect(html).toContain("最多双并发");
     expect(html).toContain("textContent");
     expect(html).not.toContain("innerHTML");
   });

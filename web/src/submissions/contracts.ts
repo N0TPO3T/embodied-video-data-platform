@@ -9,8 +9,53 @@ export type BackendProcessingStatus =
   | "queued"
   | "probing"
   | "awaiting_ai"
+  | "ai_processing"
   | "completed"
   | "system_failed";
+
+export type BackendQualityStatus =
+  | "queued"
+  | "running"
+  | "scored"
+  | "hard_reject"
+  | "review_pending"
+  | "system_failed";
+
+export type BackendQualityResult = {
+  status: BackendQualityStatus;
+  attempts: number;
+  promptRevision: number;
+  promptContentSha256: string;
+  initialModel: string;
+  reviewModel: string;
+  modelRuns: Array<Record<string, unknown>>;
+  finalScore: number | null;
+  rawTotalScore: number | null;
+  settlementRatio: number | null;
+  invalidDurationMs: number | null;
+  billableDurationMs: number | null;
+  summary: string;
+  recommendations: string[];
+  deductions: Array<Record<string, unknown>>;
+  reviewRequired: boolean;
+  reviewReasons: string[];
+  lastError?: string;
+  detectedTask?: {
+    scene_id?: string;
+    task_id?: string;
+    variant_id?: string;
+    task_summary?: string;
+    confidence?: number;
+  };
+  invalidSegments: Array<{
+    reasonCode: string;
+    startMs: number;
+    endMs: number;
+    source: string;
+  }>;
+  startedAt?: number;
+  completedAt?: number;
+};
 
 export type BackendMediaSegment = {
   id: string;
@@ -45,6 +90,7 @@ export type BackendSubmission = {
     sizeBytes: string;
   };
   segments: BackendMediaSegment[];
+  quality?: BackendQualityResult;
 };
 
 export type CreateUploadResult = {

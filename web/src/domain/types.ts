@@ -65,6 +65,27 @@ export interface Submission {
   qualityStatus: QualityStatus;
   aiScore: number;
   finalScore: number;
+  qualityResult?: {
+    status:
+      | "queued"
+      | "running"
+      | "scored"
+      | "hard_reject"
+      | "review_pending"
+      | "system_failed";
+    summary: string;
+    recommendations: string[];
+    reviewReasons: string[];
+    initialModel: string;
+    reviewModel: string;
+    promptRevision: number;
+    promptContentSha256: string;
+    settlementRatio: number | null;
+    attempts: number;
+    lastError?: string;
+    startedAt?: string;
+    completedAt?: string;
+  };
   settlementStatus: SettlementStatus;
   createdAt: string;
   completedAt?: string;

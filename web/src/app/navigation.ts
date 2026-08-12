@@ -63,7 +63,7 @@ export const navigationByRole: Record<Role, NavigationItem[]> = {
   admin: [
     { label: "运营总览", path: "/admin", icon: LayoutDashboard },
     { label: "数据提交", path: "/admin/submissions", icon: Database },
-    { label: "AI 任务", path: "/admin/ai", icon: Cpu, badge: "12" },
+    { label: "AI 任务", path: "/admin/ai", icon: Cpu },
     { label: "质量复核", path: "/admin/review", icon: ShieldCheck },
     { label: "数据资产", path: "/admin/assets", icon: Archive },
     { label: "用户与团队", path: "/admin/people", icon: Users },

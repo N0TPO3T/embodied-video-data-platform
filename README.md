@@ -2,7 +2,7 @@
 
 一个面向具身智能视频数据生产的可点击平台框架，覆盖公开官网、账号密码登录、数采人员、团长和平台管理员四类界面。
 
-当前版本保留了原有 Web 界面，账号、登录会话、团队权限、账户审计和视频上传均已迁移到本地 NestJS + PostgreSQL 后端。视频文件由浏览器分片直传 MinIO，经 RabbitMQ 进入独立媒体进程，再由 FFprobe/FFmpeg 提取元数据并检测黑屏、冻结片段。AI 质检、结算和提现仍是后续阶段。
+当前版本保留了原有 Web 界面，账号、登录会话、团队权限、账户审计、视频上传和 AI 质检均已迁移到本地 NestJS + PostgreSQL 后端。视频文件由浏览器分片直传 MinIO，经 RabbitMQ 先后进入独立媒体进程和 AI 质检进程；媒体进程使用 FFprobe/FFmpeg 提取证据，AI 进程使用 Qwen3.7 完成初检、条件复核和服务端规则复算。结算和提现仍是后续阶段。
 
 ## 已实现范围
 
@@ -12,6 +12,8 @@
 - 平台管理员：全平台提交、AI 队列、质量复核、数据资产、用户团队、规则、结算、提现审核、公开配置和审计日志。
 - 核心规则：角色数据隔离、质量系数、有效时长、预计收入、结算后不可修改和提现金额校验。
 - 真实视频链路：MP4/MOV 分片上传、对象大小与 SHA-256 校验、可靠消息、媒体元数据、黑屏与冻结片段。
+- 正式 AI 质检：`qwen3.7-plus` 初检、`qwen3.7-flash` 条件复核、并发 2、三级延迟重试和 PostgreSQL 结果持久化。
+- 提示词版本：管理员可在“标签与规则”修改系统提示词；每次保存创建新版本，只影响之后开始的任务。
 
 ## 本地运行
 
@@ -34,7 +36,18 @@ pnpm dev
 - RabbitMQ 管理页：`http://localhost:15672`
 - MinIO 管理页：`http://localhost:9001`
 
-后端容器每次启动都会自动检查并升级数据库结构；媒体进程会等待 API 健康后再启动。Web 通过 `web/.env.local` 中的 `NEXT_PUBLIC_API_BASE_URL` 和 `BACKEND_INTERNAL_URL` 连接本地后端。
+后端容器每次启动都会自动检查并升级数据库结构；媒体进程和 AI 质检进程会等待 API 健康后再启动。Web 通过 `web/.env.local` 中的 `NEXT_PUBLIC_API_BASE_URL` 和 `BACKEND_INTERNAL_URL` 连接本地后端。
+
+正式 AI 主流程需要在根目录 `.env` 配置 `QWEN_API_KEY` 和工作空间专属 `QWEN_BASE_URL`。非密钥默认配置为：
+
+```dotenv
+AI_QUALITY_CONCURRENCY=2
+AI_QUALITY_MODEL_TIMEOUT_MS=600000
+VIDEO_QUALITY_INITIAL_MODEL=qwen3.7-plus
+VIDEO_QUALITY_REVIEW_MODEL=qwen3.7-flash
+```
+
+未配置百炼密钥时，API、账号、上传和媒体解析仍能运行，但 `ai-quality-worker` 会明确启动失败，视频会停在“等待 AI 质检”。密钥不会写入数据库或管理页面。
 
 ### 本地预设账号
 
@@ -74,7 +87,7 @@ pnpm build
 pnpm start:local
 ```
 
-完整视频处理应使用 `docker compose up -d --build`，因为 `media-worker` 容器已经包含 FFprobe/FFmpeg。
+完整视频处理应使用 `docker compose up -d --build`，因为 `media-worker` 和 `ai-quality-worker` 容器均已包含 FFprobe/FFmpeg。正式 AI Worker 默认只启动一个实例，总并发固定为 2。
 
 ### 独立 AI 视频质检实验页
 
@@ -84,7 +97,7 @@ pnpm start:local
 docker compose --profile ai-test up --build ai-quality-lab
 ```
 
-打开 `http://localhost:4010`，可一次选择多个 MP4/MOV；浏览器和服务端都按单并发逐个处理。页面使用 `docs/quality/` 中的 `video_qc_v1` 评分规则与 `qwen_video_qc_prompt_v1` 提示词，初审固定调用 `qwen3.7-plus`，满足复核条件时调用 `qwen3.7-flash`。
+打开 `http://localhost:4010`，可一次选择多个 MP4/MOV；浏览器和服务端都最多同时处理 2 条。页面使用 `docs/quality/` 中的 `video_qc_v1` 评分规则与 `qwen_video_qc_prompt_v1` 提示词，初检固定调用 `qwen3.7-plus`，满足复核条件时调用 `qwen3.7-flash`。
 
 实验模式不写正式数据库。每次上传由服务端生成固定的 `LAB-...` 任务 ID；页面刷新后会从本地历史恢复，容器重启后仍可查询。任务状态、评分结果和脱敏百炼调用诊断通过 Docker 命名卷保留 30 天，也可以在页面手动删除并下载单项或整批 JSON。诊断包含每次尝试的阶段、模型、耗时、HTTP 状态、百炼 `request_id` 和底层网络错误码，但不保存 API Key、Authorization 请求头、Base64 帧、请求正文或完整模型回复。
 
@@ -144,14 +157,14 @@ pnpm test:render
 
 ## 交互演示
 
-账号、团队、审计、视频上传、视频列表和媒体解析使用真实本地后端。AI 质检、质量复核、结算、提现、文件导出和交付包仍保留演示状态。可优先体验：
+账号、团队、审计、视频上传、视频列表、媒体解析、AI 质检结果和管理员系统提示词均使用真实本地后端。人工质量复核写回、结算、提现、文件导出和交付包仍保留演示状态。可优先体验：
 
 - 团长查看成员详情与指标，并新增、改名、重置密码、停用或启用本团队数采账号。
-- 管理员新增或配置账号，新建价格规则版本并维护标签。
+- 管理员新增或配置账号，查看正式 AI 队列，在“标签与规则”发布新的 AI 系统提示词版本。
 - 管理员预览并生成结算批次，将已结算数据组成交付包。
 - 通过顶部通知面板、成功提示和操作日志观察操作结果。
 
-短信、文件导出、真实支付和交付包下载仍为演示占位，会给出明确的界面反馈，不会触发外部服务。上传后的视频在媒体解析成功时停留于 `awaiting_ai`，等待后续正式 AI Worker 接管；独立实验页已经可以使用同一套模型、提示词和规则验证 AI 质检，但尚未写回正式提交状态。
+短信、文件导出、真实支付和交付包下载仍为演示占位，会给出明确的界面反馈，不会触发外部服务。上传后的视频在媒体解析成功时会自动进入正式 AI 队列，依次经历 `awaiting_ai`、`ai_processing` 和终态；结果、模型调用元数据、失败原因及提示词快照均写入 PostgreSQL，重启后仍然存在。
 
 ## 工程结构
 
@@ -162,10 +175,10 @@ web/
 ├── src/app/              # 客户端路由与角色边界
 ├── src/auth/             # 对接 NestJS 的登录与账号 API
 ├── src/domain/           # 领域类型和纯业务计算
-├── src/data/             # 尚未迁移的质检、结算等演示状态
+├── src/data/             # 尚未迁移的人工复核、结算等演示状态
 ├── src/submissions/      # 真实视频上传、列表与后端数据映射
 ├── src/components/       # 表格、状态、复核抽屉等公共组件
 └── src/features/         # 官网、登录、数采、团长和管理员页面
 ```
 
-账号、登录会话、团队、审计和视频提交通过 NestJS API 与 PostgreSQL 管理，视频对象保存在 MinIO。质检、相似度、结算和交付将在后续阶段逐步替换演示状态，同时保留现有页面结构。
+账号、登录会话、团队、审计、视频提交、AI 提示词版本和 AI 质检结果通过 NestJS API 与 PostgreSQL 管理，视频对象保存在 MinIO。向量相似度、人工复核写回、结算和交付将在后续阶段逐步替换演示状态，同时保留现有页面结构。

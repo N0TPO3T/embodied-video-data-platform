@@ -179,5 +179,11 @@ describe("AI quality prompt API", () => {
       .set("Cookie", adminCookie)
       .send({ systemPrompt: "   " })
       .expect(400);
+    await request(app.getHttpServer())
+      .put("/api/v1/ai-quality/prompt")
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", adminCookie)
+      .send({ systemPrompt: "缺少结构化输出协议的普通说明" })
+      .expect(400);
   });
 });

@@ -21,6 +21,13 @@ function normalizeSystemPrompt(value: string): string {
   if (prompt.length > 100_000) {
     throw new IdentityFailure("VALIDATION", "系统提示词不能超过 100000 个字符", 400);
   }
+  if (!/video_qc_v1/u.test(prompt) || !/JSON/iu.test(prompt)) {
+    throw new IdentityFailure(
+      "VALIDATION",
+      "系统提示词必须保留 video_qc_v1 和 JSON 结构化输出约束",
+      400,
+    );
+  }
   return prompt;
 }
 

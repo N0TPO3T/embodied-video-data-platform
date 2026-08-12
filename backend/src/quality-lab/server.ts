@@ -70,7 +70,8 @@ export function createQualityLabApp(options: QualityLabAppOptions): Express {
   const store = options.store ?? new QualityLabJobStore();
   const logger = options.logger ?? (() => undefined);
   const pending: string[] = [];
-  let processing = false;
+  const maxConcurrency = 2;
+  let activeJobs = 0;
 
   const storage = multer.diskStorage({
     destination(request: UploadRequest, _file, callback) {
@@ -105,66 +106,67 @@ export function createQualityLabApp(options: QualityLabAppOptions): Express {
     await rm(record.workDirectory, { recursive: true, force: true });
   }
 
-  async function pump(): Promise<void> {
-    if (processing) return;
-    processing = true;
+  async function processRecord(id: string): Promise<void> {
+    const record = store.getRecord(id);
+    if (!record) return;
+    if (record.public.stage === "cancelled") {
+      await clean(record);
+      return;
+    }
     try {
-      while (pending.length > 0) {
-        const id = pending.shift();
-        if (!id) continue;
-        const record = store.getRecord(id);
-        if (!record) continue;
-        if (record.public.stage === "cancelled") {
-          await clean(record);
-          continue;
-        }
-        try {
-          const result = await options.evaluator?.evaluate(
-            {
-              videoId: id,
-              filePath: record.filePath,
-              workDirectory: record.workDirectory,
-              registerSha256: (sha256) =>
-                store.registerSha256(record.public.batchId, sha256),
-            },
-            (stage) => {
-              if (stage !== "completed" && stage !== "review_pending") {
-                store.updateStage(id, stage);
-              }
-            },
-            record.abortController.signal,
-          );
-          await clean(record);
-          if (result) {
-            store.complete(id, result);
-            logger({
-              event: "quality_lab_job_terminal",
-              taskId: id,
-              stage: store.getPublic(id)?.stage,
-              finalScore: result.finalScore,
-            });
+      const result = await options.evaluator?.evaluate(
+        {
+          videoId: id,
+          filePath: record.filePath,
+          workDirectory: record.workDirectory,
+          registerSha256: (sha256) =>
+            store.registerSha256(record.public.batchId, sha256),
+        },
+        (stage) => {
+          if (stage !== "completed" && stage !== "review_pending") {
+            store.updateStage(id, stage);
           }
-        } catch (error) {
-          await clean(record);
-          if (record.abortController.signal.aborted) {
-            store.cancel(id);
-          } else {
-            const message = publicError(error, record);
-            store.fail(id, message);
-            logger({
-              event: "quality_lab_job_terminal",
-              taskId: id,
-              stage: "system_failed",
-              error: message,
-            });
-          }
-        }
+        },
+        record.abortController.signal,
+      );
+      await clean(record);
+      if (result) {
+        store.complete(id, result);
+        logger({
+          event: "quality_lab_job_terminal",
+          taskId: id,
+          stage: store.getPublic(id)?.stage,
+          finalScore: result.finalScore,
+        });
       }
-    } finally {
-      processing = false;
+    } catch (error) {
+      await clean(record);
+      if (record.abortController.signal.aborted) {
+        store.cancel(id);
+      } else {
+        const message = publicError(error, record);
+        store.fail(id, message);
+        logger({
+          event: "quality_lab_job_terminal",
+          taskId: id,
+          stage: "system_failed",
+          error: message,
+        });
+      }
     }
   }
 
+  function pump(): void {
+    while (activeJobs < maxConcurrency && pending.length > 0) {
+      const id = pending.shift();
+      if (!id) continue;
+      activeJobs += 1;
+      void processRecord(id).finally(() => {
+        activeJobs -= 1;
+        pump();
+      });
+    }
+  }
   app.get("/api/health", (_request, response) => {
     response.json({
       status: "ok",
@@ -175,6 +177,7 @@ export function createQualityLabApp(options: QualityLabAppOptions): Express {
       reviewModel: options.environment.reviewModel,
       ruleVersion: "video_qc_v1",
       promptVersion: "qwen_video_qc_prompt_v1",
+      concurrency: maxConcurrency,
     });
   });
 
@@ -235,7 +238,7 @@ export function createQualityLabApp(options: QualityLabAppOptions): Express {
         fileName: record.public.fileName,
         sizeBytes: record.public.sizeBytes,
       });
-      queueMicrotask(() => void pump());
+      queueMicrotask(pump);
       response.status(202).json({ jobId: record.public.id });
     });
   });

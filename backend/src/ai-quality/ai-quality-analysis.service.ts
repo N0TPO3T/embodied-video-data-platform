@@ -32,6 +32,7 @@ const TERMINAL_RESULT_STATUSES = new Set<VideoQualityResultStatus>([
   "scored",
   "hard_reject",
   "review_pending",
+  "system_failed",
 ]);
 
 export class TerminalAiQualityError extends Error {}
@@ -130,9 +131,9 @@ export class AiQualityAnalysisService {
       if (existing && TERMINAL_RESULT_STATUSES.has(existing.status)) {
         return "skipped";
       }
-      const activePrompt = existing ? null : await this.prompts.getActive();
       let task: Awaited<ReturnType<AiQualityAnalysisService["begin"]>>;
       try {
+        const activePrompt = existing ? null : await this.prompts.getActive();
         task = await this.begin(input.submissionId, activePrompt);
       } catch (error) {
         const classified = classify(error);

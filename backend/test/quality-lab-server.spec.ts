@@ -86,6 +86,14 @@ async function waitForTerminal(
   throw new Error("job did not finish");
 }
 
+async function waitUntil(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("condition was not reached");
+}
+
 describe("quality lab environment", () => {
   it("does not require platform infrastructure and reports missing model config", () => {
     const parsed = parseQualityLabEnvironment({});
@@ -99,6 +107,37 @@ describe("quality lab environment", () => {
 });
 
 describe("quality lab server", () => {
+  it("runs two evaluations in parallel and holds the third", async () => {
+    const started: string[] = [];
+    const releases: Array<() => void> = [];
+    const evaluator: VideoQualityEvaluator = {
+      evaluate: vi.fn(async (input) => {
+        started.push(input.videoId);
+        await new Promise<void>((resolve) => releases.push(resolve));
+        return result(input.videoId);
+      }),
+    };
+    const app = createQualityLabApp({ environment: environment(), evaluator });
+
+    const jobs = [];
+    for (const name of ["one.mp4", "two.mp4", "three.mp4"]) {
+      const created = await request(app)
+        .post("/api/jobs")
+        .field("batchId", "batch-concurrency")
+        .attach("video", Buffer.from("video"), name)
+        .expect(202);
+      jobs.push(created.body.jobId as string);
+    }
+    await waitUntil(() => started.length === 2);
+    expect(started).toEqual(jobs.slice(0, 2));
+
+    releases.shift()?.();
+    await waitUntil(() => started.length === 3);
+    expect(started[2]).toBe(jobs[2]);
+    releases.splice(0).forEach((release) => release());
+    await Promise.all(jobs.map((id) => waitForTerminal(app, id)));
+  });
+
   it("accepts a multipart video, exposes progress, and removes temporary files", async () => {
     let temporaryPath = "";
     const evaluator: VideoQualityEvaluator = {
@@ -139,6 +178,7 @@ describe("quality lab server", () => {
     });
     const health = await request(unavailable).get("/api/health").expect(200);
     expect(health.body.modelStatus).toBe("not_configured");
+    expect(health.body.concurrency).toBe(2);
     await request(unavailable)
       .post("/api/jobs")
       .field("batchId", "batch")

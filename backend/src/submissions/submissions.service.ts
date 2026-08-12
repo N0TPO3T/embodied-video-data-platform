@@ -10,6 +10,7 @@ import { JobOutboxEntity } from "../database/entities/job-outbox.entity.js";
 import { MediaMetadataEntity } from "../database/entities/media-metadata.entity.js";
 import { MediaSegmentEntity } from "../database/entities/media-segment.entity.js";
 import { SubmissionEntity } from "../database/entities/submission.entity.js";
+import { VideoQualityResultEntity } from "../database/entities/video-quality-result.entity.js";
 import {
   OBJECT_STORAGE,
   type ObjectStoragePort,
@@ -36,6 +37,11 @@ function publicSubmission(submission: SubmissionEntity) {
       segments?: MediaSegmentEntity[];
     }
   ).segments ?? [];
+  const quality = (
+    submission as SubmissionEntity & {
+      quality?: VideoQualityResultEntity | null;
+    }
+  ).quality;
   return {
     id: submission.id,
     fileName: submission.originalFileName,
@@ -69,6 +75,53 @@ function publicSubmission(submission: SubmissionEntity) {
       endSeconds: Number(segment.endSeconds),
       invalid: segment.invalid,
     })),
+    quality: quality
+      ? {
+          status: quality.status,
+          attempts: quality.attempts,
+          promptRevision: quality.promptRevision,
+          promptContentSha256: quality.promptContentSha256,
+          initialModel: quality.initialModel,
+          reviewModel: quality.reviewModel,
+          modelRuns: quality.modelRuns,
+          finalScore:
+            quality.finalScore === null ? null : Number(quality.finalScore),
+          rawTotalScore:
+            quality.rawTotalScore === null
+              ? null
+              : Number(quality.rawTotalScore),
+          settlementRatio:
+            quality.settlementRatio === null
+              ? null
+              : Number(quality.settlementRatio),
+          invalidDurationMs:
+            quality.invalidDurationMs === null
+              ? null
+              : Number(quality.invalidDurationMs),
+          billableDurationMs:
+            quality.billableDurationMs === null
+              ? null
+              : Number(quality.billableDurationMs),
+          summary: quality.summary,
+          recommendations: quality.recommendations,
+          deductions: quality.deductions,
+          reviewRequired: quality.reviewRequired,
+          reviewReasons: quality.reviewReasons,
+          lastError: quality.lastError ?? undefined,
+          detectedTask:
+            quality.normalizedResult &&
+            typeof quality.normalizedResult.detectedTask === "object"
+              ? quality.normalizedResult.detectedTask
+              : undefined,
+          invalidSegments:
+            quality.normalizedResult &&
+            Array.isArray(quality.normalizedResult.invalidSegments)
+              ? quality.normalizedResult.invalidSegments
+              : [],
+          startedAt: quality.startedAt?.getTime(),
+          completedAt: quality.completedAt?.getTime(),
+        }
+      : undefined,
   };
 }
 
@@ -278,6 +331,12 @@ export class SubmissionsService {
         "segment",
         "segment.submissionId = submission.id",
       )
+      .leftJoinAndMapOne(
+        "submission.quality",
+        VideoQualityResultEntity,
+        "quality",
+        "quality.submissionId = submission.id",
+      )
       .orderBy("submission.createdAt", "DESC")
       .addOrderBy("segment.startSeconds", "ASC");
     if (actor.role === "leader") {
@@ -308,6 +367,12 @@ export class SubmissionsService {
         MediaSegmentEntity,
         "segment",
         "segment.submissionId = submission.id",
+      )
+      .leftJoinAndMapOne(
+        "submission.quality",
+        VideoQualityResultEntity,
+        "quality",
+        "quality.submissionId = submission.id",
       )
       .where("submission.id = :id", { id })
       .orderBy("segment.startSeconds", "ASC")

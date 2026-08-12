@@ -8,7 +8,13 @@ import type {
 function processingStatus(status: BackendProcessingStatus): ProcessingStatus {
   if (status === "uploading") return "uploading";
   if (status === "queued") return "queued";
-  if (status === "probing" || status === "awaiting_ai") return "processing";
+  if (
+    status === "probing" ||
+    status === "awaiting_ai" ||
+    status === "ai_processing"
+  ) {
+    return "processing";
+  }
   if (status === "completed") return "completed";
   return "failed";
 }
@@ -50,9 +56,47 @@ function createdAt(value: number): string {
   }).format(new Date(value));
 }
 
+function mappedQualityStatus(
+  source: BackendSubmission,
+): Submission["qualityStatus"] {
+  if (source.quality?.status === "scored") return "passed";
+  if (source.quality?.status === "hard_reject") return "failed";
+  return "pending";
+}
+
+function aiIssues(source: BackendSubmission): Submission["issues"] {
+  const invalid =
+    source.quality?.invalidSegments.map((segment) => ({
+      label: segment.reasonCode,
+      start: Math.round(segment.startMs) / 1_000,
+      end: Math.round(segment.endMs) / 1_000,
+    })) ?? [];
+  const deductions = (source.quality?.deductions ?? []).flatMap((item) => {
+    const start = Number(item.start_ms);
+    const end = Number(item.end_ms);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      return [];
+    }
+    return [
+      {
+        label:
+          typeof item.description === "string"
+            ? item.description
+            : String(item.reason_code ?? "AI 质检问题"),
+        start: start / 1_000,
+        end: end / 1_000,
+      },
+    ];
+  });
+  return [...invalid, ...deductions];
+}
+
 export function backendSubmissionToDomain(
   source: BackendSubmission,
 ): Submission {
+  const detected = source.quality?.detectedTask;
+  const qualityInvalidSeconds = source.quality?.invalidDurationMs;
+  const qualityIssues = aiIssues(source);
   return {
     id: source.id,
     fileName: source.fileName,
@@ -60,30 +104,66 @@ export function backendSubmissionToDomain(
     ownerName: source.ownerName,
     teamId: source.teamId,
     teamName: source.teamName,
-    scene: "待 AI 识别",
-    action: source.processingStatus === "awaiting_ai" ? "等待 AI 质检" : "媒体处理中",
-    object: "待 AI 识别",
+    scene: detected?.scene_id || "待 AI 识别",
+    action:
+      detected?.task_summary ||
+      (source.processingStatus === "awaiting_ai"
+        ? "等待 AI 质检"
+        : source.processingStatus === "ai_processing"
+          ? "AI 质检中"
+          : "媒体处理中"),
+    object: detected?.variant_id || "待 AI 识别",
     durationSeconds: source.media
       ? Math.round(source.media.durationSeconds)
       : 0,
-    invalidSeconds: invalidSeconds(source.segments),
+    invalidSeconds:
+      qualityInvalidSeconds === null || qualityInvalidSeconds === undefined
+        ? invalidSeconds(source.segments)
+        : Math.round(qualityInvalidSeconds) / 1_000,
     sizeMb:
       Math.round((Number(source.sizeBytes) / 1024 / 1024) * 10) / 10,
     resolution: source.media
       ? `${source.media.width}×${source.media.height}`
       : "解析中",
     processingStatus: processingStatus(source.processingStatus),
-    qualityStatus: "pending",
-    aiScore: 0,
-    finalScore: 0,
+    qualityStatus: mappedQualityStatus(source),
+    aiScore: source.quality?.finalScore ?? 0,
+    finalScore: source.quality?.finalScore ?? 0,
+    qualityResult: source.quality
+      ? {
+          status: source.quality.status,
+          summary: source.quality.summary,
+          recommendations: source.quality.recommendations,
+          reviewReasons: source.quality.reviewReasons,
+          initialModel: source.quality.initialModel,
+          reviewModel: source.quality.reviewModel,
+          promptRevision: source.quality.promptRevision,
+          promptContentSha256: source.quality.promptContentSha256,
+          settlementRatio: source.quality.settlementRatio,
+          attempts: source.quality.attempts,
+          lastError: source.quality.lastError,
+          startedAt: source.quality.startedAt
+            ? createdAt(source.quality.startedAt)
+            : undefined,
+          completedAt: source.quality.completedAt
+            ? createdAt(source.quality.completedAt)
+            : undefined,
+        }
+      : undefined,
     settlementStatus: "unsettled",
     createdAt: createdAt(source.createdAt),
+    completedAt: source.quality?.completedAt
+      ? createdAt(source.quality.completedAt)
+      : undefined,
     tags: source.isTestData ? ["测试数据"] : [],
-    issues: source.segments.map((segment) => ({
-      label: segment.type === "black" ? "黑屏" : "画面冻结",
-      start: segment.startSeconds,
-      end: segment.endSeconds,
-    })),
+    issues:
+      qualityIssues.length > 0
+        ? qualityIssues
+        : source.segments.map((segment) => ({
+            label: segment.type === "black" ? "黑屏" : "画面冻结",
+            start: segment.startSeconds,
+            end: segment.endSeconds,
+          })),
     audit: [],
   };
 }

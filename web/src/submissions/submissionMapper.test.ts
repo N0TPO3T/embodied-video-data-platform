@@ -71,4 +71,63 @@ describe("backend submission mapping", () => {
       tags: ["测试数据"],
     });
   });
+
+  it("maps persisted AI decisions without applying a 60-point threshold", () => {
+    const submission = backendSubmissionToDomain({
+      id: "SUB-AI",
+      fileName: "ai.mp4",
+      ownerId: "U-01",
+      ownerName: "测试数采",
+      teamId: "TEAM-01",
+      teamName: "测试团队",
+      sizeBytes: "1048576",
+      uploadStatus: "uploaded",
+      processingStatus: "completed",
+      isTestData: false,
+      createdAt: Date.parse("2026-08-11T01:02:03.000Z"),
+      segments: [],
+      quality: {
+        status: "scored",
+        attempts: 1,
+        promptRevision: 3,
+        promptContentSha256: "a".repeat(64),
+        initialModel: "qwen3.7-plus",
+        reviewModel: "qwen3.7-flash",
+        modelRuns: [],
+        finalScore: 55,
+        rawTotalScore: 57,
+        settlementRatio: 0.7,
+        invalidDurationMs: 2_500,
+        billableDurationMs: 7_500,
+        summary: "服务端规则判定为可结算",
+        recommendations: ["保持视角稳定"],
+        deductions: [],
+        reviewRequired: false,
+        reviewReasons: [],
+        detectedTask: {
+          scene_id: "kitchen",
+          task_id: "tidy",
+          variant_id: "v1",
+          task_summary: "整理厨房台面",
+        },
+        invalidSegments: [],
+      },
+    });
+
+    expect(submission).toMatchObject({
+      scene: "kitchen",
+      action: "整理厨房台面",
+      object: "v1",
+      invalidSeconds: 2.5,
+      qualityStatus: "passed",
+      aiScore: 55,
+      finalScore: 55,
+      qualityResult: {
+        promptRevision: 3,
+        initialModel: "qwen3.7-plus",
+        reviewModel: "qwen3.7-flash",
+        settlementRatio: 0.7,
+      },
+    });
+  });
 });
