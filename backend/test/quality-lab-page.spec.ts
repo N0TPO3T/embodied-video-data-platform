@@ -28,13 +28,14 @@ describe("quality lab page", () => {
     expect(html).not.toContain("质量不通过");
   });
 
-  it("runs one browser job at a time and renders user values with textContent", () => {
+  it("runs two browser jobs at a time and renders user values with textContent", () => {
     const html = renderQualityLabPage();
 
-    expect(html).toMatch(/if\s*\(state\.running\)\s*return/u);
-    expect(html).toMatch(/state\.running\s*=\s*true/u);
-    expect(html).toContain("await processEntry(entry)");
-    expect(html).toMatch(/state\.running\s*=\s*false/u);
+    expect(html).toContain("while(state.running<2)");
+    expect(html).toContain("state.running+=1");
+    expect(html).toContain("void processEntry(entry)");
+    expect(html).toContain("state.running-=1");
+    expect(html).toContain("最多双并发");
     expect(html).toContain("textContent");
     expect(html).not.toContain("innerHTML");
   });
@@ -60,5 +61,15 @@ describe("quality lab page", () => {
     expect(html).toContain("evaluationStatusLabel(result.evaluationStatus)");
     expect(html).toContain("reasonLabel(issue.reason_code)");
     expect(html).toContain("severityLabel(issue.severity)");
+  });
+
+  it("uses model-independent stage labels and keeps old history readable", () => {
+    const html = renderQualityLabPage();
+
+    expect(html).toContain('initial_review:"初审"');
+    expect(html).toContain('secondary_review:"复核"');
+    expect(html).toContain('flash_review:"初审（历史）"');
+    expect(html).toContain('plus_review:"复核（历史）"');
+    expect(html).toContain('"initial_review","secondary_review"');
   });
 });

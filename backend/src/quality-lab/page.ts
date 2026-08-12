@@ -70,12 +70,12 @@ export function renderQualityLabPage(): string {
 <body>
   <main class="shell">
     <section class="hero">
-      <div><span class="eyebrow">LOCAL QUALITY LAB · VIDEO_QC_V1</span><h1>AI 视频质检实验页</h1><p>使用正式千问模型、V1 系统提示词和服务端复算规则。队列严格单并发，任务结果与脱敏诊断保留 30 天。</p></div>
+      <div><span class="eyebrow">LOCAL QUALITY LAB · VIDEO_QC_V1</span><h1>AI 视频质检实验页</h1><p>使用正式千问模型、V1 系统提示词和服务端复算规则。队列最多双并发，任务结果与脱敏诊断保留 30 天。</p></div>
       <div id="health" class="health"><i></i><span>正在读取模型状态</span></div>
     </section>
     <div class="grid">
       <section class="panel">
-        <div class="panel-head"><div><h2>本地视频</h2><p>可一次选择多个文件，系统会逐个处理</p></div></div>
+        <div class="panel-head"><div><h2>本地视频</h2><p>可一次选择多个文件，最多同时处理 2 个</p></div></div>
         <div id="drop-zone" class="drop-zone" tabindex="0" role="button"><div><strong>拖放 MP4 / MOV 到这里</strong><span>单文件最大 1 GB，不会写入正式数据库</span><button id="choose-button" class="button" type="button">选择视频</button></div></div>
         <input id="file-input" type="file" accept="video/mp4,video/quicktime,.mp4,.mov" multiple hidden />
         <p class="privacy">视频完成、失败或取消后会删除原视频和抽帧；任务结果与脱敏调用诊断保留 30 天，刷新页面不会丢失。百炼调用可能产生模型费用。</p>
@@ -88,9 +88,9 @@ export function renderQualityLabPage(): string {
     </div>
   </main>
   <script>
-    const state = { batchId:crypto.randomUUID(), queue:[], running:false, results:[], retentionDays:30 };
+    const state = { batchId:crypto.randomUUID(), queue:[], running:0, results:[], retentionDays:30 };
     const terminalStages = new Set(["completed","review_pending","system_failed","cancelled"]);
-    const stageLabels = { waiting:"等待中", uploading:"上传中", queued:"排队中", media_analysis:"媒体分析", flash_review:"Flash 初审", plus_review:"Plus 复核", completed:"已完成", review_pending:"待复核", system_failed:"系统失败", cancelled:"已取消" };
+    const stageLabels = { waiting:"等待中", uploading:"上传中", queued:"排队中", media_analysis:"媒体分析", initial_review:"初审", secondary_review:"复核", flash_review:"初审（历史）", plus_review:"复核（历史）", completed:"已完成", review_pending:"待复核", system_failed:"系统失败", cancelled:"已取消" };
     const dimensionLabels = { first_person_and_composition:"第一人称与构图", hand_forearm_object_integrity:"手部、前臂与对象", frame_and_video_quality:"视频与帧质量", task_authenticity_completeness:"任务真实性与完整度", task_value_uniqueness:"任务价值与独特性" };
     const evaluationStatusLabels = { scored:"已评分", hard_reject:"硬性否决", incomplete_input:"输入不完整", review_pending:"待复核", system_failed:"系统失败" };
     const severityLabels = { minor:"轻微", moderate:"中等", major:"较重", critical:"严重" };
@@ -104,7 +104,7 @@ export function renderQualityLabPage(): string {
     function node(tag,className,text) { const element=document.createElement(tag); if(className) element.className=className; if(text!==undefined) element.textContent=text; return element; }
     function formatBytes(value) { if(value>=1073741824) return (value/1073741824).toFixed(2)+" GB"; if(value>=1048576) return (value/1048576).toFixed(1)+" MB"; return (value/1024).toFixed(1)+" KB"; }
     function formatDuration(ms) { const seconds=Math.max(0,Math.round((ms||0)/1000)); return String(Math.floor(seconds/3600)).padStart(2,"0")+":"+String(Math.floor((seconds%3600)/60)).padStart(2,"0")+":"+String(seconds%60).padStart(2,"0"); }
-    function statusTone(stage) { if(stage==="completed") return "ok"; if(stage==="review_pending") return "warn"; if(stage==="system_failed"||stage==="cancelled") return "bad"; if(["uploading","queued","media_analysis","flash_review","plus_review"].includes(stage)) return "active"; return "idle"; }
+    function statusTone(stage) { if(stage==="completed") return "ok"; if(stage==="review_pending") return "warn"; if(stage==="system_failed"||stage==="cancelled") return "bad"; if(["uploading","queued","media_analysis","initial_review","secondary_review","flash_review","plus_review"].includes(stage)) return "active"; return "idle"; }
     function evaluationStatusLabel(value) { return evaluationStatusLabels[value]||"未知状态"; }
     function reasonLabel(value) { return reasonLabels[value]||"其他质量问题"; }
     function severityLabel(value) { return severityLabels[value]||"未分级"; }
@@ -153,10 +153,10 @@ export function renderQualityLabPage(): string {
     async function watchEntry(entry) { while(entry.jobId&&!terminalStages.has(entry.stage)) { await new Promise((resolve)=>setTimeout(resolve,1000)); const response=await fetch("/api/jobs/"+encodeURIComponent(entry.jobId),{signal:entry.controller?entry.controller.signal:undefined}); if(!response.ok) throw new Error(await readError(response)); applyJob(entry,await response.json()); render(); } }
     async function watchHistory() { while(state.queue.some((entry)=>entry.jobId&&!terminalStages.has(entry.stage))) { await new Promise((resolve)=>setTimeout(resolve,1000)); const response=await fetch("/api/jobs"); if(!response.ok) throw new Error(await readError(response)); const body=await response.json(); const jobsById=new Map((body.jobs||[]).map((job)=>[job.id,job])); for(const entry of state.queue) { if(entry.jobId&&jobsById.has(entry.jobId)) applyJob(entry,jobsById.get(entry.jobId)); } render(); } }
     async function processEntry(entry) { entry.stage="uploading"; entry.controller=new AbortController(); render(); const form=new FormData(); form.append("batchId",state.batchId); form.append("video",entry.file); const created=await fetch("/api/jobs",{method:"POST",body:form,signal:entry.controller.signal}); if(!created.ok) throw new Error(await readError(created)); const body=await created.json(); entry.jobId=body.jobId; entry.stage="queued"; render(); await watchEntry(entry); }
-    async function runQueue() { if(state.running) return; const entry=state.queue.find((item)=>item.stage==="waiting"); if(!entry) return; state.running=true; try { await processEntry(entry); } catch(error) { if(entry.stage!=="cancelled") { entry.stage="system_failed"; entry.error=error&&error.message?error.message:"处理失败"; } } finally { entry.controller=null; state.running=false; render(); void runQueue(); } }
+    function runQueue() { while(state.running<2) { const entry=state.queue.find((item)=>item.stage==="waiting"); if(!entry) return; state.running+=1; entry.stage="uploading"; void processEntry(entry).catch((error)=>{ if(entry.stage!=="cancelled") { entry.stage="system_failed"; entry.error=error&&error.message?error.message:"处理失败"; } }).finally(()=>{ entry.controller=null; state.running-=1; render(); runQueue(); }); } }
     async function cancelEntry(entry) { if(entry.stage==="waiting") { state.queue=state.queue.filter((item)=>item!==entry); render(); return; } entry.stage="cancelled"; entry.controller?.abort(); if(entry.jobId) { try { await fetch("/api/jobs/"+encodeURIComponent(entry.jobId),{method:"DELETE"}); } catch {} } render(); }
     async function deleteEntry(entry) { if(!entry.jobId) return; const response=await fetch("/api/jobs/"+encodeURIComponent(entry.jobId),{method:"DELETE"}); if(!response.ok&&response.status!==404) throw new Error(await readError(response)); state.queue=state.queue.filter((item)=>item!==entry); render(); }
-    async function loadHistory() { const response=await fetch("/api/jobs"); if(!response.ok) throw new Error(await readError(response)); const body=await response.json(); state.retentionDays=body.retentionDays||30; const local=state.queue.filter((entry)=>!entry.jobId); const restored=(body.jobs||[]).map((job)=>({ localId:job.id, file:null, fileName:job.fileName, sizeBytes:job.sizeBytes, stage:job.stage, jobId:job.id, batchId:job.batchId, createdAt:job.createdAt, updatedAt:job.updatedAt, result:job.result||null, error:job.error||null, diagnostics:job.diagnostics||[], controller:null })); state.queue=[...local,...restored]; render(); const active=state.queue.filter((entry)=>entry.jobId&&!terminalStages.has(entry.stage)); if(active.length) { state.running=true; void watchHistory().catch((error)=>{ for(const entry of active) { if(!terminalStages.has(entry.stage)) { entry.stage="system_failed"; entry.error=error&&error.message?error.message:"状态读取失败"; } } }).finally(()=>{ state.running=false; render(); void runQueue(); }); } }
+    async function loadHistory() { const response=await fetch("/api/jobs"); if(!response.ok) throw new Error(await readError(response)); const body=await response.json(); state.retentionDays=body.retentionDays||30; const local=state.queue.filter((entry)=>!entry.jobId); const restored=(body.jobs||[]).map((job)=>({ localId:job.id, file:null, fileName:job.fileName, sizeBytes:job.sizeBytes, stage:job.stage, jobId:job.id, batchId:job.batchId, createdAt:job.createdAt, updatedAt:job.updatedAt, result:job.result||null, error:job.error||null, diagnostics:job.diagnostics||[], controller:null })); state.queue=[...local,...restored]; render(); const active=state.queue.filter((entry)=>entry.jobId&&!terminalStages.has(entry.stage)); if(active.length) { void watchHistory().catch((error)=>{ for(const entry of active) { if(!terminalStages.has(entry.stage)) { entry.stage="system_failed"; entry.error=error&&error.message?error.message:"状态读取失败"; } } }).finally(()=>{ render(); runQueue(); }); } else { runQueue(); } }
 
     document.getElementById("choose-button").addEventListener("click",()=>input.click()); input.addEventListener("change",()=>{ addFiles(input.files||[]); input.value=""; });
     for(const eventName of ["dragenter","dragover"]) dropZone.addEventListener(eventName,(event)=>{ event.preventDefault(); dropZone.classList.add("dragging"); });

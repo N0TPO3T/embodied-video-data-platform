@@ -28,8 +28,8 @@ describe("video quality prompt loader", () => {
     expect(prompt.promptVersion).toBe("qwen_video_qc_prompt_v1");
     expect(prompt.ruleVersion).toBe("video_qc_v1");
     expect(prompt.outputSchema).toBe("video_qc_result_v1");
-    expect(prompt.initialModel).toBe("qwen3-vl-flash-2026-01-22");
-    expect(prompt.reviewModel).toBe("qwen3-vl-plus-2025-12-19");
+    expect(prompt.initialModel).toBe("qwen3.7-plus");
+    expect(prompt.reviewModel).toBe("qwen3.7-flash");
     expect(prompt.systemPrompt).toContain("具身视频数据质量评估器");
     expect(prompt.systemPrompt).toContain("简体中文");
     expect(prompt.systemPrompt).toContain("task_summary");
@@ -52,8 +52,8 @@ describe("video quality prompt loader", () => {
       [
         "提示词版本：`qwen_video_qc_prompt_v1`",
         "适配规则：`video_qc_v1`",
-        "推荐模型：`qwen3-vl-flash-2026-01-22`",
-        "复核模型：`qwen3-vl-plus-2025-12-19`",
+        "推荐模型：`qwen3.7-plus`",
+        "复核模型：`qwen3.7-flash`",
       ].join("\n"),
       "utf8",
     );
@@ -70,8 +70,8 @@ describe("video quality prompt loader", () => {
       [
         "提示词版本：`qwen_video_qc_prompt_v2`",
         "适配规则：`video_qc_v2`",
-        "推荐模型：`qwen3-vl-flash-2026-01-22`",
-        "复核模型：`qwen3-vl-plus-2025-12-19`",
+        "推荐模型：`qwen3.7-plus`",
+        "复核模型：`qwen3.7-flash`",
         "## 系统提示词",
         "```text",
         "system prompt",
@@ -93,8 +93,8 @@ describe("video quality prompt loader", () => {
       [
         "提示词版本：`qwen_video_qc_prompt_v1`",
         "适配规则：`video_qc_v1`",
-        "推荐模型：`qwen3-vl-flash-2026-01-22`",
-        "复核模型：`qwen3-vl-plus-2025-12-19`",
+        "推荐模型：`qwen3.7-plus`",
+        "复核模型：`qwen3.7-flash`",
         "## 系统提示词",
         "```text",
         "system prompt",

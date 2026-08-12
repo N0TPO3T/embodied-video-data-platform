@@ -9,6 +9,7 @@ import type {
   PublishMessage,
 } from "./message-bus.port.js";
 import {
+  assertAiQualityTopology,
   assertMediaTopology,
   EVENTS_EXCHANGE,
 } from "./rabbitmq-topology.js";
@@ -72,6 +73,7 @@ export class RabbitMqMessageBusService implements MessageBusPort {
     });
     const channel = await connection.createConfirmChannel();
     await assertMediaTopology(channel);
+    await assertAiQualityTopology(channel);
     this.connection = connection;
     this.channel = channel;
     return channel;

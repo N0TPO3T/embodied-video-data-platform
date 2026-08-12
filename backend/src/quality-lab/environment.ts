@@ -74,10 +74,10 @@ export function parseQualityLabEnvironment(
     qwenBaseUrl: url.toString().replace(/\/$/u, ""),
     initialModel:
       source.VIDEO_QUALITY_INITIAL_MODEL?.trim() ||
-      "qwen3-vl-flash-2026-01-22",
+      "qwen3.7-plus",
     reviewModel:
       source.VIDEO_QUALITY_REVIEW_MODEL?.trim() ||
-      "qwen3-vl-plus-2025-12-19",
+      "qwen3.7-flash",
     modelConfigured: Boolean(qwenApiKey),
     historyPath: source.QUALITY_LAB_HISTORY_PATH?.trim() || undefined,
     historyRetentionDays: integer(

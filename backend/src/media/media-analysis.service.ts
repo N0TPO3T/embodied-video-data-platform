@@ -10,6 +10,7 @@ import { DataSource, Repository } from "typeorm";
 
 import { MediaMetadataEntity } from "../database/entities/media-metadata.entity.js";
 import { MediaSegmentEntity } from "../database/entities/media-segment.entity.js";
+import { JobOutboxEntity } from "../database/entities/job-outbox.entity.js";
 import { SubmissionEntity } from "../database/entities/submission.entity.js";
 import {
   OBJECT_STORAGE,
@@ -116,6 +117,22 @@ export class MediaAnalysisService {
         submission.failureCode = null;
         submission.failureMessage = null;
         await manager.getRepository(SubmissionEntity).save(submission);
+        await manager
+          .getRepository(JobOutboxEntity)
+          .createQueryBuilder()
+          .insert()
+          .values({
+            id: `JOB-${randomUUID()}`,
+            aggregateType: "submission",
+            aggregateId: submission.id,
+            eventType: "ai.quality.v1",
+            payload: { submissionId: submission.id },
+            status: "pending",
+            attempts: 0,
+            availableAt: new Date(),
+          })
+          .orIgnore()
+          .execute();
       });
     } catch (error) {
       submission.processingStatus = "system_failed";

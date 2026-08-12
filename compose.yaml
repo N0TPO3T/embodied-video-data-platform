@@ -108,6 +108,8 @@ services:
       PORT: 4000
     ports:
       - "127.0.0.1:4000:4000"
+    volumes:
+      - ./docs/quality:/quality:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -145,6 +147,29 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    restart: unless-stopped
+
+  ai-quality-worker:
+    init: true
+    build:
+      context: ./backend
+      target: ai-quality-worker
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      AI_QUALITY_CONCURRENCY: 2
+      AI_QUALITY_MODEL_TIMEOUT_MS: 600000
+      VIDEO_QUALITY_PROMPT_PATH: /quality/qwen-video-ai-quality-prompt-v1.md
+    depends_on:
+      api:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./docs/quality:/quality:ro
     restart: unless-stopped
 
   ai-quality-lab:

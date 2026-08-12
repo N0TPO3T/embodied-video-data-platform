@@ -4,6 +4,7 @@ import { TypeOrmModule } from "@nestjs/typeorm";
 import { AuthModule } from "../auth/auth.module.js";
 import { JobOutboxEntity } from "../database/entities/job-outbox.entity.js";
 import { SubmissionEntity } from "../database/entities/submission.entity.js";
+import { VideoQualityResultEntity } from "../database/entities/video-quality-result.entity.js";
 import { AllowedOriginGuard } from "../http/allowed-origin.guard.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { SubmissionFailureFilter } from "./submission-failure.filter.js";
@@ -13,7 +14,11 @@ import { SubmissionsService } from "./submissions.service.js";
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([SubmissionEntity, JobOutboxEntity]),
+    TypeOrmModule.forFeature([
+      SubmissionEntity,
+      JobOutboxEntity,
+      VideoQualityResultEntity,
+    ]),
     AuthModule,
     StorageModule,
   ],

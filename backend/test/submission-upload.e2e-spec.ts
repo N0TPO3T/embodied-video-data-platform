@@ -14,6 +14,8 @@ import { JobOutboxEntity } from "../src/database/entities/job-outbox.entity.js";
 import { SubmissionEntity } from "../src/database/entities/submission.entity.js";
 import { TeamEntity } from "../src/database/entities/team.entity.js";
 import { UserEntity } from "../src/database/entities/user.entity.js";
+import { VideoQualityPromptVersionEntity } from "../src/database/entities/video-quality-prompt-version.entity.js";
+import { VideoQualityResultEntity } from "../src/database/entities/video-quality-result.entity.js";
 import { configureApplication } from "../src/http/configure-application.js";
 import {
   OBJECT_STORAGE,
@@ -107,6 +109,7 @@ describe("submission multipart upload API", () => {
   let app: INestApplication;
   let dataSource: DataSource;
   let storage: RecordingObjectStorage;
+  let completedSubmissionId = "";
 
   async function login(username: string): Promise<string> {
     const response = await request(app.getHttpServer())
@@ -228,6 +231,7 @@ describe("submission multipart upload API", () => {
       },
     });
     const id = created.body.submission.id as string;
+    completedSubmissionId = id;
 
     const parts = await request(app.getHttpServer())
       .post(`/api/v1/submissions/${id}/uploads/parts`)
@@ -265,12 +269,78 @@ describe("submission multipart upload API", () => {
   });
 
   it("enforces self, own-team, and administrator visibility", async () => {
+    await dataSource.getRepository(SubmissionEntity).update(
+      { id: completedSubmissionId },
+      { processingStatus: "completed" },
+    );
+    const prompt = await dataSource
+      .getRepository(VideoQualityPromptVersionEntity)
+      .save({
+        id: "VQP-UPLOAD-01",
+        revision: 1,
+        systemPrompt: "test prompt",
+        contentSha256: "c".repeat(64),
+        promptVersion: "qwen_video_qc_prompt_v1",
+        ruleVersion: "video_qc_v1",
+        outputSchema: "video_qc_result_v1",
+        initialModel: "qwen3.7-plus",
+        reviewModel: "qwen3.7-flash",
+        active: true,
+        createdByAccountId: "U-UPLOAD-ADMIN",
+        createdByName: "上传管理员",
+      });
+    await dataSource.getRepository(VideoQualityResultEntity).save({
+      submissionId: completedSubmissionId,
+      status: "scored",
+      attempts: 1,
+      promptVersionId: prompt.id,
+      promptRevision: prompt.revision,
+      promptContentSha256: prompt.contentSha256,
+      systemPromptSnapshot: prompt.systemPrompt,
+      initialModel: prompt.initialModel,
+      reviewModel: prompt.reviewModel,
+      modelRuns: [
+        { stage: "initial", model: "qwen3.7-plus", requestId: "req-1" },
+      ],
+      finalScore: "88.0",
+      rawTotalScore: "90.0",
+      settlementRatio: "0.9000",
+      invalidDurationMs: "1000",
+      billableDurationMs: "9000",
+      summary: "正式 AI 质检通过",
+      recommendations: ["继续保持"],
+      deductions: [],
+      reviewRequired: false,
+      reviewReasons: [],
+      normalizedResult: {
+        detectedTask: {
+          scene_id: "kitchen",
+          task_id: "tidy",
+          variant_id: "v1",
+          task_summary: "整理厨房台面",
+          confidence: 0.98,
+        },
+        invalidSegments: [],
+      },
+      rawModelResult: {},
+      startedAt: new Date(),
+      completedAt: new Date(),
+    });
     const collectorCookie = await login("upload-collector");
     const own = await request(app.getHttpServer())
       .get("/api/v1/submissions")
       .set("Cookie", collectorCookie)
       .expect(200);
     expect(own.body.submissions).toHaveLength(1);
+    expect(own.body.submissions[0].quality).toMatchObject({
+      status: "scored",
+      finalScore: 88,
+      settlementRatio: 0.9,
+      summary: "正式 AI 质检通过",
+      promptRevision: 1,
+      initialModel: "qwen3.7-plus",
+      reviewModel: "qwen3.7-flash",
+    });
 
     const otherCookie = await login("upload-other");
     const other = await request(app.getHttpServer())

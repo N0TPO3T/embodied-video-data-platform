@@ -18,7 +18,14 @@ export function SubmissionsPage({
   const [status, setStatus] = useState("all");
   const submissions = useMemo(() => state.submissions.filter((item) => {
     if (item.ownerId !== currentUser.id) return false;
-    if (qualityOnly && item.qualityStatus === "pending") return false;
+    if (
+      qualityOnly &&
+      !["scored", "hard_reject", "review_pending", "system_failed"].includes(
+        item.qualityResult?.status ?? "",
+      )
+    ) {
+      return false;
+    }
     const text = `${item.fileName} ${item.id} ${item.scene} ${item.action}`.toLowerCase();
     if (query && !text.includes(query.toLowerCase())) return false;
     if (status === "all") return true;

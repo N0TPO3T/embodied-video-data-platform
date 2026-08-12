@@ -8,6 +8,15 @@ export type ProcessingStatus =
   | "completed"
   | "failed";
 
+export type ProcessingPipelineStage =
+  | "uploading"
+  | "queued"
+  | "probing"
+  | "awaiting_ai"
+  | "ai_processing"
+  | "completed"
+  | "system_failed";
+
 export type QualityStatus = "pending" | "passed" | "failed";
 export type SettlementStatus = "unsettled" | "settled";
 export type WithdrawalStatus =
@@ -62,9 +71,31 @@ export interface Submission {
   sizeMb: number;
   resolution: string;
   processingStatus: ProcessingStatus;
+  pipelineStage?: ProcessingPipelineStage;
   qualityStatus: QualityStatus;
   aiScore: number;
   finalScore: number;
+  qualityResult?: {
+    status:
+      | "queued"
+      | "running"
+      | "scored"
+      | "hard_reject"
+      | "review_pending"
+      | "system_failed";
+    summary: string;
+    recommendations: string[];
+    reviewReasons: string[];
+    initialModel: string;
+    reviewModel: string;
+    promptRevision: number;
+    promptContentSha256: string;
+    settlementRatio: number | null;
+    attempts: number;
+    lastError?: string;
+    startedAt?: string;
+    completedAt?: string;
+  };
   settlementStatus: SettlementStatus;
   createdAt: string;
   completedAt?: string;

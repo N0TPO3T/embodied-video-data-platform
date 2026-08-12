@@ -23,6 +23,7 @@ export type SubmissionProcessingStatus =
   | "queued"
   | "probing"
   | "awaiting_ai"
+  | "ai_processing"
   | "completed"
   | "system_failed";
 

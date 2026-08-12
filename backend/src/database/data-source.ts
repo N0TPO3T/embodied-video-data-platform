@@ -10,6 +10,9 @@ import { SessionEntity } from "./entities/session.entity.js";
 import { SubmissionEntity } from "./entities/submission.entity.js";
 import { TeamEntity } from "./entities/team.entity.js";
 import { UserEntity } from "./entities/user.entity.js";
+import { VideoQualityPromptVersionEntity } from "./entities/video-quality-prompt-version.entity.js";
+import { VideoQualityResultEntity } from "./entities/video-quality-result.entity.js";
+import { AiQuality2026081200003 } from "./migrations/202608120003-ai-quality.js";
 import { Identity2026080700001 } from "./migrations/202608070001-identity.js";
 import { VideoIngestion2026080700002 } from "./migrations/202608070002-video-ingestion.js";
 
@@ -22,6 +25,8 @@ export const identityEntities = [
   MediaMetadataEntity,
   MediaSegmentEntity,
   JobOutboxEntity,
+  VideoQualityPromptVersionEntity,
+  VideoQualityResultEntity,
 ];
 
 export function createDataSource(
@@ -37,6 +42,7 @@ export function createDataSource(
     migrations: [
       Identity2026080700001,
       VideoIngestion2026080700002,
+      AiQuality2026081200003,
     ],
     synchronize: false,
     logging: false,
