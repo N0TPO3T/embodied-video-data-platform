@@ -93,4 +93,12 @@ describe("quality lab page", () => {
     expect(html).toContain('fetch("/api/prompt",{method:"PUT"');
     expect(html).toContain("只影响保存后新开始的任务");
   });
+
+  it("shows each task upload time in the history card and detail", () => {
+    const html = renderQualityLabPage();
+
+    expect(html).toContain("function formatDateTime(value)");
+    expect(html).toContain('"queue-upload-time","上传时间 · "+formatDateTime(entry.createdAt)');
+    expect(html).toContain('"result-upload-time","上传时间 · "+formatDateTime(entry.createdAt)');
+  });
 });

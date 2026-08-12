@@ -49,7 +49,8 @@ export function renderQualityLabPage(): string {
     .queue-item:focus-visible { outline:3px solid rgb(56 104 245 / 20%); outline-offset:2px; }
     .queue-item strong { display:block; overflow:hidden; font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
     .queue-meta { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:9px; }
-    .queue-score { grid-row:1 / 3; grid-column:2; align-self:center; min-width:46px; color:var(--blue); text-align:right; font-size:16px; font-weight:800; }
+    .queue-upload-time { grid-column:1; color:#8995a7; font-size:9px; }
+    .queue-score { grid-row:1 / 4; grid-column:2; align-self:center; min-width:46px; color:var(--blue); text-align:right; font-size:16px; font-weight:800; }
     .queue-score small { display:block; margin-top:2px; color:#98a3b4; font-size:8px; font-weight:600; }
     .task-id { margin-top:4px; color:#3159c4; font:9px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; overflow-wrap:anywhere; }
     .status { display:inline-flex; padding:4px 7px; border-radius:999px; font-size:9px; font-weight:700; }
@@ -59,6 +60,7 @@ export function renderQualityLabPage(): string {
     .result-title { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; }
     .result-title h3 { max-width:560px; margin:0; overflow:hidden; font-size:13px; text-overflow:ellipsis; white-space:nowrap; }
     .result-title p { margin:6px 0 0; color:var(--muted); font-size:10px; }
+    .result-upload-time { margin-top:6px; color:#8995a7; font-size:9px; }
     .score { color:var(--blue); font-size:31px; font-weight:800; letter-spacing:-.05em; }
     .score small { color:#97a1b1; font-size:11px; font-weight:600; }
     .summary-grid { display:grid; margin-top:15px; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
@@ -129,6 +131,7 @@ export function renderQualityLabPage(): string {
     function node(tag,className,text) { const element=document.createElement(tag); if(className) element.className=className; if(text!==undefined) element.textContent=text; return element; }
     function formatBytes(value) { if(value>=1073741824) return (value/1073741824).toFixed(2)+" GB"; if(value>=1048576) return (value/1048576).toFixed(1)+" MB"; return (value/1024).toFixed(1)+" KB"; }
     function formatDuration(ms) { const seconds=Math.max(0,Math.round((ms||0)/1000)); return String(Math.floor(seconds/3600)).padStart(2,"0")+":"+String(Math.floor((seconds%3600)/60)).padStart(2,"0")+":"+String(seconds%60).padStart(2,"0"); }
+    function formatDateTime(value) { if(!value) return "上传完成后生成"; const date=new Date(value); if(Number.isNaN(date.getTime())) return "—"; return new Intl.DateTimeFormat("zh-CN",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}).format(date).replaceAll("/","-"); }
     function statusTone(stage) { if(stage==="completed") return "ok"; if(stage==="review_pending") return "warn"; if(stage==="system_failed"||stage==="cancelled") return "bad"; if(["uploading","queued","media_analysis","initial_review","secondary_review","flash_review","plus_review"].includes(stage)) return "active"; return "idle"; }
     function evaluationStatusLabel(value) { return evaluationStatusLabels[value]||"未知状态"; }
     function reasonLabel(value) { return reasonLabels[value]||"其他质量问题"; }
@@ -148,6 +151,7 @@ export function renderQualityLabPage(): string {
         heading.append(node("strong","",entry.fileName),node("div","task-id",entry.jobId?"任务 ID · "+entry.jobId:"任务 ID · 上传后生成")); item.append(heading);
         const badge=node("span","status "+statusTone(entry.stage),stageLabels[entry.stage]||entry.stage); const meta=node("div","queue-meta"); meta.append(node("span","",formatBytes(entry.sizeBytes)),badge); if(entry.promptRevision) meta.append(node("span","","提示词 V"+entry.promptRevision));
         if(!terminalStages.has(entry.stage)) { const cancel=node("button","mini-button",entry.stage==="waiting"?"移除":"取消"); cancel.type="button"; cancel.addEventListener("click",(event)=>{ event.stopPropagation(); void cancelEntry(entry); }); meta.append(cancel); } item.append(meta);
+        item.append(node("div","queue-upload-time","上传时间 · "+formatDateTime(entry.createdAt)));
         const queueScore=node("div","queue-score",entry.result?String(entry.result.finalScore):"—"); queueScore.append(node("small","",entry.result?"总分 / 100":"暂无总分")); item.append(queueScore);
         item.dataset.localId=entry.localId; item.tabIndex=0; item.setAttribute("role","button"); item.setAttribute("aria-pressed",String(entry.localId===state.selectedId)); item.addEventListener("click",()=>selectEntry(entry)); item.addEventListener("keydown",(event)=>{ if(event.key==="Enter"||event.key===" ") { event.preventDefault(); selectEntry(entry); } }); queueList.append(item);
       }
@@ -158,7 +162,7 @@ export function renderQualityLabPage(): string {
       if(!selected) { resultsList.append(node("div","result-empty","请从左侧选择一个任务")); return; }
       const entry=selected;
         const card=node("article","result-card"); const title=node("div","result-title"); const copy=node("div");
-        copy.append(node("h3","",entry.fileName),node("div","task-id","任务 ID · "+(entry.jobId||"未生成")),node("p","",entry.error||(entry.result?entry.result.summary:(stageLabels[entry.stage]||entry.stage)))); title.append(copy);
+        copy.append(node("h3","",entry.fileName),node("div","task-id","任务 ID · "+(entry.jobId||"未生成")),node("div","result-upload-time","上传时间 · "+formatDateTime(entry.createdAt)),node("p","",entry.error||(entry.result?entry.result.summary:(stageLabels[entry.stage]||entry.stage)))); title.append(copy);
         if(entry.result) { const score=node("div","score",String(entry.result.finalScore)); score.append(node("small",""," / 100")); title.append(score); } card.append(title);
         if(entry.result) {
           const result=entry.result; const metrics=node("div","summary-grid"); addMetric(metrics,"评估状态",evaluationStatusLabel(result.evaluationStatus)); addMetric(metrics,"结算比例",result.settlementRatio===null?"暂不结算":Math.round(result.settlementRatio*100)+"%"); addMetric(metrics,"有效计费时长",formatDuration(result.billableDurationMs)); addMetric(metrics,"无效时长",formatDuration(result.invalidDurationMs)); addMetric(metrics,"识别任务",result.detectedTask&&result.detectedTask.task_summary?result.detectedTask.task_summary:"未确定"); addMetric(metrics,"模型运行",String((result.modelRuns||[]).length)+" 次"); card.append(metrics);
