@@ -1,0 +1,216 @@
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  VideoQualityService,
+  type VideoEvidencePreprocessor,
+  type VideoQualityModelProvider,
+} from "../src/video-quality/video-quality.service.js";
+import type {
+  DimensionKey,
+  PreparedVideoEvidence,
+  RawVideoQcResultV1,
+} from "../src/video-quality/video-quality.types.js";
+
+const keys: DimensionKey[] = [
+  "first_person_and_composition",
+  "hand_forearm_object_integrity",
+  "frame_and_video_quality",
+  "task_authenticity_completeness",
+  "task_value_uniqueness",
+];
+
+function evidence(): PreparedVideoEvidence {
+  return {
+    sha256: "d".repeat(64),
+    metadata: {
+      display_width: 1920,
+      display_height: 1080,
+      display_aspect_ratio: 16 / 9,
+      duration_ms: 30_000,
+      nominal_fps: 60,
+      effective_fps: 60,
+      codec: "h264",
+      bitrate_bps: 2_000_000,
+      file_size_bytes: 100,
+      rotation_degrees: 0,
+    },
+    technicalMetrics: {
+      decodable: true,
+      decoded_duration_ms: 30_000,
+      black_ratio: 0,
+      freeze_ratio: 0,
+      blur_ratio: null,
+      underexposure_ratio: null,
+      overexposure_ratio: null,
+      timestamp_discontinuity_ratio: null,
+      detector_windows: [],
+    },
+    fullVideoFrames: [
+      { timestampMs: 0, dataUrl: "data:image/jpeg;base64,AA==" },
+      { timestampMs: 5_000, dataUrl: "data:image/jpeg;base64,AQ==" },
+      { timestampMs: 10_000, dataUrl: "data:image/jpeg;base64,Ag==" },
+      { timestampMs: 15_000, dataUrl: "data:image/jpeg;base64,Aw==" },
+    ],
+    fullVideoSamplingFps: 0.2,
+    missingMetrics: ["blur_ratio"],
+  };
+}
+
+function raw(reviewRequired = false): RawVideoQcResultV1 {
+  return {
+    schema_version: "video_qc_result_v1",
+    rule_version: "video_qc_v1",
+    prompt_version: "qwen_video_qc_prompt_v1",
+    video_id: "LAB-1",
+    evaluation_status: reviewRequired ? "review_pending" : "scored",
+    hard_veto: { triggered: false, reasons: [] },
+    detected_task: {
+      scene_id: "",
+      task_id: "task",
+      variant_id: "",
+      task_summary: "task",
+      confidence: reviewRequired ? 0.6 : 0.9,
+    },
+    dimensions: Object.fromEntries(
+      keys.map((key) => [
+        key,
+        {
+          coefficient: 0.8,
+          score: 16,
+          confidence: reviewRequired ? 0.6 : 0.9,
+          calculation_trace: "20 × 0.8",
+          segments: [],
+          issues: [],
+        },
+      ]),
+    ) as unknown as RawVideoQcResultV1["dimensions"],
+    billing_observations: {
+      candidate_invalid_segments: [],
+      candidate_valid_waiting_segments: [],
+    },
+    raw_total_score: 80,
+    final_score: 80,
+    summary: "summary",
+    deductions: [],
+    recommendations: [],
+    review_required: reviewRequired,
+    review_reasons: reviewRequired ? ["置信度不足"] : [],
+    missing_inputs: [],
+  };
+}
+
+function setup(options: { review?: boolean; reviewFails?: boolean } = {}) {
+  const prepared = evidence();
+  const preprocessor: VideoEvidencePreprocessor = {
+    prepare: vi.fn().mockResolvedValue(prepared),
+    extractReviewFrames: vi
+      .fn()
+      .mockResolvedValue([
+        { timestampMs: 5_000, dataUrl: "data:image/jpeg;base64,BA==" },
+      ]),
+  };
+  const provider: VideoQualityModelProvider = {
+    analyze: vi.fn().mockResolvedValue({
+      raw: raw(options.review),
+      metadata: {
+        stage: "flash",
+        model: "flash",
+        requestId: "flash-id",
+        durationMs: 5,
+        frameCount: 4,
+      },
+    }),
+    review: options.reviewFails
+      ? vi.fn().mockRejectedValue(new Error("plus failed"))
+      : vi.fn().mockResolvedValue({
+          raw: raw(false),
+          metadata: {
+            stage: "plus",
+            model: "plus",
+            requestId: "plus-id",
+            durationMs: 5,
+            frameCount: 1,
+          },
+        }),
+  };
+  return { service: new VideoQualityService({ preprocessor, provider }), preprocessor, provider };
+}
+
+describe("video quality service", () => {
+  it("runs Flash once and returns a server-normalized result", async () => {
+    const { service, provider } = setup();
+    const stages: string[] = [];
+
+    const result = await service.evaluate(
+      {
+        videoId: "LAB-1",
+        filePath: "/tmp/video.mp4",
+        workDirectory: "/tmp/work",
+        registerSha256: () => false,
+      },
+      (stage) => stages.push(stage),
+    );
+
+    expect(stages).toEqual(["media_analysis", "flash_review", "completed"]);
+    expect(provider.analyze).toHaveBeenCalledOnce();
+    expect(provider.review).not.toHaveBeenCalled();
+    expect(result.finalScore).toBe(80);
+    expect(result.settlementRatio).toBe(1);
+  });
+
+  it("registers exact batch duplicates before building model input", async () => {
+    const { service, provider } = setup();
+
+    await service.evaluate({
+      videoId: "LAB-1",
+      filePath: "/tmp/video.mp4",
+      workDirectory: "/tmp/work",
+      registerSha256: (sha256) => sha256 === "d".repeat(64),
+    });
+
+    expect(provider.analyze).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          similarity_context: expect.objectContaining({
+            file_hash_exact: true,
+            confirmed_duplicate: true,
+          }),
+        }),
+      }),
+      undefined,
+    );
+  });
+
+  it("runs Plus for review predicates and preserves pending state if Plus fails", async () => {
+    const reviewed = setup({ review: true });
+    const stages: string[] = [];
+    const result = await reviewed.service.evaluate(
+      {
+        videoId: "LAB-1",
+        filePath: "/tmp/video.mp4",
+        workDirectory: "/tmp/work",
+        registerSha256: () => false,
+      },
+      (stage) => stages.push(stage),
+    );
+    expect(stages).toEqual([
+      "media_analysis",
+      "flash_review",
+      "plus_review",
+      "completed",
+    ]);
+    expect(reviewed.provider.review).toHaveBeenCalledOnce();
+    expect(result.modelRuns.map((run) => run.stage)).toEqual(["flash", "plus"]);
+
+    const failed = setup({ review: true, reviewFails: true });
+    const pending = await failed.service.evaluate({
+      videoId: "LAB-1",
+      filePath: "/tmp/video.mp4",
+      workDirectory: "/tmp/work",
+      registerSha256: () => false,
+    });
+    expect(pending.evaluationStatus).toBe("review_pending");
+    expect(pending.settlementRatio).toBeNull();
+    expect(pending.reviewReasons.join(" ")).toContain("Plus");
+  });
+});

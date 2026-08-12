@@ -23,7 +23,10 @@
     "seed:video-test-data": "tsx src/cli/seed-video-test-data.ts",
     "import:d1": "tsx src/cli/import-d1.ts",
     "outbox:publish": "tsx src/cli/publish-outbox.ts",
-    "worker:media": "node dist/media/media-worker.js"
+    "worker:media": "node dist/media/media-worker.js",
+    "quality:lab": "node dist/quality-lab/main.js",
+    "quality:lab:dev": "tsx src/quality-lab/main.ts",
+    "quality:smoke": "tsx src/cli/smoke-video-quality.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1104.0",
@@ -38,16 +41,19 @@
     "class-transformer": "0.5.1",
     "class-validator": "0.15.1",
     "express": "5.2.1",
+    "multer": "^2.2.0",
     "pg": "8.22.0",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
-    "typeorm": "1.1.0"
+    "typeorm": "1.1.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@nestjs/cli": "11.0.16",
     "@nestjs/testing": "11.1.28",
     "@types/amqplib": "^0.10.8",
     "@types/express": "5.0.6",
+    "@types/multer": "^2.2.0",
     "@types/node": "22.19.19",
     "@types/pg": "8.16.0",
     "@types/supertest": "6.0.3",

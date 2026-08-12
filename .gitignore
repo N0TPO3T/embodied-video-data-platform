@@ -12,3 +12,9 @@ backend/node_modules/
 backend/dist/
 backend/coverage/
 .worktrees/
+.superpowers/
+Data/
+outputs/
+scripts/__pycache__/
+*.pyc
+.~*

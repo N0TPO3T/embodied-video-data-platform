@@ -147,9 +147,42 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  ai-quality-lab:
+    profiles: ["ai-test"]
+    init: true
+    build:
+      context: ./backend
+      target: ai-quality-lab
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      QUALITY_LAB_HOST: 0.0.0.0
+      QUALITY_LAB_PORT: 4010
+      VIDEO_QUALITY_PROMPT_PATH: /quality/qwen-video-ai-quality-prompt-v1.md
+      QUALITY_LAB_HISTORY_PATH: /data/quality-lab/jobs.json
+      QUALITY_LAB_HISTORY_RETENTION_DAYS: 30
+    ports:
+      - "127.0.0.1:4010:4010"
+    volumes:
+      - ./docs/quality:/quality:ro
+      - ./Data:/samples:ro
+      - quality_lab_data:/data/quality-lab
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O - http://127.0.0.1:4010/api/health >/dev/null || exit 1",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:
   rabbitmq_data:
   minio_data:
   qdrant_data:
+  quality_lab_data:

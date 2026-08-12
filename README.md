@@ -76,6 +76,30 @@ pnpm start:local
 
 完整视频处理应使用 `docker compose up -d --build`，因为 `media-worker` 容器已经包含 FFprobe/FFmpeg。
 
+### 独立 AI 视频质检实验页
+
+只验证 AI 视频质检时，不需要启动 PostgreSQL、MinIO、RabbitMQ 或 Qdrant。根目录 `.env` 配置百炼 `QWEN_API_KEY` 和工作空间专属 `QWEN_BASE_URL` 后运行：
+
+```bash
+docker compose --profile ai-test up --build ai-quality-lab
+```
+
+打开 `http://localhost:4010`，可一次选择多个 MP4/MOV；浏览器和服务端都按单并发逐个处理。页面使用 `docs/quality/` 中的 `video_qc_v1` 评分规则与 `qwen_video_qc_prompt_v1` 提示词，Flash 初审固定调用 `qwen3-vl-flash-2026-01-22`，满足复核条件时调用 `qwen3-vl-plus-2025-12-19`。
+
+实验模式不写正式数据库。每次上传由服务端生成固定的 `LAB-...` 任务 ID；页面刷新后会从本地历史恢复，容器重启后仍可查询。任务状态、评分结果和脱敏百炼调用诊断通过 Docker 命名卷保留 30 天，也可以在页面手动删除并下载单项或整批 JSON。诊断包含每次尝试的阶段、模型、耗时、HTTP 状态、百炼 `request_id` 和底层网络错误码，但不保存 API Key、Authorization 请求头、Base64 帧、请求正文或完整模型回复。
+
+原视频和抽帧仍会在单项完成、失败或取消后立即删除；服务重启时尚未完成的任务会标记为“服务重启导致任务中断，请重新上传”。由于尚未连接库存数据库和向量库，第五维使用规则中明确允许的冷启动权威系数 `C_inventory=1.00`、`C_unique=1.00`；同一页面批次内仍会通过 SHA-256 识别完全相同文件。
+
+真实模型调用会产生百炼费用。自动测试不会调用百炼；如果需要对目录中最小样例执行一次明确的付费冒烟测试，可运行：
+
+```bash
+docker compose --profile ai-test run --rm ai-quality-lab \
+  node dist/cli/smoke-video-quality.js \
+  /samples/file/27622_60.mp4 --confirm-paid-call
+```
+
+停止实验页使用 `docker compose --profile ai-test stop ai-quality-lab`。当前 API Key 曾通过明文渠道提供，完成联调后应在百炼控制台轮换。
+
 旧 D1 账号只在首次迁移时读取，运行期不再提供 D1 接口。迁移命令会保留账号 ID、角色和团队归属，把旧原型密码立即转换为 Argon2id，并跳过旧会话：
 
 ```bash
@@ -127,7 +151,7 @@ pnpm test:render
 - 管理员预览并生成结算批次，将已结算数据组成交付包。
 - 通过顶部通知面板、成功提示和操作日志观察操作结果。
 
-短信、文件导出、真实支付和交付包下载仍为演示占位，会给出明确的界面反馈，不会触发外部服务。上传后的视频在媒体解析成功时停留于 `awaiting_ai`，等待后续真实模型质检阶段接管。
+短信、文件导出、真实支付和交付包下载仍为演示占位，会给出明确的界面反馈，不会触发外部服务。上传后的视频在媒体解析成功时停留于 `awaiting_ai`，等待后续正式 AI Worker 接管；独立实验页已经可以使用同一套模型、提示词和规则验证 AI 质检，但尚未写回正式提交状态。
 
 ## 工程结构
 
