@@ -184,6 +184,22 @@ function outputInstructions(prompt: LoadedVideoQualityPrompt): {
 
 const simplifiedChinesePattern = /[\u3400-\u9fff]/u;
 
+function formattedDecimal(value: number, maximumFractionDigits: number): string {
+  return Number(value.toFixed(maximumFractionDigits)).toString();
+}
+
+function normalizeDimensionCalculationTraces(raw: RawVideoQcResultV1): void {
+  for (const dimension of Object.values(raw.dimensions)) {
+    const score = Math.round((20 * dimension.coefficient + Number.EPSILON) * 10) / 10;
+    dimension.calculation_trace = [
+      "该维度得分按公式计算：20 × ",
+      formattedDecimal(dimension.coefficient, 4),
+      " = ",
+      formattedDecimal(score, 1),
+    ].join("");
+  }
+}
+
 function chineseLanguageIssues(raw: RawVideoQcResultV1): string[] {
   const issues: string[] = [];
   const check = (path: string, value: string): void => {
@@ -234,6 +250,10 @@ function chineseLanguageIssues(raw: RawVideoQcResultV1): string[] {
 
 function parseChineseRawVideoQcResult(value: unknown): RawVideoQcResultV1 {
   const raw = parseRawVideoQcResult(value);
+  // The service is authoritative for dimension scores. Generate the matching
+  // user-facing trace locally so a formula-only or English model trace cannot
+  // trigger an extra paid repair call or fail an otherwise valid evaluation.
+  normalizeDimensionCalculationTraces(raw);
   const issues = chineseLanguageIssues(raw);
   if (issues.length > 0) {
     throw new VideoQcSchemaError("模型自然语言结果不是简体中文", issues);

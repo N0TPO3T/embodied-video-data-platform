@@ -254,6 +254,25 @@ describe("Qwen video quality provider", () => {
     expect(result.raw.summary).toBe("质量稳定");
   });
 
+  it("normalizes dimension calculation traces locally without another model call", async () => {
+    const resultWithEnglishTraces = rawResult();
+    for (const dimension of Object.values(resultWithEnglishTraces.dimensions)) {
+      dimension.calculation_trace = "Dimension score = 20 * coefficient";
+    }
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      response(JSON.stringify(resultWithEnglishTraces), 200, "req-trace"),
+    );
+
+    const result = await provider(fetcher).analyze({ input, frames: [] });
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    for (const dimension of Object.values(result.raw.dimensions)) {
+      expect(dimension.calculation_trace).toBe(
+        "该维度得分按公式计算：20 × 0.8 = 16",
+      );
+    }
+  });
+
   it("uses Qwen3.7 Flash only for review input and preserves initial observations", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       response(JSON.stringify(rawResult()), 200, "req-plus"),
