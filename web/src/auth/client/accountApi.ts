@@ -1,8 +1,10 @@
 import type { AccountStatus } from "../../domain/types";
 import type {
   AccountAuditLog,
+  AccountAuditListResult,
   AccountPublic,
   CreateTeamInput,
+  SearchAccountAuditInput,
   TeamPublic,
   CreateAccountInput,
   UpdateTeamInput,
@@ -134,6 +136,20 @@ export async function updateTeam(
   return result.team;
 }
 
+export async function assignTeamLeader(
+  id: string,
+  accountId: string,
+): Promise<AccountPublic[]> {
+  const result = await requestJson<{ accounts: AccountPublic[] }>(
+    `/teams/${encodeURIComponent(id)}/leader`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ accountId }),
+    },
+  );
+  return result.accounts;
+}
+
 export async function createAccount(
     input: CreateAccountInput,
 ): Promise<AccountPublic> {
@@ -189,8 +205,60 @@ export async function setAccountStatus(
 }
 
 export async function listAccountAudit(): Promise<AccountAuditLog[]> {
-  const result = await requestJson<{ logs: AccountAuditLog[] }>(
-    "/audit-logs",
-  );
+  const result = await searchAccountAudit();
   return result.logs;
+}
+
+function buildAuditSearchParams(
+  input: SearchAccountAuditInput = {},
+  options: { includePagination?: boolean } = {},
+): URLSearchParams {
+  const params = new URLSearchParams();
+  const appendText = (key: string, value?: string) => {
+    const normalized = value?.trim();
+    if (normalized) params.set(key, normalized);
+  };
+  appendText("q", input.q);
+  appendText("actor", input.actor);
+  if (input.action && input.action !== "all") {
+    appendText("action", input.action);
+  }
+  appendText("from", input.from);
+  appendText("to", input.to);
+  if (options.includePagination !== false && input.page !== undefined) {
+    params.set("page", String(input.page));
+  }
+  if (options.includePagination !== false && input.pageSize !== undefined) {
+    params.set("pageSize", String(input.pageSize));
+  }
+  return params;
+}
+
+export function accountAuditExportUrl(
+  input: SearchAccountAuditInput = {},
+): string {
+  const params = buildAuditSearchParams(input, { includePagination: false });
+  const suffix = params.toString();
+  return apiUrl(`/audit-logs/export.csv${suffix ? `?${suffix}` : ""}`);
+}
+
+export async function searchAccountAudit(
+  input: SearchAccountAuditInput = {},
+): Promise<AccountAuditListResult> {
+  const params = buildAuditSearchParams(input);
+  const suffix = params.toString();
+  const result = await requestJson<{
+    logs: AccountAuditLog[];
+    pagination?: AccountAuditListResult["pagination"];
+  }>(`/audit-logs${suffix ? `?${suffix}` : ""}`);
+  return {
+    logs: result.logs,
+    pagination:
+      result.pagination ?? {
+        page: input.page ?? 1,
+        pageSize: input.pageSize ?? result.logs.length,
+        total: result.logs.length,
+        totalPages: 1,
+      },
+  };
 }

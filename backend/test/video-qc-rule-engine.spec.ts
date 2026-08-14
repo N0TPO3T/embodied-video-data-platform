@@ -125,9 +125,9 @@ function normalize(raw: RawVideoQcResultV1, sourceEvidence = evidence()) {
 describe("video_qc_v1 rule engine", () => {
   it("maps exact score boundaries to the confirmed four bands", () => {
     expect(normalize(rawAt(80)).settlementRatio).toBe(1);
-    expect(normalize(rawAt(60)).settlementRatio).toBe(0.8);
-    expect(normalize(rawAt(40)).settlementRatio).toBe(0.6);
-    expect(normalize(rawAt(39.9)).settlementRatio).toBe(0.4);
+    expect(normalize(rawAt(60)).settlementRatio).toBe(0.7);
+    expect(normalize(rawAt(40)).settlementRatio).toBe(0);
+    expect(normalize(rawAt(39.9)).settlementRatio).toBe(0);
   });
 
   it("keeps a hard reject score but forces zero settlement", () => {

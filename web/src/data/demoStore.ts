@@ -1,8 +1,8 @@
 import {
   effectiveDuration,
-  estimateIncome,
+  estimatePoints,
+  isActivePassedSubmission,
   qualityStatus,
-  validateWithdrawal,
 } from "../domain/calculations";
 import type {
   DeliveryPackage,
@@ -12,7 +12,6 @@ import type {
   SettlementBatch,
   Submission,
   User,
-  WithdrawalStatus,
 } from "../domain/types";
 import { demoSeed, type DemoState } from "./demoData";
 
@@ -311,12 +310,11 @@ export class DemoStore {
     return updated;
   }
 
-  createSettlementBatch(): SettlementBatch {
+  createPointCycle(): SettlementBatch {
     const current = this.requireAdministrator("仅管理员可执行该操作");
     const eligible = this.state.submissions.filter(
       (item) =>
-        item.processingStatus === "completed" &&
-        item.qualityStatus === "passed" &&
+        isActivePassedSubmission(item) &&
         item.settlementStatus === "unsettled",
     );
     if (eligible.length === 0) {
@@ -328,12 +326,12 @@ export class DemoStore {
         total + effectiveDuration(item.durationSeconds, item.invalidSeconds),
       0,
     );
-    const amount = eligible.reduce((total, item) => {
+    const points = eligible.reduce((total, item) => {
       const team = this.state.teams.find((entry) => entry.id === item.teamId);
       if (!team) throw new Error("提交数据所属团队不存在");
       return (
         total +
-        estimateIncome(
+        estimatePoints(
           team.unitPricePerMinute,
           item.durationSeconds,
           item.invalidSeconds,
@@ -342,11 +340,12 @@ export class DemoStore {
       );
     }, 0);
     const batch: SettlementBatch = {
-      id: `SET-${Date.now()}`,
+      id: `PC-${Date.now()}`,
       date: "2026-08-03",
+      businessDate: "2026-08-03",
       submissionCount: eligible.length,
       effectiveMinutes: Math.round((effectiveSeconds / 60) * 100) / 100,
-      amount: Math.round(amount * 100) / 100,
+      points: Math.round(points * 100) / 100,
       status: "locked",
     };
     const eligibleIds = new Set(eligible.map((item) => item.id));
@@ -362,7 +361,7 @@ export class DemoStore {
         {
           id: `OP-SET-${Date.now()}`,
           actor: current.name,
-          action: "生成结算批次",
+          action: "生成积分周期",
           target: batch.id,
           reason: `锁定 ${batch.submissionCount} 条合格数据`,
           createdAt: "2026-08-03 18:12",
@@ -374,13 +373,17 @@ export class DemoStore {
     return batch;
   }
 
+  createSettlementBatch(): SettlementBatch {
+    return this.createPointCycle();
+  }
+
   createDeliveryPackage(input: DeliveryPackageInput): DeliveryPackage {
     this.requireAdministrator("仅管理员可执行该操作");
     const name = input.name.trim();
     if (!name) throw new Error("请填写交付包名称");
     const assetCount = this.state.submissions.filter(
       (item) =>
-        item.settlementStatus === "settled" && item.qualityStatus === "passed",
+        item.settlementStatus === "settled" && isActivePassedSubmission(item),
     ).length;
     if (assetCount === 0) throw new Error("当前没有可交付资产");
 
@@ -475,52 +478,6 @@ export class DemoStore {
               ],
             }
           : item,
-      ),
-    };
-    this.notify();
-  }
-
-  requestWithdrawal(amount: number): void {
-    const user = this.currentUser();
-    const validation = validateWithdrawal(
-      amount,
-      this.state.wallet.available,
-      this.state.wallet.minimumWithdrawal,
-    );
-    if (!validation.valid) throw new Error(validation.message);
-
-    this.state = {
-      ...this.state,
-      wallet: {
-        ...this.state.wallet,
-        available: this.state.wallet.available - amount,
-        frozen: this.state.wallet.frozen + amount,
-      },
-      withdrawals: [
-        {
-          id: `WD-${Date.now()}`,
-          userId: user.id,
-          userName: user.name,
-          amount,
-          status: "pending",
-          account: user.alipayAccount ?? "未设置",
-          createdAt: "2026-08-03 17:03",
-        },
-        ...this.state.withdrawals,
-      ],
-    };
-    this.notify();
-  }
-
-  reviewWithdrawal(id: string, status: WithdrawalStatus): void {
-    if (this.currentUser().role !== "admin") {
-      throw new Error("仅管理员可审核提现");
-    }
-
-    this.state = {
-      ...this.state,
-      withdrawals: this.state.withdrawals.map((item) =>
-        item.id === id ? { ...item, status } : item,
       ),
     };
     this.notify();

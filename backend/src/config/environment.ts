@@ -11,6 +11,7 @@ export type RawEnvironment = {
   MINIO_SECRET_KEY?: string;
   QDRANT_URL?: string;
   QWEN_API_KEY?: string;
+  EVDP_ALLOW_LOCAL_DEFAULT_PASSWORDS?: string;
 };
 
 export type Environment = {
@@ -27,6 +28,18 @@ export type Environment = {
   qdrantUrl: string;
   qwenApiKey?: string;
   modelStatus: "configured" | "not_configured";
+};
+
+const LOCAL_DEFAULT_ENV_VALUES: Partial<Record<keyof RawEnvironment, string>> = {
+  SESSION_SECRET: "evdp-local-session-secret-change-before-production",
+  MINIO_ACCESS_KEY: "evdp_local_minio",
+  MINIO_SECRET_KEY: "evdp_local_minio_password",
+};
+
+const LOCAL_DEFAULT_URL_PARTS: Partial<Record<keyof RawEnvironment, string[]>> = {
+  DATABASE_URL: ["evdp_local_postgres_password"],
+  REDIS_URL: ["evdp_local_redis_password"],
+  RABBITMQ_URL: ["evdp_local_rabbitmq_password"],
 };
 
 function required(
@@ -72,6 +85,25 @@ export function parseEnvironment(source: RawEnvironment): Environment {
   const sessionSecret = required(source, "SESSION_SECRET");
   if (sessionSecret.length < 32) {
     throw new Error("SESSION_SECRET must contain at least 32 characters");
+  }
+  const allowLocalDefaults =
+    source.EVDP_ALLOW_LOCAL_DEFAULT_PASSWORDS === "true";
+  if (rawNodeEnv === "production" && !allowLocalDefaults) {
+    for (const [key, localValue] of Object.entries(LOCAL_DEFAULT_ENV_VALUES)) {
+      if (source[key as keyof RawEnvironment]?.trim() === localValue) {
+        throw new Error(
+          `${key} uses a local default value; rotate it or set EVDP_ALLOW_LOCAL_DEFAULT_PASSWORDS=true for local-only startup`,
+        );
+      }
+    }
+    for (const [key, localParts] of Object.entries(LOCAL_DEFAULT_URL_PARTS)) {
+      const value = source[key as keyof RawEnvironment]?.trim() ?? "";
+      if (localParts.some((part) => value.includes(part))) {
+        throw new Error(
+          `${key} uses local default credentials; rotate them or set EVDP_ALLOW_LOCAL_DEFAULT_PASSWORDS=true for local-only startup`,
+        );
+      }
+    }
   }
 
   const qwenApiKey = source.QWEN_API_KEY?.trim() || undefined;

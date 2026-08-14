@@ -1,9 +1,412 @@
-import { CircleDollarSign, Clock3, Receipt, Wallet } from "lucide-react";
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { CircleDollarSign, Clock3, FileCheck2, Timer } from "lucide-react";
+
 import { MetricCard } from "../../components/MetricCard";
+import { useIdentity } from "../../auth/client/IdentityContext";
 import { useDemoStore } from "../../data/DemoStoreContext";
-import { estimateIncome } from "../../domain/calculations";
+import {
+  effectiveDuration,
+  estimatePoints,
+  qualityCoefficient,
+  type QualityCoefficientBand,
+} from "../../domain/calculations";
+import type { Submission } from "../../domain/types";
+import {
+  getPointRule,
+  listPointCycles,
+} from "../../points/client/pointCycleApi";
+import type {
+  BackendPointCycle,
+  BackendPointCycleItem,
+} from "../../points/contracts";
+import { loadAllSubmissions } from "../../submissions/client/submissionApi";
+import { backendSubmissionToDomain } from "../../submissions/submissionMapper";
+import {
+  contributionMetrics,
+  formatDuration,
+  formatRate,
+  submissionsSince,
+} from "./teamMetrics";
+
+type PageMode = "loading" | "live" | "demo";
+
+type MemberPointSummary = {
+  id: string;
+  name: string;
+  username: string;
+  reviewed: number;
+  effectiveSeconds: number;
+  points: number;
+  averageScore: number | null;
+  passRate: number | null;
+};
+
+type TeamPointSummary = {
+  lockedPoints: number;
+  pendingPoints: number;
+  reviewedCount: number;
+  uploadCount: number;
+  pendingQualityCount: number;
+  effectiveSeconds: number;
+  pointsPerMinute: number;
+  members: MemberPointSummary[];
+};
+
+function formatPoints(points: number): string {
+  return `${points.toFixed(2)} 分`;
+}
+
+function pointsForSubmission(
+  submission: Submission,
+  pointsPerMinute: number,
+  coefficientBands?: readonly QualityCoefficientBand[],
+): number {
+  const ratio = qualityCoefficient(submission.finalScore, coefficientBands);
+  return (
+    Math.round(
+      pointsPerMinute *
+        (effectiveDuration(
+          submission.durationSeconds,
+          submission.invalidSeconds,
+        ) /
+          60) *
+        ratio *
+        100,
+    ) / 100
+  );
+}
+
+function lockedItems(cycles: BackendPointCycle[]): BackendPointCycleItem[] {
+  return cycles.flatMap((cycle) => cycle.items);
+}
+
+function memberSummaryFromSubmissions(
+  member: { id: string; displayName: string; username: string },
+  visibleSubmissions: Submission[],
+  eligibleSubmissions: Submission[],
+  locked: BackendPointCycleItem[],
+  pointsPerMinute: number,
+  coefficientBands?: readonly QualityCoefficientBand[],
+): MemberPointSummary {
+  const ownVisible = visibleSubmissions.filter(
+    (submission) => submission.ownerId === member.id,
+  );
+  const ownEligible = eligibleSubmissions.filter(
+    (submission) => submission.ownerId === member.id,
+  );
+  const ownLocked = locked.filter((item) => item.ownerId === member.id);
+  const metrics = contributionMetrics(ownVisible);
+  const scores = ownVisible
+    .filter((submission) => submission.qualityStatus !== "pending")
+    .map((submission) => submission.finalScore);
+  return {
+    id: member.id,
+    name: member.displayName,
+    username: member.username,
+    reviewed: metrics.reviewed,
+    effectiveSeconds:
+      contributionMetrics(ownEligible).effectiveSeconds +
+      Math.round(
+        ownLocked.reduce(
+          (total, item) => total + item.effectiveDurationMs,
+          0,
+        ) / 1_000,
+      ),
+    points:
+      ownEligible.reduce(
+        (total, submission) =>
+          total +
+          pointsForSubmission(
+            submission,
+            pointsPerMinute,
+            coefficientBands,
+          ),
+        0,
+      ) +
+      ownLocked.reduce((total, item) => total + item.points, 0),
+    averageScore:
+      scores.length === 0
+        ? null
+        : scores.reduce((total, score) => total + score, 0) / scores.length,
+    passRate: metrics.passRate,
+  };
+}
+
+function demoSummary(
+  members: Array<{ id: string; displayName: string; username: string }>,
+  submissions: Submission[],
+  pointsPerMinute: number,
+): TeamPointSummary {
+  const monthSubmissions = submissionsSince(submissions, 30);
+  const reviewed = monthSubmissions.filter(
+    (submission) => submission.qualityStatus !== "pending",
+  );
+  const passed = reviewed.filter(
+    (submission) => submission.qualityStatus === "passed",
+  );
+  const pendingPoints = passed.reduce(
+    (total, submission) =>
+      total +
+      estimatePoints(
+        pointsPerMinute,
+        submission.durationSeconds,
+        submission.invalidSeconds,
+        submission.finalScore,
+      ),
+    0,
+  );
+  return {
+    lockedPoints: 0,
+    pendingPoints,
+    reviewedCount: reviewed.length,
+    uploadCount: monthSubmissions.length,
+    pendingQualityCount: monthSubmissions.length - reviewed.length,
+    effectiveSeconds: contributionMetrics(passed).effectiveSeconds,
+    pointsPerMinute,
+    members: members.map((member) =>
+      memberSummaryFromSubmissions(
+        member,
+        monthSubmissions,
+        passed,
+        [],
+        pointsPerMinute,
+      ),
+    ),
+  };
+}
+
+function backendSummary(
+  members: Array<{ id: string; displayName: string; username: string }>,
+  cycles: BackendPointCycle[],
+  pendingSubmissions: Submission[],
+  visibleSubmissions: Submission[],
+  pointsPerMinute: number,
+  coefficientBands: readonly QualityCoefficientBand[],
+): TeamPointSummary {
+  const items = lockedItems(cycles);
+  const billablePending = pendingSubmissions.filter(
+    (submission) =>
+      submission.settlementStatus === "unsettled" &&
+      submission.qualityStatus === "passed" &&
+      qualityCoefficient(submission.finalScore, coefficientBands) > 0,
+  );
+  const pendingPoints = billablePending.reduce(
+    (total, submission) =>
+      total +
+      pointsForSubmission(submission, pointsPerMinute, coefficientBands),
+    0,
+  );
+  const visibleMetrics = contributionMetrics(visibleSubmissions);
+  return {
+    lockedPoints: cycles.reduce((total, cycle) => total + cycle.totalPoints, 0),
+    pendingPoints,
+    reviewedCount: visibleMetrics.reviewed,
+    uploadCount: visibleMetrics.uploads,
+    pendingQualityCount: Math.max(
+      0,
+      visibleMetrics.uploads - visibleMetrics.reviewed,
+    ),
+    effectiveSeconds:
+      Math.round(
+        items.reduce((total, item) => total + item.effectiveDurationMs, 0) /
+          1_000,
+      ) +
+      billablePending.reduce(
+        (total, submission) =>
+          total +
+          effectiveDuration(
+            submission.durationSeconds,
+            submission.invalidSeconds,
+          ),
+        0,
+      ),
+    pointsPerMinute,
+    members: members.map((member) =>
+      memberSummaryFromSubmissions(
+        member,
+        visibleSubmissions,
+        billablePending,
+        items,
+        pointsPerMinute,
+        coefficientBands,
+      ),
+    ),
+  };
+}
 
 export function TeamIncomePage() {
-  const { state, currentTeam } = useDemoStore(); const members = state.users.filter((user)=>currentTeam?.memberIds.includes(user.id));
-  return <div className="page-stack"><div className="page-heading"><div><p className="page-kicker">只读资金视图</p><h1>团队收入</h1><span>汇总成员预估与已结算收入，不计算团长佣金</span></div></div><div className="metric-grid"><MetricCard label="本月预估收入" value="¥18,642" detail="较上月 +15.8%" icon={CircleDollarSign} /><MetricCard label="待结算金额" value="¥3,286" detail="126 条数据" icon={Clock3} tone="amber" /><MetricCard label="已结算金额" value="¥15,356" detail="8 个结算批次" icon={Receipt} tone="green" /><MetricCard label="成员可用余额" value="¥8,920" detail="团队成员合计" icon={Wallet} tone="violet" /></div><section className="content-card table-card"><div className="card-heading"><div><h2>成员收入汇总</h2><p>当前团队成员的模拟资金统计</p></div></div><div className="table-scroll"><table className="data-table"><thead><tr><th>成员</th><th>有效视频</th><th>有效时长</th><th>待结算</th><th>本月已结算</th><th>通过率</th></tr></thead><tbody>{members.map((member,index)=>{ const own=state.submissions.filter((item)=>item.ownerId===member.id); const pending=own.filter((item)=>item.settlementStatus==="unsettled").reduce((sum,item)=>sum+estimateIncome(currentTeam?.unitPricePerMinute ?? 12,item.durationSeconds,item.invalidSeconds,item.finalScore),0); return <tr key={member.id}><td><div className="member-cell"><span>{member.avatar}</span><div><strong>{member.name}</strong><small>{member.account}</small></div></div></td><td>{own.length+26+index*8} 条</td><td>{[23.4,26.8,18.7,15.2][index]}h</td><td>¥{(pending+index*86).toFixed(2)}</td><td><strong>¥{[3480,4216,2980,2610][index]}</strong></td><td>{[92.6,94.2,89.6,87.4][index]}%</td></tr>;})}</tbody></table></div></section></div>;
+  const { accounts, currentAccount, teams } = useIdentity();
+  const { state } = useDemoStore();
+  const currentTeam = teams.find((team) => team.id === currentAccount.teamId);
+  const pointsPerMinute = currentTeam?.unitPricePerMinute ?? 0;
+  const members = useMemo(
+    () =>
+      accounts.filter(
+        (account) =>
+          account.teamId === currentTeam?.id && account.role === "collector",
+      ),
+    [accounts, currentTeam?.id],
+  );
+  const teamSubmissions = useMemo(
+    () =>
+      state.submissions.filter(
+        (submission) => submission.teamId === currentTeam?.id,
+      ),
+    [currentTeam?.id, state.submissions],
+  );
+  const fallback = useMemo(
+    () => demoSummary(members, teamSubmissions, pointsPerMinute),
+    [members, pointsPerMinute, teamSubmissions],
+  );
+  const [summary, setSummary] = useState<TeamPointSummary>(fallback);
+  const [mode, setMode] = useState<PageMode>("loading");
+
+  useEffect(() => {
+    let active = true;
+    setMode((current) => (current === "demo" ? current : "loading"));
+    Promise.all([
+      listPointCycles(),
+      loadAllSubmissions({ status: "unsettled" }),
+      loadAllSubmissions({ status: "all" }),
+      getPointRule(),
+    ])
+      .then(([cycles, pending, all, pointRule]) => {
+        if (!active) return;
+        const effectivePointsPerMinute =
+          pointsPerMinute > 0
+            ? pointsPerMinute
+            : pointRule.defaultPointsPerMinute;
+        setSummary(
+          backendSummary(
+            members,
+            cycles,
+            pending.map(backendSubmissionToDomain),
+            all.map(backendSubmissionToDomain),
+            effectivePointsPerMinute,
+            pointRule.coefficientBands,
+          ),
+        );
+        setMode("live");
+      })
+      .catch(() => {
+        if (!active) return;
+        setSummary(fallback);
+        setMode("demo");
+      });
+    return () => {
+      active = false;
+    };
+  }, [fallback, members, pointsPerMinute]);
+
+  return (
+    <div className="page-stack">
+      <div className="page-heading">
+        <div>
+          <p className="page-kicker">只读积分视图</p>
+          <h1>团队积分汇总</h1>
+          <span>
+            按当前规则 {summary.pointsPerMinute.toFixed(2)}
+            分/分钟、有效时长和最终评分测算，用于线下核对
+          </span>
+        </div>
+        <span className="live-pill">
+          <i />
+          {mode === "live"
+            ? "已连接后端积分"
+            : mode === "loading"
+              ? "正在读取积分"
+              : "演示积分"}
+        </span>
+      </div>
+      <div className="metric-grid">
+        <MetricCard
+          label="当前积分"
+          value={formatPoints(summary.lockedPoints + summary.pendingPoints)}
+          detail={`${summary.reviewedCount} 条已有终态质检`}
+          icon={CircleDollarSign}
+        />
+        <MetricCard
+          label="待质检视频"
+          value={`${summary.pendingQualityCount} 条`}
+          detail="质检完成后自动纳入预估"
+          icon={Clock3}
+          tone="amber"
+        />
+        <MetricCard
+          label="质检完成视频"
+          value={`${summary.reviewedCount} 条`}
+          detail={`共上传 ${summary.uploadCount} 条`}
+          icon={FileCheck2}
+          tone="green"
+        />
+        <MetricCard
+          label="计价有效时长"
+          value={formatDuration(summary.effectiveSeconds)}
+          detail="仅统计质检通过数据"
+          icon={Timer}
+          tone="violet"
+        />
+      </div>
+      <section className="content-card table-card">
+        <div className="card-heading">
+          <div>
+            <h2>成员积分汇总</h2>
+            <p>根据真实提交、终态质检和锁定周期计算</p>
+          </div>
+        </div>
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>成员</th>
+                <th>质检完成</th>
+                <th>积分有效时长</th>
+                <th>预估积分</th>
+                <th>平均分</th>
+                <th>通过率</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.members.map((member) => (
+                <tr key={member.id}>
+                  <td>
+                    <div className="member-cell">
+                      <span>{member.name.slice(0, 1)}</span>
+                      <div>
+                        <strong>{member.name}</strong>
+                        <small>{member.username}</small>
+                      </div>
+                    </div>
+                  </td>
+                  <td>{member.reviewed} 条</td>
+                  <td>{formatDuration(member.effectiveSeconds)}</td>
+                  <td>
+                    <strong>{formatPoints(member.points)}</strong>
+                  </td>
+                  <td>
+                    {member.averageScore === null
+                      ? "—"
+                      : member.averageScore.toFixed(1)}
+                  </td>
+                  <td>{formatRate(member.passRate)}</td>
+                </tr>
+              ))}
+              {summary.members.length === 0 && (
+                <tr>
+                  <td colSpan={6}>
+                    <div className="empty-state compact-empty">
+                      <strong>暂无数采成员</strong>
+                      <span>请先在成员管理中创建数采账号</span>
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
 }

@@ -4,6 +4,7 @@ import { TypeOrmModule } from "@nestjs/typeorm";
 import { DatabaseModule } from "../database/database.module.js";
 import { MediaMetadataEntity } from "../database/entities/media-metadata.entity.js";
 import { MediaSegmentEntity } from "../database/entities/media-segment.entity.js";
+import { SubmissionDuplicateCandidateEntity } from "../database/entities/submission-duplicate-candidate.entity.js";
 import { SubmissionEntity } from "../database/entities/submission.entity.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { MediaAnalysisService } from "./media-analysis.service.js";
@@ -15,6 +16,7 @@ import { MEDIA_COMMAND_RUNNER } from "./media.tokens.js";
     DatabaseModule,
     TypeOrmModule.forFeature([
       SubmissionEntity,
+      SubmissionDuplicateCandidateEntity,
       MediaMetadataEntity,
       MediaSegmentEntity,
     ]),

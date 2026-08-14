@@ -1,11 +1,19 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AccountPublic } from "../auth/contracts";
 import { IdentityProvider } from "../auth/client/IdentityContext";
 import { DemoStoreProvider } from "../data/DemoStoreContext";
 import { InteractionProvider } from "../interactions/InteractionContext";
 import { DashboardShell } from "./DashboardShell";
+
+const operationsApi = vi.hoisted(() => ({
+  getStatus: vi.fn(),
+}));
+
+vi.mock("../operations/client/operationsApi", () => ({
+  getOperationsStatus: operationsApi.getStatus,
+}));
 
 const admin: AccountPublic = {
   id: "U-ADMIN-01",
@@ -27,6 +35,47 @@ const demoCollector: AccountPublic = {
 };
 
 describe("DashboardShell", () => {
+  beforeEach(() => {
+    operationsApi.getStatus.mockReset().mockResolvedValue({
+      generatedAt: 1,
+      unreadCount: 2,
+      summary: {
+        processingSubmissions: 1,
+        failedSubmissions: 1,
+        reviewPending: 2,
+        unsettledEligible: 0,
+        pendingJobs: 0,
+        failedJobs: 0,
+        workerAlerts: 0,
+        recentAudits: 0,
+      },
+      navigationBadges: [
+        { path: "/admin/review", label: "2", count: 2 },
+        { path: "/admin/submissions", label: "1", count: 1 },
+      ],
+      notifications: [
+        {
+          id: "admin-review-2",
+          title: "有视频等待人工复核",
+          detail: "2 条终态质检结果需要平台确认。",
+          tone: "warning",
+          path: "/admin/review",
+          count: 2,
+          createdAt: 1,
+        },
+        {
+          id: "admin-submissions-1",
+          title: "有提交处理失败",
+          detail: "1 条视频处于系统失败或质检不通过状态。",
+          tone: "danger",
+          path: "/admin/submissions",
+          count: 1,
+          createdAt: 1,
+        },
+      ],
+    });
+  });
+
   it("shows the authenticated account and signs out once", async () => {
     const user = userEvent.setup();
     const onLogout = vi.fn().mockResolvedValue(undefined);
@@ -56,5 +105,35 @@ describe("DashboardShell", () => {
       screen.getByRole("button", { name: "退出登录" }),
     );
     expect(onLogout).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows live notification badges from the backend status snapshot", async () => {
+    const user = userEvent.setup();
+    const navigate = vi.fn();
+    render(
+      <IdentityProvider currentAccount={admin} accounts={[admin]} teams={[]}>
+        <DemoStoreProvider currentAccount={admin} accounts={[admin]}>
+          <InteractionProvider>
+            <DashboardShell
+              currentPath="/admin"
+              navigate={navigate}
+              onLogout={vi.fn()}
+            >
+              <p>content</p>
+            </DashboardShell>
+          </InteractionProvider>
+        </DemoStoreProvider>
+      </IdentityProvider>,
+    );
+
+    const reviewLink = await screen.findByRole("link", { name: /^质量复核/ });
+    expect(within(reviewLink).getByText("2")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "通知，2 条未读" }),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "通知，2 条未读" }));
+    expect(screen.getByText("有视频等待人工复核")).toBeVisible();
+    await user.click(screen.getAllByRole("button", { name: "查看" })[0]!);
+    expect(navigate).toHaveBeenCalledWith("/admin/review");
   });
 });

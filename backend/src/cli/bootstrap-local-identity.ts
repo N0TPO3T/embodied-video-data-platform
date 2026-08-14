@@ -22,6 +22,9 @@ export const LOCAL_STARTER_ACCOUNTS = [
   { id: "U-COL-05", username: "ceshirenyuan5", displayName: "数采人员5", role: "collector", teamId: "TEAM-02", password: "user1234" },
 ] as const;
 
+export const ALLOW_LOCAL_DEFAULT_PASSWORDS_ENV =
+  "EVDP_ALLOW_LOCAL_DEFAULT_PASSWORDS";
+
 const LOCAL_STARTER_TEAMS = [
   { id: "TEAM-01", name: "团队1" },
   { id: "TEAM-02", name: "团队2" },
@@ -59,10 +62,24 @@ async function verifiesApprovedPassword(
   }
 }
 
+export function assertLocalDefaultPasswordsAllowed(
+  environment: NodeJS.ProcessEnv = process.env,
+): void {
+  if (
+    environment.NODE_ENV === "production" &&
+    environment[ALLOW_LOCAL_DEFAULT_PASSWORDS_ENV] !== "true"
+  ) {
+    throw new Error(
+      `${ALLOW_LOCAL_DEFAULT_PASSWORDS_ENV}=true is required before local starter accounts with default passwords can be created in production mode`,
+    );
+  }
+}
+
 export async function bootstrapLocalIdentity(options: {
   dataSource: DataSource;
   mode: "create-if-empty" | "reconcile";
 }): Promise<LocalIdentityBootstrapResult | LocalIdentityReconcileResult> {
+  assertLocalDefaultPasswordsAllowed();
   return options.dataSource.transaction(async (manager) => {
     await manager.query("SELECT pg_advisory_xact_lock($1)", [390032102]);
 

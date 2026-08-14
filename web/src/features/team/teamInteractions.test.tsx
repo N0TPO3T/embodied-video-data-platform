@@ -1,10 +1,15 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { PlatformApp } from "../../app/PlatformApp";
 import { IdentityProvider } from "../../auth/client/IdentityContext";
 import { DemoStoreProvider } from "../../data/DemoStoreContext";
 import { accountForRole, demoAccounts } from "../../test/accountFixtures";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 function renderLeader(path: string) {
   window.history.replaceState({}, "", path);
@@ -23,15 +28,48 @@ function renderLeader(path: string) {
 }
 
 describe("team member interactions", () => {
-  it("labels synthetic member contribution values as demo business metrics", () => {
+  it("labels member contribution values as real derived metrics", () => {
     renderLeader("/team/members");
 
     expect(screen.getByRole("note")).toHaveTextContent(
-      "示例数据：今日上传、有效时长和通过率为演示业务指标",
+      "近 30 日上传、有效时长和通过率均根据真实提交与 AI 终态结果计算",
     );
     expect(screen.getByRole("table")).toHaveAccessibleDescription(
-      "示例数据：今日上传、有效时长和通过率为演示业务指标",
+      "近 30 日上传、有效时长和通过率均根据真实提交与 AI 终态结果计算",
     );
+  });
+
+  it("downloads the current member statistics as a CSV file", async () => {
+    const user = userEvent.setup();
+    const createObjectURL = vi.fn().mockReturnValue("blob:member-metrics");
+    const revokeObjectURL = vi.fn();
+    let clickedAnchor: HTMLAnchorElement | undefined;
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL,
+      revokeObjectURL,
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
+      function click(this: HTMLAnchorElement) {
+        clickedAnchor = this;
+      },
+    );
+    renderLeader("/team/members");
+
+    await user.click(await screen.findByRole("button", { name: "导出统计" }));
+
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+    const blob = createObjectURL.mock.calls[0]?.[0] as Blob;
+    await expect(blob.text()).resolves.toContain(
+      '"成员","用户名","角色","状态","上传数","已质检数","通过数","未通过数","有效分钟","平均分","通过率(%)"',
+    );
+    expect(clickedAnchor).toMatchObject({
+      href: "blob:member-metrics",
+      download: "星火一队-近 30 日成员统计.csv",
+    });
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:member-metrics");
+    expect(screen.getByText("成员统计已导出")).toBeVisible();
   });
 
   it("opens the own-team collector account form", async () => {
@@ -59,20 +97,20 @@ describe("team member interactions", () => {
     const dialog = screen.getByRole("dialog", { name: "成员详情" });
     expect(within(dialog).getByText("tuanzhang1")).toBeVisible();
     expect(within(dialog).getByText("139****1176")).toBeVisible();
-    expect(within(dialog).getByText("今日上传")).toBeVisible();
+    expect(within(dialog).getByText("近 30 日上传")).toBeVisible();
     expect(within(dialog).getByText("有效时长")).toBeVisible();
     expect(within(dialog).getByText("通过率")).toBeVisible();
     expect(within(dialog).getByRole("note")).toHaveTextContent(
-      "示例数据：今日上传、有效时长和通过率为演示业务指标",
+      "以下指标根据该成员近 30 日的真实视频提交和 AI 质检结果计算",
     );
     expect(
       within(dialog).getByRole("group", { name: "成员表现" }),
     ).toHaveAccessibleDescription(
-      "示例数据：今日上传、有效时长和通过率为演示业务指标",
+      "以下指标根据该成员近 30 日的真实视频提交和 AI 质检结果计算",
     );
   });
 
-  it("shows the same administrator guidance from the team dashboard", async () => {
+  it("guides leaders to the working member management entry", async () => {
     const user = userEvent.setup();
     renderLeader("/team");
 
@@ -80,10 +118,19 @@ describe("team member interactions", () => {
       await screen.findByRole("button", { name: "邀请成员" }),
     );
     expect(
-      screen.getByText("请联系管理员在“用户与团队”中创建账号"),
+      screen.getByText("请前往“成员管理”新增数采账号"),
     ).toBeVisible();
     expect(
       screen.queryByRole("dialog", { name: "邀请成员" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows real-data team points instead of simulated balances", () => {
+    renderLeader("/team/income");
+
+    expect(screen.getByRole("heading", { name: "团队积分汇总" })).toBeVisible();
+    expect(screen.getByText("153.84 分")).toBeVisible();
+    expect(screen.getByText(/用于线下核对/)).toBeVisible();
+    expect(screen.queryByText("成员可用余额")).not.toBeInTheDocument();
   });
 });

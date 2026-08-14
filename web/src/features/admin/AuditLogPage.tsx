@@ -1,24 +1,32 @@
 "use client";
 
-import { FileClock, ShieldCheck } from "lucide-react";
+import { CalendarDays, FileClock, Search, ShieldCheck, UserRound } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { listAccountAudit } from "../../auth/client/accountApi";
+import {
+  accountAuditExportUrl,
+  searchAccountAudit,
+} from "../../auth/client/accountApi";
 import type {
   AccountAuditLog,
+  AccountAuditPagination,
   KnownAccountAuditAction,
 } from "../../auth/contracts";
 import { StatusBadge } from "../../components/StatusBadge";
 import { useDemoStore } from "../../data/DemoStoreContext";
-import { useInteractions } from "../../interactions/InteractionContext";
+
+const PAGE_SIZE = 20;
 
 type AuditRow = {
   id: string;
   createdAt: string;
   actor: string;
   action: string;
+  actionCode: string;
   target: string;
   reason: string;
 };
+
+type ListMode = "loading" | "live" | "demo";
 
 const accountActionLabels: Record<KnownAccountAuditAction, string> = {
   create: "创建账号",
@@ -30,6 +38,19 @@ const accountActionLabels: Record<KnownAccountAuditAction, string> = {
   local_identity_reconcile: "本地账号校准",
   team_create: "创建团队",
   team_update: "更新团队",
+  team_assign_leader: "指定团长",
+  quality_review: "人工复核质量结果",
+  ai_quality_rerun: "重跑 AI 质检",
+  point_cycle_lock: "锁定积分周期",
+  point_cycle_adjustment: "周期积分调整",
+  delivery_package_create: "创建交付包",
+  asset_quarantine: "敏感资产隔离",
+  asset_release: "解除资产隔离",
+  ai_quality_prompt_update: "更新 AI 提示词",
+  quality_rule_publish: "发布质量规则",
+  label_set_update: "更新标签体系",
+  point_rule_publish: "发布积分规则",
+  public_site_snapshot_publish: "发布公开官网快照",
 };
 
 function accountActionLabel(action: string): string {
@@ -56,49 +77,146 @@ function accountLogToRow(log: AccountAuditLog): AuditRow {
     createdAt: formatCreatedAt(log.createdAt),
     actor: log.actorName,
     action: accountActionLabel(log.action),
+    actionCode: log.action,
     target: log.targetName,
     reason: log.summary,
   };
 }
 
+function localRowDate(row: AuditRow): string {
+  return row.createdAt.slice(0, 10);
+}
+
+function localFilter(
+  rows: AuditRow[],
+  query: string,
+  actor: string,
+  action: string,
+  from: string,
+  to: string,
+): AuditRow[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  const normalizedActor = actor.trim().toLowerCase();
+  const actionLabel = accountActionLabel(action);
+  return rows.filter((row) => {
+    const text =
+      `${row.id}${row.action}${row.target}${row.reason}`.toLowerCase();
+    if (normalizedQuery && !text.includes(normalizedQuery)) return false;
+    if (
+      normalizedActor &&
+      !`${row.actor}`.toLowerCase().includes(normalizedActor)
+    ) {
+      return false;
+    }
+    if (
+      action !== "all" &&
+      row.actionCode !== action &&
+      row.action !== actionLabel
+    ) {
+      return false;
+    }
+    const date = localRowDate(row);
+    if (from && date < from) return false;
+    if (to && date > to) return false;
+    return true;
+  });
+}
+
 export function AuditLogPage() {
   const { state, currentUser } = useDemoStore();
-  const { notify } = useInteractions();
-  const [accountLogs, setAccountLogs] = useState<AccountAuditLog[]>([]);
-  const [accountLogError, setAccountLogError] = useState(false);
+  const [query, setQuery] = useState("");
+  const [actor, setActor] = useState("");
+  const [action, setAction] = useState("all");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [page, setPage] = useState(1);
+  const [mode, setMode] = useState<ListMode>("loading");
+  const [logs, setLogs] = useState<AuditRow[]>([]);
+  const [pagination, setPagination] = useState<AccountAuditPagination>({
+    page: 1,
+    pageSize: PAGE_SIZE,
+    total: 0,
+    totalPages: 1,
+  });
+
+  useEffect(() => {
+    setPage(1);
+  }, [action, actor, from, query, to]);
+
+  const demoRows = useMemo<AuditRow[]>(
+    () => [
+      ...state.operationLogs.map((log) => ({
+        ...log,
+        actionCode: log.action,
+      })),
+      ...state.submissions.flatMap((submission) =>
+        submission.audit.map((record) => ({
+          ...record,
+          actionCode: record.action,
+          target: submission.id,
+        })),
+      ),
+    ],
+    [state.operationLogs, state.submissions],
+  );
 
   useEffect(() => {
     if (currentUser.role !== "admin") return;
     let active = true;
+    setMode((current) => (current === "demo" ? current : "loading"));
 
-    listAccountAudit()
-      .then((logs) => {
+    searchAccountAudit({
+      q: query,
+      actor,
+      action,
+      from,
+      to,
+      page,
+      pageSize: PAGE_SIZE,
+    })
+      .then((result) => {
         if (!active) return;
-        setAccountLogs(logs);
-        setAccountLogError(false);
+        setLogs(result.logs.map(accountLogToRow));
+        setPagination(result.pagination);
+        setMode("live");
       })
       .catch(() => {
         if (!active) return;
-        setAccountLogError(true);
+        const filtered = localFilter(
+          demoRows,
+          query,
+          actor,
+          action,
+          from,
+          to,
+        );
+        const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+        const safePage = Math.min(page, totalPages);
+        const start = (safePage - 1) * PAGE_SIZE;
+        setLogs(filtered.slice(start, start + PAGE_SIZE));
+        setPagination({
+          page: safePage,
+          pageSize: PAGE_SIZE,
+          total: filtered.length,
+          totalPages,
+        });
+        setMode("demo");
       });
 
     return () => {
       active = false;
     };
-  }, [currentUser.role]);
+  }, [action, actor, currentUser.role, demoRows, from, page, query, to]);
 
-  const logs = useMemo<AuditRow[]>(
-    () => [
-      ...accountLogs.map(accountLogToRow),
-      ...state.operationLogs,
-      ...state.submissions.flatMap((submission) =>
-        submission.audit.map((record) => ({
-          ...record,
-          target: submission.id,
-        })),
-      ),
-    ],
-    [accountLogs, state.operationLogs, state.submissions],
+  const range = useMemo(() => {
+    if (pagination.total === 0) return "0";
+    const start = (pagination.page - 1) * pagination.pageSize + 1;
+    const end = Math.min(pagination.total, start + logs.length - 1);
+    return `${start}-${end}`;
+  }, [logs.length, pagination]);
+  const exportUrl = useMemo(
+    () => accountAuditExportUrl({ q: query, actor, action, from, to }),
+    [action, actor, from, query, to],
   );
 
   return (
@@ -107,27 +225,97 @@ export function AuditLogPage() {
         <div>
           <p className="page-kicker">平台关键操作留痕</p>
           <h1>操作日志</h1>
-          <span>记录质量调整、价格、结算、提现和用户管理动作</span>
+          <span>记录质量调整、积分规则、周期锁定和用户管理动作</span>
         </div>
-        <button
+        <a
           className="button button-primary"
-          onClick={() => notify("info", "导出任务已创建")}
+          href={exportUrl}
         >
           导出日志
-        </button>
+        </a>
       </div>
       <div className="audit-summary">
         <ShieldCheck size={18} />
         <span>
-          <strong>账户操作已写入持久化审计记录</strong>
+          <strong>
+            {mode === "live"
+              ? "审计日志已连接后端筛选"
+              : mode === "loading"
+                ? "正在读取审计日志"
+                : "当前显示本地演示日志"}
+          </strong>
           <small>
-            {accountLogError
-              ? "账户日志加载失败，当前仍可查看业务演示日志。"
-              : "账号创建、修改、密码重置及状态变更均会保留操作记录。"}
+            {mode === "live"
+              ? "账号、质检、积分和交付包关键动作均可按操作人、动作和时间追溯。"
+              : mode === "loading"
+                ? "页面会在接口返回后切换为真实数据。"
+                : "后端不可用时保留可操作演示，真实部署会自动使用接口。"}
           </small>
         </span>
       </div>
       <section className="content-card table-card">
+        <div className="filter-bar audit-filter-bar">
+          <label className="search-field">
+            <Search size={16} />
+            <input
+              aria-label="搜索"
+              value={query}
+              placeholder="搜索编号、动作、对象或说明"
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </label>
+          <label className="search-field">
+            <UserRound size={16} />
+            <input
+              aria-label="操作人"
+              value={actor}
+              placeholder="操作人"
+              onChange={(event) => setActor(event.target.value)}
+            />
+          </label>
+          <select
+            aria-label="动作筛选"
+            value={action}
+            onChange={(event) => setAction(event.target.value)}
+          >
+            <option value="all">全部动作</option>
+            {Object.entries(accountActionLabels).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <label className="search-field audit-date-field">
+            <CalendarDays size={16} />
+            <input
+              aria-label="开始日期"
+              type="date"
+              value={from}
+              onChange={(event) => setFrom(event.target.value)}
+            />
+          </label>
+          <label className="search-field audit-date-field">
+            <CalendarDays size={16} />
+            <input
+              aria-label="结束日期"
+              type="date"
+              value={to}
+              onChange={(event) => setTo(event.target.value)}
+            />
+          </label>
+        </div>
+        <div className="table-summary">
+          <span>
+            {mode === "live"
+              ? `后端筛选 ${range} / ${pagination.total} 条`
+              : mode === "loading"
+                ? "正在读取后端数据"
+                : `演示筛选 ${range} / ${pagination.total} 条`}
+          </span>
+          <span>
+            第 {pagination.page} / {pagination.totalPages} 页
+          </span>
+        </div>
         <div className="table-scroll">
           <table className="data-table">
             <thead>
@@ -141,27 +329,58 @@ export function AuditLogPage() {
               </tr>
             </thead>
             <tbody>
-              {logs.slice(0, 20).map((log, index) => (
-                <tr key={`${log.id}-${index}`}>
-                  <td>{log.createdAt}</td>
-                  <td>
-                    <strong>{log.actor}</strong>
-                  </td>
-                  <td>
-                    <div className="action-cell">
-                      <FileClock size={14} />
-                      {log.action}
-                    </div>
-                  </td>
-                  <td>{log.target}</td>
-                  <td>{log.reason}</td>
-                  <td>
-                    <StatusBadge label="成功" tone="success" />
-                  </td>
+              {logs.length ? (
+                logs.map((log, index) => (
+                  <tr key={`${log.id}-${index}`}>
+                    <td>{log.createdAt}</td>
+                    <td>
+                      <strong>{log.actor}</strong>
+                    </td>
+                    <td>
+                      <div className="action-cell">
+                        <FileClock size={14} />
+                        {log.action}
+                      </div>
+                    </td>
+                    <td>{log.target}</td>
+                    <td>{log.reason}</td>
+                    <td>
+                      <StatusBadge label="成功" tone="success" />
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={6}>暂无匹配日志</td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
+        </div>
+        <div className="table-summary">
+          <span>每页 {pagination.pageSize} 条</span>
+          <span className="row-actions">
+            <button
+              className="table-action"
+              disabled={pagination.page <= 1}
+              type="button"
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+            >
+              上一页
+            </button>
+            <button
+              className="table-action"
+              disabled={pagination.page >= pagination.totalPages}
+              type="button"
+              onClick={() =>
+                setPage((current) =>
+                  Math.min(pagination.totalPages, current + 1),
+                )
+              }
+            >
+              下一页
+            </button>
+          </span>
         </div>
       </section>
     </div>

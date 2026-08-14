@@ -3,6 +3,7 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 
 import { submissionUploadApi } from "../client/submissionApi";
 import type {
+  ActiveUploadResult,
   BackendSubmission,
   PresignedPart,
   SubmissionUploadApi,
@@ -48,69 +49,136 @@ async function presignAllParts(
   return result.sort((left, right) => left.partNumber - right.partNumber);
 }
 
+type UploadOptions = {
+  signal?: AbortSignal;
+  onProgress?(progress: number): void;
+  authorization?: {
+    dataUsageAuthorized: boolean;
+    privacyConfirmed: boolean;
+    sensitiveContentConfirmed: boolean;
+  };
+};
+
+function requireAuthorization(options: UploadOptions): {
+  dataUsageAuthorized: boolean;
+  privacyConfirmed: boolean;
+  sensitiveContentConfirmed: boolean;
+} {
+  const authorization = options.authorization;
+  if (
+    !authorization?.dataUsageAuthorized ||
+    !authorization.privacyConfirmed ||
+    !authorization.sensitiveContentConfirmed
+  ) {
+    throw new Error("上传前请先确认数据授权、隐私规范和敏感内容处理要求");
+  }
+  return authorization;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === "AbortError"
+    : error instanceof Error && error.name === "AbortError";
+}
+
 export function createMultipartUploader(
   api: SubmissionUploadApi,
   fetchPart: typeof fetch = fetch,
 ) {
-  return async function upload(
+  async function uploadParts(
     file: File,
-    options: {
-      signal?: AbortSignal;
-      onProgress?(progress: number): void;
-    } = {},
+    created: ActiveUploadResult,
+    options: UploadOptions = {},
   ): Promise<BackendSubmission> {
+    const presigned = await presignAllParts(
+      api,
+      created.submission.id,
+      created.upload.partCount,
+    );
+    const completed: Array<{ partNumber: number; etag: string }> = [];
+    let nextIndex = 0;
+    let uploadedBytes = 0;
+    const worker = async () => {
+      while (nextIndex < presigned.length) {
+        const part = presigned[nextIndex++];
+        if (!part) return;
+        const start = (part.partNumber - 1) * created.upload.partSizeBytes;
+        const end = Math.min(file.size, start + created.upload.partSizeBytes);
+        const response = await fetchPart(part.url, {
+          method: "PUT",
+          body: file.slice(start, end),
+          signal: options.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`第 ${part.partNumber} 个视频分片上传失败`);
+        }
+        const etag = response.headers.get("etag");
+        if (!etag) throw new Error("对象存储未返回分片 ETag");
+        completed.push({ partNumber: part.partNumber, etag });
+        uploadedBytes += end - start;
+        options.onProgress?.(
+          Math.min(100, Math.round((uploadedBytes / file.size) * 100)),
+        );
+      }
+    };
+    await Promise.all(
+      Array.from(
+        { length: Math.min(MAX_CONCURRENT_PARTS, presigned.length) },
+        () => worker(),
+      ),
+    );
+    completed.sort((left, right) => left.partNumber - right.partNumber);
+    return await api.completeUpload(created.submission.id, completed);
+  }
+
+  async function upload(
+    file: File,
+    options: UploadOptions = {},
+  ): Promise<BackendSubmission> {
+    const authorization = requireAuthorization(options);
     const checksumSha256 = await sha256File(file);
     const created = await api.createUpload({
       fileName: file.name,
       contentType: contentType(file),
       sizeBytes: file.size,
       checksumSha256,
+      ...authorization,
     });
     try {
-      const presigned = await presignAllParts(
-        api,
-        created.submission.id,
-        created.upload.partCount,
-      );
-      const completed: Array<{ partNumber: number; etag: string }> = [];
-      let nextIndex = 0;
-      let uploadedBytes = 0;
-      const worker = async () => {
-        while (nextIndex < presigned.length) {
-          const part = presigned[nextIndex++];
-          if (!part) return;
-          const start = (part.partNumber - 1) * created.upload.partSizeBytes;
-          const end = Math.min(file.size, start + created.upload.partSizeBytes);
-          const response = await fetchPart(part.url, {
-            method: "PUT",
-            body: file.slice(start, end),
-            signal: options.signal,
-          });
-          if (!response.ok) {
-            throw new Error(`第 ${part.partNumber} 个视频分片上传失败`);
-          }
-          const etag = response.headers.get("etag");
-          if (!etag) throw new Error("对象存储未返回分片 ETag");
-          completed.push({ partNumber: part.partNumber, etag });
-          uploadedBytes += end - start;
-          options.onProgress?.(
-            Math.min(100, Math.round((uploadedBytes / file.size) * 100)),
-          );
-        }
-      };
-      await Promise.all(
-        Array.from(
-          { length: Math.min(MAX_CONCURRENT_PARTS, presigned.length) },
-          () => worker(),
-        ),
-      );
-      completed.sort((left, right) => left.partNumber - right.partNumber);
-      return await api.completeUpload(created.submission.id, completed);
+      return await uploadParts(file, created, options);
     } catch (error) {
-      await api.abortUpload(created.submission.id).catch(() => undefined);
+      if (!isAbortError(error)) {
+        await api.abortUpload(created.submission.id).catch(() => undefined);
+      }
       throw error;
     }
-  };
+  }
+
+  async function resume(
+    file: File,
+    created: ActiveUploadResult,
+    options: UploadOptions = {},
+  ): Promise<BackendSubmission> {
+    if (file.name !== created.submission.fileName) {
+      throw new Error("请选择与未完成任务同名的视频文件");
+    }
+    if (file.size !== Number(created.submission.sizeBytes)) {
+      throw new Error("请选择与未完成任务大小一致的视频文件");
+    }
+    contentType(file);
+    const checksumSha256 = await sha256File(file);
+    const verified = await api.verifyResumeUpload(created.submission.id, {
+      fileName: file.name,
+      sizeBytes: file.size,
+      checksumSha256,
+    });
+    return uploadParts(file, verified, options);
+  }
+
+  return Object.assign(upload, {
+    resume,
+  });
 }
 
 export const uploadVideo = createMultipartUploader(submissionUploadApi);
+export const resumeUploadVideo = uploadVideo.resume;

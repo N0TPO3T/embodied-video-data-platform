@@ -1,7 +1,7 @@
 "use client";
 
 import { Search, UserPlus, Users } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import * as accountApi from "../../auth/client/accountApi";
 import { useIdentity } from "../../auth/client/IdentityContext";
@@ -11,16 +11,45 @@ import type {
   UpdateAccountInput,
 } from "../../auth/contracts";
 import { StatusBadge } from "../../components/StatusBadge";
-import type { User } from "../../domain/types";
+import type { Submission, User } from "../../domain/types";
 import { demoSeed } from "../../data/demoData";
+import { useDemoStore } from "../../data/DemoStoreContext";
 import { useInteractions } from "../../interactions/InteractionContext";
+import { loadAllSubmissions } from "../../submissions/client/submissionApi";
+import { backendSubmissionToDomain } from "../../submissions/submissionMapper";
 import { AccountStatusModal } from "../admin/AccountStatusModal";
 import { ResetPasswordModal } from "../admin/ResetPasswordModal";
 import { CollectorAccountFormModal } from "./CollectorAccountFormModal";
 import {
   MemberDetailModal,
-  memberMetrics,
+  type MemberMetrics,
 } from "./MemberDetailModal";
+import {
+  contributionMetrics,
+  formatDuration,
+  formatRate,
+  submissionsSince,
+} from "./teamMetrics";
+
+type MetricsPeriod = "today" | "7d" | "30d" | "all";
+type PageMode = "loading" | "live" | "demo";
+
+const periodDays: Record<Exclude<MetricsPeriod, "all">, number> = {
+  today: 1,
+  "7d": 7,
+  "30d": 30,
+};
+
+const periodLabel: Record<MetricsPeriod, string> = {
+  today: "今日",
+  "7d": "近 7 日",
+  "30d": "近 30 日",
+  all: "累计",
+};
+
+function csvCell(value: string | number): string {
+  return `"${String(value).replaceAll('"', '""')}"`;
+}
 
 function accountToMember(account: AccountPublic): User {
   const compatibility = demoSeed.users.find((user) => user.id === account.id);
@@ -39,13 +68,16 @@ function accountToMember(account: AccountPublic): User {
 
 export function MembersPage() {
   const { accounts, currentAccount, teams, upsertAccount } = useIdentity();
+  const { state } = useDemoStore();
   const { notify } = useInteractions();
   const [query, setQuery] = useState("");
+  const [period, setPeriod] = useState<MetricsPeriod>("30d");
   const [selectedMember, setSelectedMember] = useState<User>();
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<AccountPublic>();
   const [resetTarget, setResetTarget] = useState<AccountPublic>();
   const [statusTarget, setStatusTarget] = useState<AccountPublic>();
+  const [metricsMode, setMetricsMode] = useState<PageMode>("loading");
   const detailTriggerRef = useRef<HTMLButtonElement>(null);
   const createTriggerRef = useRef<HTMLButtonElement>(null);
   const actionTriggerRef = useRef<HTMLButtonElement>(null);
@@ -59,6 +91,108 @@ export function MembersPage() {
     .filter((user) =>
       `${user.name}${user.account}`.toLowerCase().includes(query.toLowerCase()),
     );
+  const fallbackSubmissions = useMemo(
+    () =>
+      state.submissions.filter(
+        (submission) => submission.teamId === currentTeam?.id,
+      ),
+    [currentTeam?.id, state.submissions],
+  );
+  const [teamSubmissions, setTeamSubmissions] =
+    useState<Submission[]>(fallbackSubmissions);
+
+  useEffect(() => {
+    let active = true;
+    setMetricsMode((current) => (current === "demo" ? current : "loading"));
+    loadAllSubmissions({ status: "all" })
+      .then((result) => {
+        if (!active) return;
+        setTeamSubmissions(result.map(backendSubmissionToDomain));
+        setMetricsMode("live");
+      })
+      .catch(() => {
+        if (!active) return;
+        setTeamSubmissions(fallbackSubmissions);
+        setMetricsMode("demo");
+      });
+    return () => {
+      active = false;
+    };
+  }, [fallbackSubmissions]);
+
+  const scopedSubmissions =
+    period === "all"
+      ? teamSubmissions
+      : submissionsSince(teamSubmissions, periodDays[period]);
+
+  function metricsFor(memberId: string): MemberMetrics {
+    const metrics = contributionMetrics(
+      scopedSubmissions.filter(
+        (submission) => submission.ownerId === memberId,
+      ),
+    );
+    return {
+      uploads: metrics.uploads,
+      duration: formatDuration(metrics.effectiveSeconds),
+      passRate: formatRate(metrics.passRate),
+      averageScore:
+        metrics.averageScore === null
+          ? "—"
+          : metrics.averageScore.toFixed(1),
+    };
+  }
+
+  function exportMetrics() {
+    const rows = members.map((member) => {
+      const metrics = contributionMetrics(
+        scopedSubmissions.filter(
+          (submission) => submission.ownerId === member.id,
+        ),
+      );
+      return [
+        member.name,
+        member.account,
+        member.role === "leader" ? "团长" : "数采人员",
+        member.status === "active" ? "已启用" : "已停用",
+        metrics.uploads,
+        metrics.reviewed,
+        metrics.passed,
+        metrics.failed,
+        Math.round((metrics.effectiveSeconds / 60) * 100) / 100,
+        metrics.averageScore?.toFixed(1) ?? "",
+        metrics.passRate?.toFixed(1) ?? "",
+      ];
+    });
+    const csv = [
+      [
+        "成员",
+        "用户名",
+        "角色",
+        "状态",
+        "上传数",
+        "已质检数",
+        "通过数",
+        "未通过数",
+        "有效分钟",
+        "平均分",
+        "通过率(%)",
+      ],
+      ...rows,
+    ]
+      .map((row) => row.map(csvCell).join(","))
+      .join("\n");
+    const url = URL.createObjectURL(
+      new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${currentTeam?.name ?? "团队"}-${periodLabel[period]}成员统计.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    notify("success", "成员统计已导出");
+  }
 
   async function create(input: CreateAccountInput) {
     const account = await accountApi.createAccount(input);
@@ -86,15 +220,25 @@ export function MembersPage() {
           <h1>成员管理</h1>
           <span>查看成员表现并管理本团队数采账号</span>
         </div>
-        <button
-          ref={createTriggerRef}
-          className="button button-primary"
-          disabled={!currentTeam}
-          onClick={() => setCreateOpen(true)}
-        >
-          <UserPlus size={16} />
-          新增数采账号
-        </button>
+        <div className="button-row">
+          <span className="live-pill">
+            <i />
+            {metricsMode === "live"
+              ? "已连接后端指标"
+              : metricsMode === "loading"
+                ? "正在读取指标"
+                : "演示指标"}
+          </span>
+          <button
+            ref={createTriggerRef}
+            className="button button-primary"
+            disabled={!currentTeam}
+            onClick={() => setCreateOpen(true)}
+          >
+            <UserPlus size={16} />
+            新增数采账号
+          </button>
+        </div>
       </div>
       <section className="content-card table-card">
         <div className="filter-bar">
@@ -107,29 +251,39 @@ export function MembersPage() {
               placeholder="搜索姓名或账号"
             />
           </label>
+          <select
+            aria-label="统计周期"
+            value={period}
+            onChange={(event) => setPeriod(event.target.value as MetricsPeriod)}
+          >
+            <option value="today">今日</option>
+            <option value="7d">近 7 日</option>
+            <option value="30d">近 30 日</option>
+            <option value="all">全部时间</option>
+          </select>
+          <button className="table-action" type="button" onClick={exportMetrics}>
+            导出统计
+          </button>
           <span className="filter-count">
             <Users size={15} />
             {members.length} 位成员
           </span>
         </div>
-        <p
-          id="member-demo-metrics-note"
-          className="table-summary"
-          role="note"
-        >
-          示例数据：今日上传、有效时长和通过率为演示业务指标
+        <p id="member-metrics-note" className="table-summary" role="note">
+          {periodLabel[period]}上传、有效时长和通过率均根据真实提交与 AI 终态结果计算
         </p>
         <div className="table-scroll">
           <table
             className="data-table"
-            aria-describedby="member-demo-metrics-note"
+            aria-describedby="member-metrics-note"
           >
             <thead>
               <tr>
                 <th>成员</th>
                 <th>角色</th>
-                <th>今日上传</th>
+                <th>{periodLabel[period]}上传</th>
                 <th>有效时长</th>
+                <th>平均分</th>
                 <th>通过率</th>
                 <th>状态</th>
                 <th>操作</th>
@@ -137,7 +291,7 @@ export function MembersPage() {
             </thead>
             <tbody>
               {members.map((member) => {
-                const metrics = memberMetrics(member.id);
+                const metrics = metricsFor(member.id);
                 const account: AccountPublic = {
                   id: member.id,
                   displayName: member.name,
@@ -165,6 +319,7 @@ export function MembersPage() {
                     </td>
                     <td>{metrics.uploads} 条</td>
                     <td>{metrics.duration}</td>
+                    <td><strong>{metrics.averageScore}</strong></td>
                     <td>
                       <strong>{metrics.passRate}</strong>
                     </td>
@@ -238,6 +393,13 @@ export function MembersPage() {
             : undefined
         }
         open={Boolean(selectedMember)}
+        periodLabel={periodLabel[period]}
+        metrics={selectedMember ? metricsFor(selectedMember.id) : {
+          uploads: 0,
+          duration: "0 分钟",
+          passRate: "—",
+          averageScore: "—",
+        }}
         onClose={() => setSelectedMember(undefined)}
         returnFocusRef={detailTriggerRef}
       />

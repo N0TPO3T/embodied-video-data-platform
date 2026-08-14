@@ -1,5 +1,19 @@
 import { spawn } from "node:child_process";
 
+const DEFAULT_MEDIA_COMMAND_TIMEOUT_MS = 9 * 60_000;
+const DEFAULT_MEDIA_COMMAND_KILL_GRACE_MS = 5_000;
+const MAX_COMMAND_OUTPUT_BYTES = 16 * 1024 * 1024;
+
+export function mediaCommandTimeoutMs(value: string | undefined): number {
+  const parsed = Number(value?.trim() || DEFAULT_MEDIA_COMMAND_TIMEOUT_MS);
+  if (!Number.isInteger(parsed) || parsed < 10_000 || parsed > 3_600_000) {
+    throw new Error(
+      "MEDIA_COMMAND_TIMEOUT_MS 必须是 10000 到 3600000 之间的整数",
+    );
+  }
+  return parsed;
+}
+
 export type DetectedMediaSegment = {
   type: "black" | "freeze";
   startSeconds: number;
@@ -24,6 +38,19 @@ export type MediaCommandResult = {
 
 export interface MediaCommandRunner {
   analyze(filePath: string): Promise<MediaCommandResult>;
+  captureFrame(input: {
+    filePath: string;
+    timestampSeconds: number;
+    outputPath: string;
+  }): Promise<void>;
+  transcodePreview(input: {
+    filePath: string;
+    outputPath: string;
+  }): Promise<void>;
+  transcodeHls(input: {
+    filePath: string;
+    outputDirectory: string;
+  }): Promise<Array<{ quality: string; width: number; height: number }>>;
 }
 
 type ProbeStream = {
@@ -175,43 +202,138 @@ export function normalizeDetectedSegments(
   );
 }
 
-async function run(
+export type MediaCommandRunOptions = {
+  timeoutMs?: number;
+  killGraceMs?: number;
+  spawnProcess?: typeof spawn;
+};
+
+function positiveDuration(
+  value: number | undefined,
+  fallback: number,
+  field: string,
+): number {
+  const duration = value ?? fallback;
+  if (!Number.isInteger(duration) || duration < 1) {
+    throw new Error(`${field} must be a positive integer`);
+  }
+  return duration;
+}
+
+export async function runMediaCommand(
   command: string,
   args: string[],
+  options: MediaCommandRunOptions = {},
 ): Promise<{ stdout: string; stderr: string }> {
+  const timeoutMs = positiveDuration(
+    options.timeoutMs,
+    mediaCommandTimeoutMs(
+      process.env.MEDIA_COMMAND_TIMEOUT_MS ??
+        process.env.MEDIA_WORKER_TASK_TIMEOUT_MS,
+    ),
+    "media command timeoutMs",
+  );
+  const killGraceMs = positiveDuration(
+    options.killGraceMs,
+    DEFAULT_MEDIA_COMMAND_KILL_GRACE_MS,
+    "media command killGraceMs",
+  );
+  const spawnProcess = options.spawnProcess ?? spawn;
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const child = spawnProcess(command, args, {
       stdio: ["ignore", "pipe", "pipe"],
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let outputBytes = 0;
+    let settled = false;
+    let timeoutError: Error | null = null;
+    let timeoutTimer: NodeJS.Timeout | null = null;
+    let killTimer: NodeJS.Timeout | null = null;
+
+    const cleanup = () => {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      if (killTimer) clearTimeout(killTimer);
+      timeoutTimer = null;
+      killTimer = null;
+      child.stdout.off("data", onStdout);
+      child.stderr.off("data", onStderr);
+      child.off("error", onError);
+      child.off("close", onClose);
+    };
+    const settle = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback();
+    };
     const collect = (target: Buffer[], chunk: Buffer) => {
+      if (settled) return;
       outputBytes += chunk.length;
-      if (outputBytes > 16 * 1024 * 1024) {
+      if (outputBytes > MAX_COMMAND_OUTPUT_BYTES) {
         child.kill("SIGKILL");
-        reject(new Error(`${command} output exceeded 16 MiB`));
+        settle(() => reject(new Error(`${command} output exceeded 16 MiB`)));
         return;
       }
       target.push(chunk);
     };
-    child.stdout.on("data", (chunk: Buffer) => collect(stdout, chunk));
-    child.stderr.on("data", (chunk: Buffer) => collect(stderr, chunk));
-    child.once("error", reject);
-    child.once("close", (code) => {
+    const onStdout = (chunk: Buffer) => collect(stdout, chunk);
+    const onStderr = (chunk: Buffer) => collect(stderr, chunk);
+    const onError = (error: Error) => {
+      settle(() => reject(timeoutError ?? error));
+    };
+    const onClose = (code: number | null) => {
       const result = {
         stdout: Buffer.concat(stdout).toString("utf8"),
         stderr: Buffer.concat(stderr).toString("utf8"),
       };
-      if (code === 0) resolve(result);
-      else reject(new Error(`${command} exited with code ${code}: ${result.stderr.slice(-2_000)}`));
-    });
+      if (timeoutError) {
+        settle(() => reject(timeoutError));
+      } else if (code === 0) {
+        settle(() => resolve(result));
+      } else {
+        settle(() =>
+          reject(
+            new Error(
+              `${command} exited with code ${code}: ${result.stderr.slice(-2_000)}`,
+            ),
+          ),
+        );
+      }
+    };
+
+    child.stdout.on("data", onStdout);
+    child.stderr.on("data", onStderr);
+    child.once("error", onError);
+    child.once("close", onClose);
+    timeoutTimer = setTimeout(() => {
+      if (settled) return;
+      timeoutError = new Error(`${command} timed out after ${timeoutMs} ms`);
+      killTimer = setTimeout(() => {
+        if (settled) return;
+        child.kill("SIGKILL");
+        settle(() => reject(timeoutError!));
+      }, killGraceMs);
+      if (typeof killTimer.unref === "function") killTimer.unref();
+      child.kill("SIGTERM");
+    }, timeoutMs);
+    if (typeof timeoutTimer.unref === "function") timeoutTimer.unref();
   });
 }
 
 export class FfmpegMediaCommandRunner implements MediaCommandRunner {
+  private readonly runOptions: MediaCommandRunOptions;
+
+  constructor(options: MediaCommandRunOptions = {}) {
+    this.runOptions = options;
+  }
+
+  private run(command: string, args: string[]) {
+    return runMediaCommand(command, args, this.runOptions);
+  }
+
   async analyze(filePath: string): Promise<MediaCommandResult> {
-    const probe = await run("ffprobe", [
+    const probe = await this.run("ffprobe", [
       "-v",
       "error",
       "-print_format",
@@ -221,7 +343,7 @@ export class FfmpegMediaCommandRunner implements MediaCommandRunner {
       filePath,
     ]);
     const metadata = parseProbeOutput(probe.stdout);
-    const detection = await run("ffmpeg", [
+    const detection = await this.run("ffmpeg", [
       "-hide_banner",
       "-nostdin",
       "-i",
@@ -240,5 +362,102 @@ export class FfmpegMediaCommandRunner implements MediaCommandRunner {
         metadata.durationSeconds,
       ),
     };
+  }
+
+  async captureFrame(input: {
+    filePath: string;
+    timestampSeconds: number;
+    outputPath: string;
+  }): Promise<void> {
+    await this.run("ffmpeg", [
+      "-hide_banner",
+      "-nostdin",
+      "-ss",
+      Math.max(0, input.timestampSeconds).toFixed(3),
+      "-i",
+      input.filePath,
+      "-frames:v",
+      "1",
+      "-vf",
+      "scale=480:-2",
+      "-q:v",
+      "3",
+      input.outputPath,
+    ]);
+  }
+
+  async transcodePreview(input: {
+    filePath: string;
+    outputPath: string;
+  }): Promise<void> {
+    await this.run("ffmpeg", [
+      "-hide_banner",
+      "-nostdin",
+      "-i",
+      input.filePath,
+      "-map",
+      "0:v:0",
+      "-an",
+      "-vf",
+      "scale='min(960,iw)':-2",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "30",
+      "-movflags",
+      "+faststart",
+      input.outputPath,
+    ]);
+  }
+
+  async transcodeHls(input: {
+    filePath: string;
+    outputDirectory: string;
+  }): Promise<Array<{ quality: string; width: number; height: number }>> {
+    await this.run("ffmpeg", [
+      "-hide_banner",
+      "-nostdin",
+      "-i",
+      input.filePath,
+      "-filter_complex",
+      "[0:v:0]split=2[v720][v480];[v720]scale='min(1280,iw)':-2[v720out];[v480]scale='min(854,iw)':-2[v480out]",
+      "-map",
+      "[v720out]",
+      "-an",
+      "-c:v:0",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "28",
+      "-map",
+      "[v480out]",
+      "-an",
+      "-c:v:1",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "31",
+      "-f",
+      "hls",
+      "-hls_time",
+      "4",
+      "-hls_playlist_type",
+      "vod",
+      "-hls_segment_filename",
+      `${input.outputDirectory}/%v-%03d.ts`,
+      "-master_pl_name",
+      "master.m3u8",
+      "-var_stream_map",
+      "v:0,name:720p v:1,name:480p",
+      `${input.outputDirectory}/%v.m3u8`,
+    ]);
+    return [
+      { quality: "720p", width: 1280, height: 720 },
+      { quality: "480p", width: 854, height: 480 },
+    ];
   }
 }

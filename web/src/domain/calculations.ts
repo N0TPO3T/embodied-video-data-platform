@@ -1,14 +1,41 @@
-import type { QualityStatus, ValidationResult } from "./types";
+import type { QualityStatus, Submission } from "./types";
 
-export function qualityCoefficient(score: number): number {
+export type QualityCoefficientBand = {
+  minScore: number;
+  maxScore: number;
+  ratio: number;
+};
+
+const DEFAULT_QUALITY_BANDS: QualityCoefficientBand[] = [
+  { minScore: 80, maxScore: 100, ratio: 1 },
+  { minScore: 70, maxScore: 79, ratio: 0.85 },
+  { minScore: 60, maxScore: 69, ratio: 0.7 },
+  { minScore: 0, maxScore: 59, ratio: 0 },
+];
+
+export function qualityCoefficient(
+  score: number,
+  bands: readonly QualityCoefficientBand[] = DEFAULT_QUALITY_BANDS,
+): number {
+  const band = [...bands]
+    .sort((left, right) => right.minScore - left.minScore)
+    .find(
+      (candidate) =>
+        score >= candidate.minScore &&
+        (candidate.maxScore >= 100 || score < candidate.maxScore + 1),
+    );
+  if (band) return band.ratio;
   if (score < 60) return 0;
   if (score < 70) return 0.7;
   if (score < 80) return 0.85;
   return 1;
 }
 
-export function qualityStatus(score: number): QualityStatus {
-  return score >= 60 ? "passed" : "failed";
+export function qualityStatus(
+  score: number,
+  passThreshold = 60,
+): QualityStatus {
+  return score >= passThreshold ? "passed" : "failed";
 }
 
 export function effectiveDuration(
@@ -18,38 +45,28 @@ export function effectiveDuration(
   return Math.max(0, durationSeconds - invalidSeconds);
 }
 
-export function estimateIncome(
-  unitPricePerMinute: number,
+export function estimatePoints(
+  pointsPerMinute: number,
   durationSeconds: number,
   invalidSeconds: number,
   score: number,
+  bands?: readonly QualityCoefficientBand[],
 ): number {
-  const amount =
-    unitPricePerMinute *
+  const points =
+    pointsPerMinute *
     (effectiveDuration(durationSeconds, invalidSeconds) / 60) *
-    qualityCoefficient(score);
+    qualityCoefficient(score, bands);
 
-  return Math.round(amount * 100) / 100;
+  return Math.round(points * 100) / 100;
 }
 
-export function validateWithdrawal(
-  amount: number,
-  availableBalance: number,
-  minimumAmount: number,
-): ValidationResult {
-  if (amount < minimumAmount) {
-    return {
-      valid: false,
-      message: `最低提现金额为 ¥${minimumAmount}`,
-    };
-  }
-
-  if (amount > availableBalance) {
-    return {
-      valid: false,
-      message: "提现金额不能超过可用余额",
-    };
-  }
-
-  return { valid: true, message: "" };
+export function isActivePassedSubmission(item: Submission): boolean {
+  return (
+    item.processingStatus === "completed" &&
+    item.qualityStatus === "passed" &&
+    item.assetStatus !== "quarantined" &&
+    !item.duplicateCandidates?.some(
+      (candidate) => candidate.status === "candidate",
+    )
+  );
 }

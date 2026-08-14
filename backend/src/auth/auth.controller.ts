@@ -24,6 +24,7 @@ import {
   setSessionCookie,
 } from "./session-cookie.js";
 import { SessionGuard } from "./session.guard.js";
+import { LoginRateLimitGuard } from "../security/login-rate-limit.guard.js";
 
 function homePath(user: PublicUser): string {
   if (user.role === "admin") return "/admin";
@@ -63,6 +64,7 @@ export class AuthController {
 
   @Post("login")
   @HttpCode(200)
+  @UseGuards(LoginRateLimitGuard)
   async login(
     @Body() input: LoginDto,
     @Req() request: Request,

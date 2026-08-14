@@ -1,4 +1,5 @@
-import { Eye, FileVideo } from "lucide-react";
+import { CopyCheck, Eye, FileVideo, ShieldAlert } from "lucide-react";
+import type { ReactNode } from "react";
 import type { Submission } from "../domain/types";
 import { QualityScore } from "./QualityScore";
 import { StatusBadge } from "./StatusBadge";
@@ -11,6 +12,15 @@ const processingLabel = {
   failed: ["处理失败", "danger"],
 } as const;
 
+function processingBadge(item: Submission) {
+  if (item.pipelineStage === "queued") return ["等待媒体分析", "warning"] as const;
+  if (item.pipelineStage === "probing") return ["媒体分析中", "info"] as const;
+  if (item.pipelineStage === "awaiting_ai") return ["等待 AI 质检", "warning"] as const;
+  if (item.pipelineStage === "ai_processing") return ["AI 质检中", "info"] as const;
+  if (item.pipelineStage === "system_failed") return ["处理失败", "danger"] as const;
+  return processingLabel[item.processingStatus];
+}
+
 function formatDuration(seconds: number) {
   if (!seconds) return "解析中";
   return `${Math.floor(seconds / 60)}分${seconds % 60}秒`;
@@ -21,11 +31,13 @@ export function SubmissionTable({
   showOwner = false,
   actionLabel = "详情",
   onAction,
+  renderActions,
 }: {
   submissions: Submission[];
   showOwner?: boolean;
   actionLabel?: string;
   onAction?(submission: Submission): void;
+  renderActions?(submission: Submission): ReactNode;
 }) {
   if (!submissions.length) {
     return <div className="empty-state"><FileVideo size={26} /><strong>没有找到数据</strong><span>请调整筛选条件后再试</span></div>;
@@ -37,16 +49,16 @@ export function SubmissionTable({
         <thead><tr><th>视频提交</th>{showOwner && <th>成员 / 团队</th>}<th>场景与动作</th><th>时长</th><th>处理状态</th><th>质量评分</th><th /></tr></thead>
         <tbody>
           {submissions.map((item) => {
-            const [label, tone] = processingLabel[item.processingStatus];
+            const [label, tone] = processingBadge(item);
             return (
               <tr key={item.id}>
-                <td><div className="file-cell"><span><FileVideo size={17} /></span><div><strong>{item.fileName}</strong><small>{item.id} · {item.createdAt}</small></div></div></td>
+                <td><div className="file-cell"><span><FileVideo size={17} /></span><div><strong>{item.fileName}</strong><small>{item.id} · {item.createdAt}</small>{item.assetStatus === "quarantined" && <em><ShieldAlert size={12} />敏感隔离</em>}{item.duplicateCandidates?.some((candidate) => candidate.status === "candidate") && <em className="warning-tag"><CopyCheck size={12} />疑似重复</em>}</div></div></td>
                 {showOwner && <td><div className="stack-cell"><strong>{item.ownerName}</strong><small>{item.teamName}</small></div></td>}
                 <td><div className="stack-cell"><strong>{item.scene}</strong><small>{item.action}</small></div></td>
                 <td>{formatDuration(item.durationSeconds)}</td>
                 <td><StatusBadge label={label} tone={tone} /></td>
-                <td><QualityScore score={item.finalScore} /></td>
-                <td>{onAction && <button className="table-action" aria-label={actionLabel} onClick={() => onAction(item)}><Eye size={15} />{actionLabel}</button>}</td>
+                <td><QualityScore score={item.finalScore} ratio={item.qualityResult?.settlementRatio} passed={item.qualityResult?.passed} /></td>
+                <td>{renderActions ? renderActions(item) : onAction && <button className="table-action" aria-label={actionLabel} onClick={() => onAction(item)}><Eye size={15} />{actionLabel}</button>}</td>
               </tr>
             );
           })}

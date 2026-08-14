@@ -1,4 +1,5 @@
 import type { ProcessingStatus, Submission } from "../domain/types";
+import { qualityStatus } from "../domain/calculations";
 import type {
   BackendMediaSegment,
   BackendProcessingStatus,
@@ -59,12 +60,29 @@ function createdAt(value: number): string {
 function mappedQualityStatus(
   source: BackendSubmission,
 ): Submission["qualityStatus"] {
-  if (source.quality?.status === "scored") return "passed";
+  if (
+    source.quality?.status === "scored" ||
+    source.quality?.status === "review_pending"
+  ) {
+    if (
+      source.quality.passed !== null &&
+      source.quality.passed !== undefined
+    ) {
+      return source.quality.passed ? "passed" : "failed";
+    }
+    if (source.quality.status === "review_pending") return "pending";
+    return source.quality.finalScore === null
+      ? "pending"
+      : qualityStatus(source.quality.finalScore);
+  }
   if (source.quality?.status === "hard_reject") return "failed";
   return "pending";
 }
 
 function aiIssues(source: BackendSubmission): Submission["issues"] {
+  if (source.quality?.manualIssues && source.quality.manualIssues.length > 0) {
+    return source.quality.manualIssues;
+  }
   const invalid =
     source.quality?.invalidSegments.map((segment) => ({
       label: segment.reasonCode,
@@ -128,7 +146,39 @@ export function backendSubmissionToDomain(
     processingStatus: processingStatus(source.processingStatus),
     pipelineStage: source.processingStatus,
     qualityStatus: mappedQualityStatus(source),
-    aiScore: source.quality?.finalScore ?? 0,
+    assetStatus: source.assetStatus ?? "active",
+    storageStatus: source.storageStatus ?? source.storage?.status ?? "available",
+    storage: source.storage
+      ? {
+          status: source.storage.status,
+          retainUntil: source.storage.retainUntil
+            ? createdAt(source.storage.retainUntil)
+            : undefined,
+          deletedAt: source.storage.deletedAt
+            ? createdAt(source.storage.deletedAt)
+            : undefined,
+          deletedByName: source.storage.deletedByName,
+          deleteReason: source.storage.deleteReason,
+        }
+      : undefined,
+    quarantine: source.quarantine
+      ? {
+          reason: source.quarantine.reason,
+          quarantinedAt: source.quarantine.quarantinedAt
+            ? createdAt(source.quarantine.quarantinedAt)
+            : undefined,
+          quarantinedByName: source.quarantine.quarantinedByName,
+        }
+      : undefined,
+    duplicateCandidates: source.duplicateCandidates?.map((candidate) => ({
+      id: candidate.id,
+      candidateSubmissionId: candidate.candidateSubmissionId,
+      candidateFileName: candidate.candidateFileName,
+      similarity: candidate.similarity,
+      status: candidate.status,
+      createdAt: createdAt(candidate.createdAt),
+    })),
+    aiScore: source.quality?.aiFinalScore ?? source.quality?.finalScore ?? 0,
     finalScore: source.quality?.finalScore ?? 0,
     qualityResult: source.quality
       ? {
@@ -141,6 +191,15 @@ export function backendSubmissionToDomain(
           promptRevision: source.quality.promptRevision,
           promptContentSha256: source.quality.promptContentSha256,
           settlementRatio: source.quality.settlementRatio,
+          passed: source.quality.passed,
+          passThreshold: source.quality.passThreshold,
+          reviewRevision: source.quality.reviewRevision ?? 0,
+          manualReview: source.quality.manualReview
+            ? {
+                ...source.quality.manualReview,
+                reviewedAt: createdAt(source.quality.manualReview.reviewedAt),
+              }
+            : undefined,
           attempts: source.quality.attempts,
           lastError: source.quality.lastError,
           startedAt: source.quality.startedAt
@@ -151,12 +210,23 @@ export function backendSubmissionToDomain(
             : undefined,
         }
       : undefined,
-    settlementStatus: "unsettled",
+    settlementStatus: source.settlementStatus ?? "unsettled",
     createdAt: createdAt(source.createdAt),
     completedAt: source.quality?.completedAt
       ? createdAt(source.quality.completedAt)
       : undefined,
-    tags: source.isTestData ? ["测试数据"] : [],
+    tags: [
+      ...(source.isTestData ? ["测试数据"] : []),
+      ...(source.assetStatus === "quarantined" ? ["敏感隔离"] : []),
+      ...((source.storageStatus ?? source.storage?.status) === "deleted"
+        ? ["对象已删除"]
+        : []),
+      ...(source.duplicateCandidates?.some(
+        (candidate) => candidate.status === "candidate",
+      )
+        ? ["疑似重复"]
+        : []),
+    ],
     issues:
       qualityIssues.length > 0
         ? qualityIssues
@@ -165,6 +235,10 @@ export function backendSubmissionToDomain(
             start: segment.startSeconds,
             end: segment.endSeconds,
           })),
-    audit: [],
+    audit:
+      source.audit?.map((record) => ({
+        ...record,
+        createdAt: createdAt(record.createdAt),
+      })) ?? [],
   };
 }

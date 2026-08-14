@@ -49,4 +49,34 @@ describe("parseEnvironment", () => {
       parseEnvironment(validEnvironment({ REDIS_URL: "not-a-url" })),
     ).toThrow(/REDIS_URL/);
   });
+
+  it("rejects local default secrets and service credentials in production", () => {
+    expect(() =>
+      parseEnvironment(validEnvironment({
+        NODE_ENV: "production",
+        SESSION_SECRET: "evdp-local-session-secret-change-before-production",
+      })),
+    ).toThrow(/SESSION_SECRET uses a local default value/);
+
+    expect(() =>
+      parseEnvironment(validEnvironment({
+        NODE_ENV: "production",
+        SESSION_SECRET: "production-session-secret-that-is-at-least-32-chars",
+        DATABASE_URL:
+          "postgresql://evdp:evdp_local_postgres_password@localhost:5432/evdp",
+      })),
+    ).toThrow(/DATABASE_URL uses local default credentials/);
+  });
+
+  it("allows local defaults only when explicitly marked as local startup", () => {
+    expect(
+      parseEnvironment(validEnvironment({
+        NODE_ENV: "production",
+        EVDP_ALLOW_LOCAL_DEFAULT_PASSWORDS: "true",
+      })),
+    ).toMatchObject({
+      nodeEnv: "production",
+      sessionSecret: "local-session-secret-that-is-at-least-32-chars",
+    });
+  });
 });

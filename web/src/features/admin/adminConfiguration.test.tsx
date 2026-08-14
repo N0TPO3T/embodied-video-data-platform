@@ -9,11 +9,19 @@ import { accountForRole, demoAccounts } from "../../test/accountFixtures";
 const promptApi = vi.hoisted(() => ({
   get: vi.fn(),
   update: vi.fn(),
+  getRule: vi.fn(),
+  createRule: vi.fn(),
+  getLabelSet: vi.fn(),
+  updateLabel: vi.fn(),
 }));
 
 vi.mock("../../ai-quality/client/aiQualityApi", () => ({
   getAiQualityPrompt: promptApi.get,
   updateAiQualityPrompt: promptApi.update,
+  getQualityRule: promptApi.getRule,
+  createQualityRule: promptApi.createRule,
+  getLabelSet: promptApi.getLabelSet,
+  updateQualityLabel: promptApi.updateLabel,
 }));
 
 const currentPrompt = {
@@ -26,6 +34,44 @@ const currentPrompt = {
   outputSchema: "video_qc_result_v1",
   initialModel: "qwen3.7-plus",
   reviewModel: "qwen3.7-flash",
+  createdByName: "系统初始化",
+  createdAt: Date.parse("2026-08-12T04:00:00.000Z"),
+};
+
+const currentRule = {
+  id: "QRV-1",
+  revision: 1,
+  version: "RULE-2026-08",
+  passThreshold: 60,
+  description: "八月具身视频质量准入规则",
+  active: true,
+  createdByAccountId: "U-ADMIN-01",
+  createdByName: "系统初始化",
+  createdAt: Date.parse("2026-08-12T04:00:00.000Z"),
+};
+
+const currentLabelSet = {
+  id: "LSV-1",
+  revision: 1,
+  version: "LABELS-2026-08",
+  labels: [
+    {
+      id: "SCENE-001",
+      name: "后端厨房",
+      type: "scene" as const,
+      associationCount: 186,
+      enabled: true,
+    },
+    {
+      id: "ACTION-014",
+      name: "后端组装",
+      type: "action" as const,
+      associationCount: 94,
+      enabled: true,
+    },
+  ],
+  active: true,
+  createdByAccountId: "U-ADMIN-01",
   createdByName: "系统初始化",
   createdAt: Date.parse("2026-08-12T04:00:00.000Z"),
 };
@@ -53,6 +99,25 @@ describe("administrator rule configuration", () => {
         systemPrompt,
         createdByName: "平台管理员",
       }));
+    promptApi.getRule.mockReset().mockResolvedValue(currentRule);
+    promptApi.createRule
+      .mockReset()
+      .mockImplementation(async (input) => ({
+        ...currentRule,
+        ...input,
+        revision: 2,
+        createdByName: "平台管理员",
+      }));
+    promptApi.getLabelSet.mockReset().mockResolvedValue(currentLabelSet);
+    promptApi.updateLabel
+      .mockReset()
+      .mockImplementation(async (input) => ({
+        ...currentLabelSet,
+        revision: 2,
+        labels: currentLabelSet.labels.map((label) =>
+          label.id === input.id ? { ...label, ...input } : label,
+        ),
+      }));
   });
 
   it("publishes a new active rule version", async () => {
@@ -68,24 +133,43 @@ describe("administrator rule configuration", () => {
     await user.type(screen.getByLabelText("规则说明"), "九月质量规则");
     await user.click(screen.getByRole("button", { name: "发布规则" }));
 
-    expect(screen.getByText("RULE-2026-09")).toBeVisible();
+    expect(promptApi.createRule).toHaveBeenCalledWith({
+      version: "RULE-2026-09",
+      passThreshold: 65,
+      description: "九月质量规则",
+    });
+    expect(await screen.findByText("RULE-2026-09")).toBeVisible();
     expect(screen.getByText("65 分")).toBeVisible();
     expect(screen.getByText("规则版本已发布")).toBeVisible();
+  });
+
+  it("loads the active backend quality rule", async () => {
+    renderAdmin("/admin/rules");
+
+    expect(await screen.findByText("RULE-2026-08")).toBeVisible();
+    expect(screen.getByText("V1 · 后端生效")).toBeVisible();
+    expect(promptApi.getRule).toHaveBeenCalled();
   });
 
   it("edits a label name and enabled state", async () => {
     const user = userEvent.setup();
     renderAdmin("/admin/rules");
 
-    const row = (await screen.findByText("家庭厨房")).closest("tr")!;
+    const row = (await screen.findByText("后端厨房")).closest("tr")!;
     await user.click(within(row).getByRole("button", { name: "编辑" }));
     await user.clear(screen.getByLabelText("标签名称"));
     await user.type(screen.getByLabelText("标签名称"), "家庭烹饪");
     await user.click(screen.getByLabelText("启用标签"));
     await user.click(screen.getByRole("button", { name: "保存标签" }));
 
-    expect(within(row).getByText("家庭烹饪")).toBeVisible();
-    expect(within(row).getByText("停用")).toBeVisible();
+    expect(promptApi.updateLabel).toHaveBeenCalledWith({
+      id: "SCENE-001",
+      name: "家庭烹饪",
+      enabled: false,
+    });
+    expect(await screen.findByText("V2")).toBeVisible();
+    const updatedRow = screen.getByText("家庭烹饪").closest("tr")!;
+    expect(within(updatedRow).getByText("停用")).toBeVisible();
     expect(screen.getByText("标签已更新")).toBeVisible();
   });
 

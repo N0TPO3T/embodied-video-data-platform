@@ -38,3 +38,10 @@ export class UpdateTeamDto {
   @IsIn(["active", "disabled"])
   status?: TeamStatus;
 }
+
+export class AssignTeamLeaderDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(64)
+  accountId!: string;
+}

@@ -106,6 +106,8 @@ services:
     environment:
       NODE_ENV: production
       PORT: 4000
+      EVDP_ALLOW_LOCAL_DEFAULT_PASSWORDS: "true"
+      EVDP_AUTO_RECLAIM_WORKER_TIMEOUTS: "true"
     ports:
       - "127.0.0.1:4000:4000"
     volumes:
@@ -158,7 +160,7 @@ services:
       - .env
     environment:
       NODE_ENV: production
-      AI_QUALITY_CONCURRENCY: 2
+      AI_QUALITY_CONCURRENCY: 3
       AI_QUALITY_MODEL_TIMEOUT_MS: 600000
       VIDEO_QUALITY_PROMPT_PATH: /quality/qwen-video-ai-quality-prompt-v1.md
     depends_on:

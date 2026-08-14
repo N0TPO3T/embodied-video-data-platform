@@ -14,6 +14,8 @@ import { AuditLogEntity } from "../src/database/entities/audit-log.entity.js";
 import { createDataSource, identityEntities } from "../src/database/data-source.js";
 import { UserEntity } from "../src/database/entities/user.entity.js";
 import { TeamEntity } from "../src/database/entities/team.entity.js";
+import { LabelSetVersionEntity } from "../src/database/entities/label-set-version.entity.js";
+import { QualityRuleVersionEntity } from "../src/database/entities/quality-rule-version.entity.js";
 import { VideoQualityPromptVersionEntity } from "../src/database/entities/video-quality-prompt-version.entity.js";
 import { configureApplication } from "../src/http/configure-application.js";
 
@@ -158,6 +160,123 @@ describe("AI quality prompt API", () => {
     });
     expect(audit.summary).toContain("版本 2");
     expect(JSON.stringify(audit)).not.toContain(systemPrompt);
+  });
+
+  it("publishes active quality rule versions and audits the change", async () => {
+    const initial = await request(app.getHttpServer())
+      .get("/api/v1/ai-quality/quality-rule")
+      .set("Cookie", adminCookie)
+      .expect(200);
+    expect(initial.body.rule).toMatchObject({
+      revision: 1,
+      version: "RULE-2026-08",
+      passThreshold: 60,
+      description: "八月具身视频质量准入规则",
+      createdByName: "系统初始化",
+    });
+
+    const published = await request(app.getHttpServer())
+      .put("/api/v1/ai-quality/quality-rule")
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", adminCookie)
+      .send({
+        version: "RULE-2026-09",
+        passThreshold: 65,
+        description: "九月质量规则",
+      })
+      .expect(200);
+    expect(published.body.rule).toMatchObject({
+      revision: 2,
+      version: "RULE-2026-09",
+      passThreshold: 65,
+      description: "九月质量规则",
+      createdByName: "提示词管理员",
+    });
+
+    const rules = await dataSource
+      .getRepository(QualityRuleVersionEntity)
+      .find({ order: { revision: "ASC" } });
+    expect(rules.map((rule) => rule.active)).toEqual([false, true]);
+
+    const audit = await dataSource.getRepository(AuditLogEntity).findOneByOrFail({
+      action: "quality_rule_publish",
+    });
+    expect(audit.summary).toContain("RULE-2026-09");
+
+    await request(app.getHttpServer())
+      .get("/api/v1/ai-quality/quality-rule")
+      .set("Cookie", collectorCookie)
+      .expect(403);
+    await request(app.getHttpServer())
+      .put("/api/v1/ai-quality/quality-rule")
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", collectorCookie)
+      .send({
+        version: "RULE-2026-10",
+        passThreshold: 70,
+        description: "无权限规则",
+      })
+      .expect(403);
+  });
+
+  it("versions label set updates and audits the changed label", async () => {
+    const initial = await request(app.getHttpServer())
+      .get("/api/v1/ai-quality/label-set")
+      .set("Cookie", adminCookie)
+      .expect(200);
+    expect(initial.body.labelSet).toMatchObject({
+      revision: 1,
+      version: "LABELS-2026-08",
+      createdByName: "系统初始化",
+    });
+    expect(initial.body.labelSet.labels).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "SCENE-001",
+          name: "家庭厨房",
+          enabled: true,
+        }),
+      ]),
+    );
+
+    const updated = await request(app.getHttpServer())
+      .put("/api/v1/ai-quality/labels/SCENE-001")
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", adminCookie)
+      .send({
+        id: "IGNORED-BODY-ID",
+        name: "家庭烹饪",
+        enabled: false,
+      })
+      .expect(200);
+    expect(updated.body.labelSet).toMatchObject({
+      revision: 2,
+      createdByName: "提示词管理员",
+    });
+    expect(updated.body.labelSet.labels).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "SCENE-001",
+          name: "家庭烹饪",
+          enabled: false,
+        }),
+      ]),
+    );
+
+    const labelSets = await dataSource
+      .getRepository(LabelSetVersionEntity)
+      .find({ order: { revision: "ASC" } });
+    expect(labelSets.map((item) => item.active)).toEqual([false, true]);
+
+    const audit = await dataSource.getRepository(AuditLogEntity).findOneByOrFail({
+      action: "label_set_update",
+    });
+    expect(audit.summary).toContain("家庭烹饪");
+
+    await request(app.getHttpServer())
+      .get("/api/v1/ai-quality/label-set")
+      .set("Cookie", collectorCookie)
+      .expect(403);
   });
 
   it("rejects non-admin writes, invalid origins and empty prompts", async () => {

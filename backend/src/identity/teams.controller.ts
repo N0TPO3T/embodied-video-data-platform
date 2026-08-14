@@ -13,7 +13,12 @@ import type { PublicUser } from "../auth/auth.types.js";
 import { CurrentUser } from "../auth/current-user.decorator.js";
 import { SessionGuard } from "../auth/session.guard.js";
 import { AllowedOriginGuard } from "../http/allowed-origin.guard.js";
-import { CreateTeamDto, UpdateTeamDto } from "./dto/team.dto.js";
+import { SensitiveActionRateLimitGuard } from "../security/sensitive-action-rate-limit.guard.js";
+import {
+  AssignTeamLeaderDto,
+  CreateTeamDto,
+  UpdateTeamDto,
+} from "./dto/team.dto.js";
 import { IdentityFailureFilter } from "./identity-failure.filter.js";
 import { TeamsService } from "./teams.service.js";
 
@@ -29,7 +34,7 @@ export class TeamsController {
   }
 
   @Post()
-  @UseGuards(AllowedOriginGuard)
+  @UseGuards(AllowedOriginGuard, SensitiveActionRateLimitGuard)
   async create(
     @CurrentUser() actor: PublicUser,
     @Body() input: CreateTeamDto,
@@ -38,12 +43,22 @@ export class TeamsController {
   }
 
   @Patch(":id")
-  @UseGuards(AllowedOriginGuard)
+  @UseGuards(AllowedOriginGuard, SensitiveActionRateLimitGuard)
   async update(
     @CurrentUser() actor: PublicUser,
     @Param("id") id: string,
     @Body() input: UpdateTeamDto,
   ) {
     return { team: await this.teams.update(actor, id, input) };
+  }
+
+  @Patch(":id/leader")
+  @UseGuards(AllowedOriginGuard, SensitiveActionRateLimitGuard)
+  async assignLeader(
+    @CurrentUser() actor: PublicUser,
+    @Param("id") id: string,
+    @Body() input: AssignTeamLeaderDto,
+  ) {
+    return { accounts: await this.teams.assignLeader(actor, id, input) };
   }
 }

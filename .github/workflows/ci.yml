@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "codex/**"
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: evdp_test
+          POSTGRES_USER: evdp
+          POSTGRES_PASSWORD: evdp_local_postgres_password
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U evdp -d evdp_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      NODE_ENV: test
+      TEST_DATABASE_URL: postgresql://evdp:evdp_local_postgres_password@127.0.0.1:55432/evdp_test
+      DATABASE_URL: postgresql://evdp:evdp_local_postgres_password@127.0.0.1:55432/evdp_test
+      WEB_ORIGIN: http://localhost:3000
+      SESSION_SECRET: evdp-local-session-secret-change-before-production
+      REDIS_URL: redis://:evdp_local_redis_password@127.0.0.1:6379/0
+      RABBITMQ_URL: amqp://evdp:evdp_local_rabbitmq_password@127.0.0.1:5672
+      MINIO_ENDPOINT: http://127.0.0.1:9000
+      MINIO_PUBLIC_ENDPOINT: http://127.0.0.1:9000
+      MINIO_ACCESS_KEY: evdp_local_minio
+      MINIO_SECRET_KEY: evdp_local_minio_password
+      QDRANT_URL: http://127.0.0.1:6333
+      SUBMISSION_OBJECT_RETENTION_DAYS: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.16.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+      - name: Install system test dependencies
+        run: sudo apt-get update && sudo apt-get install -y sqlite3
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck backend
+        working-directory: backend
+        run: pnpm typecheck
+      - name: Run migrations
+        working-directory: backend
+        run: pnpm migration:run
+      - name: Run backend tests
+        working-directory: backend
+        run: pnpm test -- --reporter=dot
+      - name: Build backend
+        working-directory: backend
+        run: pnpm build
+
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+    env:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:4000/api/v1
+      BACKEND_INTERNAL_URL: http://localhost:4000/api/v1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.16.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install web dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck web
+        working-directory: web
+        run: pnpm typecheck
+      - name: Run web tests
+        working-directory: web
+        run: pnpm test -- --reporter=dot
+      - name: Build web
+        working-directory: web
+        run: pnpm build
+      - name: Render smoke test
+        working-directory: web
+        run: pnpm test:render

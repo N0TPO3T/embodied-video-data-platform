@@ -27,6 +27,12 @@ const queuedSubmission: BackendSubmission = {
   segments: [],
 };
 
+const authorization = {
+  dataUsageAuthorized: true,
+  privacyConfirmed: true,
+  sensitiveContentConfirmed: true,
+};
+
 describe("browser multipart uploader", () => {
   it("hashes a file incrementally to the standard SHA-256 value", async () => {
     const bytes = "local-video-bytes";
@@ -58,6 +64,9 @@ describe("browser multipart uploader", () => {
           expiresAt: 1_786_118_400_000,
         }));
       },
+      async verifyResumeUpload(): Promise<CreateUploadResult> {
+        throw new Error("not used");
+      },
       async completeUpload(_id, parts) {
         completed.push(...parts);
         return queuedSubmission;
@@ -85,7 +94,10 @@ describe("browser multipart uploader", () => {
     await expect(
       uploader(
         new File(["abcdefghij"], "task.mp4", { type: "video/mp4" }),
-        { onProgress: (value) => progress.push(value) },
+        {
+          authorization,
+          onProgress: (value) => progress.push(value),
+        },
       ),
     ).resolves.toEqual(queuedSubmission);
 
@@ -99,5 +111,157 @@ describe("browser multipart uploader", () => {
       { partNumber: 5, etag: "etag-5" },
     ]);
     expect(progress.at(-1)).toBe(100);
+  });
+
+  it("resumes an active upload without creating a new backend task", async () => {
+    const calls: {
+      create: number;
+      abort: number;
+      verify?: { fileName: string; sizeBytes: number; checksumSha256: string };
+    } = { create: 0, abort: 0 };
+    const completed: Array<{ partNumber: number; etag: string }> = [];
+    const api: SubmissionUploadApi = {
+      async createUpload(): Promise<CreateUploadResult> {
+        calls.create += 1;
+        throw new Error("should not create");
+      },
+      async presignParts(_id, partNumbers) {
+        return partNumbers.map((partNumber) => ({
+          partNumber,
+          url: `http://minio.local/resume-${partNumber}`,
+          expiresAt: 1_786_118_400_000,
+        }));
+      },
+      async verifyResumeUpload(_id, input): Promise<CreateUploadResult> {
+        calls.verify = input;
+        return {
+          submission: { ...queuedSubmission, uploadStatus: "uploading", processingStatus: "uploading" },
+          upload: {
+            uploadId: "UPLOAD-EXISTING",
+            partSizeBytes: 5,
+            partCount: 2,
+            expiresInSeconds: 900,
+          },
+        };
+      },
+      async completeUpload(_id, parts) {
+        completed.push(...parts);
+        return queuedSubmission;
+      },
+      async abortUpload() {
+        calls.abort += 1;
+      },
+    };
+    const fetchPart: typeof fetch = async (input) => {
+      const partNumber = Number(String(input).split("-").at(-1));
+      return new Response(null, {
+        status: 200,
+        headers: { etag: `etag-${partNumber}` },
+      });
+    };
+    const uploader = createMultipartUploader(api, fetchPart);
+
+    await expect(
+      uploader.resume(
+        new File(["abcdefghij"], "task.mp4", { type: "video/mp4" }),
+        {
+          submission: { ...queuedSubmission, uploadStatus: "uploading", processingStatus: "uploading" },
+          upload: {
+            uploadId: "UPLOAD-EXISTING",
+            partSizeBytes: 5,
+            partCount: 2,
+            expiresInSeconds: 900,
+          },
+        },
+      ),
+    ).resolves.toEqual(queuedSubmission);
+
+    expect(calls).toEqual({
+      create: 0,
+      abort: 0,
+      verify: {
+        fileName: "task.mp4",
+        sizeBytes: 10,
+        checksumSha256: createHash("sha256").update("abcdefghij").digest("hex"),
+      },
+    });
+    expect(completed).toEqual([
+      { partNumber: 1, etag: "etag-1" },
+      { partNumber: 2, etag: "etag-2" },
+    ]);
+  });
+
+  it("does not abort the backend session when the browser upload is paused", async () => {
+    const calls = { abort: 0 };
+    const api: SubmissionUploadApi = {
+      async createUpload(): Promise<CreateUploadResult> {
+        return {
+          submission: { ...queuedSubmission, uploadStatus: "uploading", processingStatus: "uploading" },
+          upload: {
+            uploadId: "UPLOAD-PAUSE",
+            partSizeBytes: 5,
+            partCount: 2,
+            expiresInSeconds: 900,
+          },
+        };
+      },
+      async presignParts(_id, partNumbers) {
+        return partNumbers.map((partNumber) => ({
+          partNumber,
+          url: `http://minio.local/pause-${partNumber}`,
+          expiresAt: 1_786_118_400_000,
+        }));
+      },
+      async verifyResumeUpload(): Promise<CreateUploadResult> {
+        throw new Error("not used");
+      },
+      async completeUpload() {
+        return queuedSubmission;
+      },
+      async abortUpload() {
+        calls.abort += 1;
+      },
+    };
+    const controller = new AbortController();
+    const fetchPart: typeof fetch = async (_input, init) => {
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("Paused", "AbortError"));
+        });
+        controller.abort();
+      });
+    };
+    const uploader = createMultipartUploader(api, fetchPart);
+
+    await expect(
+      uploader(new File(["abcdefghij"], "task.mp4", { type: "video/mp4" }), {
+        authorization,
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(calls.abort).toBe(0);
+  });
+
+  it("requires explicit data authorization before creating an upload", async () => {
+    const api: SubmissionUploadApi = {
+      async createUpload(): Promise<CreateUploadResult> {
+        throw new Error("should not create");
+      },
+      async presignParts() {
+        return [];
+      },
+      async verifyResumeUpload(): Promise<CreateUploadResult> {
+        throw new Error("not used");
+      },
+      async completeUpload() {
+        return queuedSubmission;
+      },
+      async abortUpload() {},
+    };
+    const uploader = createMultipartUploader(api);
+
+    await expect(
+      uploader(new File(["abc"], "task.mp4", { type: "video/mp4" })),
+    ).rejects.toThrow("上传前请先确认数据授权、隐私规范和敏感内容处理要求");
   });
 });

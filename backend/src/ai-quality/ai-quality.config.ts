@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-export const DEFAULT_AI_QUALITY_CONCURRENCY = 2;
+export const DEFAULT_AI_QUALITY_CONCURRENCY = 3;
 
 export function videoQualityPromptPath(): string {
   const configured = process.env.VIDEO_QUALITY_PROMPT_PATH?.trim();

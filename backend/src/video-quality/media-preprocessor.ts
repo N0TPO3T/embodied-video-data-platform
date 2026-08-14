@@ -108,7 +108,8 @@ export function parseQualityProbeOutput(output: string): VideoMediaMetadata {
 
 export function calculateSamplingFps(durationMs: number): number {
   const seconds = Math.max(0.001, durationMs / 1_000);
-  return Math.min(10, Math.max(0.2, 4 / seconds));
+  const targetFrameCount = Math.min(96, Math.max(4, Math.ceil(seconds / 5)));
+  return Math.min(10, Math.max(4 / seconds, targetFrameCount / seconds));
 }
 
 function scaleFilter(fps: number): string {

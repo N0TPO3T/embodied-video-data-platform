@@ -1,8 +1,10 @@
 "use client";
 
 import {
+  Building2,
   Search,
   ShieldCheck,
+  UserCog,
   UserRoundPlus,
   Users,
 } from "lucide-react";
@@ -11,14 +13,19 @@ import * as accountApi from "../../auth/client/accountApi";
 import { useIdentity } from "../../auth/client/IdentityContext";
 import type {
   AccountPublic,
+  CreateTeamInput,
   CreateAccountInput,
+  TeamPublic,
+  UpdateTeamInput,
   UpdateAccountInput,
 } from "../../auth/contracts";
 import { StatusBadge } from "../../components/StatusBadge";
 import type { AccountStatus, Role } from "../../domain/types";
 import { useInteractions } from "../../interactions/InteractionContext";
 import { AccountStatusModal } from "./AccountStatusModal";
+import { AssignTeamLeaderModal } from "./AssignTeamLeaderModal";
 import { ResetPasswordModal } from "./ResetPasswordModal";
+import { TeamFormModal } from "./TeamFormModal";
 import { UserFormModal } from "./UserFormModal";
 
 const roleLabel: Record<Role, string> = {
@@ -39,12 +46,21 @@ function formatUpdatedAt(timestamp: number): string {
 }
 
 export function UsersTeamsPage() {
-  const { accounts, currentAccount, teams, upsertAccount } = useIdentity();
+  const {
+    accounts,
+    currentAccount,
+    teams,
+    upsertAccount,
+    upsertTeam,
+  } = useIdentity();
   const { notify } = useInteractions();
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<AccountPublic>();
   const [resetTarget, setResetTarget] = useState<AccountPublic>();
   const [statusTarget, setStatusTarget] = useState<AccountPublic>();
+  const [createTeamOpen, setCreateTeamOpen] = useState(false);
+  const [editTeamTarget, setEditTeamTarget] = useState<TeamPublic>();
+  const [leaderTeamTarget, setLeaderTeamTarget] = useState<TeamPublic>();
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<Role | "all">("all");
   const [statusFilter, setStatusFilter] = useState<
@@ -52,6 +68,8 @@ export function UsersTeamsPage() {
   >("all");
   const createTriggerRef = useRef<HTMLButtonElement>(null);
   const actionTriggerRef = useRef<HTMLButtonElement>(null);
+  const createTeamTriggerRef = useRef<HTMLButtonElement>(null);
+  const teamActionTriggerRef = useRef<HTMLButtonElement>(null);
 
   const filteredAccounts = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -82,6 +100,26 @@ export function UsersTeamsPage() {
     return account;
   }
 
+  async function createTeam(input: CreateTeamInput) {
+    const team = await accountApi.createTeam(input);
+    upsertTeam(team);
+    notify("success", "团队已创建");
+    return team;
+  }
+
+  async function updateTeam(id: string, input: UpdateTeamInput) {
+    const team = await accountApi.updateTeam(id, input);
+    upsertTeam(team);
+    notify("success", "团队信息已更新");
+    return team;
+  }
+
+  async function assignLeader(teamId: string, accountId: string) {
+    const changed = await accountApi.assignTeamLeader(teamId, accountId);
+    changed.forEach(upsertAccount);
+    notify("success", "团长已更新，相关账号需重新登录");
+  }
+
   function rememberActionTrigger(button: HTMLButtonElement) {
     actionTriggerRef.current = button;
   }
@@ -94,14 +132,24 @@ export function UsersTeamsPage() {
           <h1>用户与团队</h1>
           <span>创建真实登录账号、设置角色并维护团队归属</span>
         </div>
-        <button
-          ref={createTriggerRef}
-          className="button button-primary"
-          onClick={() => setCreateOpen(true)}
-        >
-          <UserRoundPlus size={16} />
-          新增账号
-        </button>
+        <div className="page-heading-actions">
+          <button
+            ref={createTeamTriggerRef}
+            className="button button-secondary"
+            onClick={() => setCreateTeamOpen(true)}
+          >
+            <Building2 size={16} />
+            新增团队
+          </button>
+          <button
+            ref={createTriggerRef}
+            className="button button-primary"
+            onClick={() => setCreateOpen(true)}
+          >
+            <UserRoundPlus size={16} />
+            新增账号
+          </button>
+        </div>
       </div>
 
       <div className="people-summary">
@@ -122,15 +170,115 @@ export function UsersTeamsPage() {
         <div>
           {teams.map((team) => (
             <span key={team.id}>
-              <strong>{team.name}</strong>
+              <strong>
+                {team.name}{team.status === "disabled" ? " · 已停用" : ""}
+              </strong>
               <small>
-                {accounts.filter((account) => account.teamId === team.id).length} 名成员 · ¥
-                {team.unitPricePerMinute}/分钟
+                {accounts.filter((account) => account.teamId === team.id).length} 名成员 ·
+                {team.unitPricePerMinute} 分/分钟
               </small>
             </span>
           ))}
         </div>
       </div>
+
+      <section className="content-card table-card">
+        <div className="card-heading">
+          <div>
+            <h2>团队列表</h2>
+            <p>维护团队状态、积分规则和团长人选</p>
+          </div>
+        </div>
+        <div className="table-scroll">
+          <table className="data-table team-management-table">
+            <thead>
+              <tr>
+                <th>团队</th>
+                <th>团长</th>
+                <th>成员数</th>
+                <th>每分钟积分</th>
+                <th>状态</th>
+                <th>更新时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {teams.map((team) => {
+                const members = accounts.filter(
+                  (account) => account.teamId === team.id,
+                );
+                const leaders = members.filter(
+                  (account) => account.role === "leader",
+                );
+                return (
+                  <tr key={team.id}>
+                    <td>
+                      <div className="member-cell">
+                        <span><Building2 size={14} /></span>
+                        <div>
+                          <strong>{team.name}</strong>
+                          <small>{team.id}</small>
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      {leaders.length > 0
+                        ? `${leaders.map((leader) => leader.displayName).join(" / ")}${leaders.length > 1 ? "（待统一）" : ""}`
+                        : "待指定"}
+                    </td>
+                    <td>{members.length} 人</td>
+                    <td>{team.unitPricePerMinute} 分/分钟</td>
+                    <td>
+                      <StatusBadge
+                        label={team.status === "active" ? "已启用" : "已停用"}
+                        tone={team.status === "active" ? "success" : "neutral"}
+                      />
+                    </td>
+                    <td>{formatUpdatedAt(team.updatedAt)}</td>
+                    <td>
+                      <div className="account-row-actions">
+                        <button
+                          className="table-action"
+                          onClick={(event) => {
+                            teamActionTriggerRef.current = event.currentTarget;
+                            setEditTeamTarget(team);
+                          }}
+                        >
+                          编辑团队
+                        </button>
+                        <button
+                          className="table-action"
+                          disabled={team.status === "disabled" || members.length === 0}
+                          title={
+                            team.status === "disabled"
+                              ? "请先启用团队"
+                              : members.length === 0
+                                ? "请先为团队创建成员账号"
+                                : undefined
+                          }
+                          onClick={(event) => {
+                            teamActionTriggerRef.current = event.currentTarget;
+                            setLeaderTeamTarget(team);
+                          }}
+                        >
+                          <UserCog size={13} />
+                          指定团长
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {teams.length === 0 && (
+            <div className="empty-state">
+              <strong>还没有团队</strong>
+              <span>先创建团队，再添加团长和数采人员账号</span>
+            </div>
+          )}
+        </div>
+      </section>
 
       <section className="content-card table-card">
         <div className="card-heading">
@@ -288,6 +436,41 @@ export function UsersTeamsPage() {
           onUpdate={update}
           onClose={() => setCreateOpen(false)}
           returnFocusRef={createTriggerRef}
+        />
+      )}
+      {createTeamOpen && (
+        <TeamFormModal
+          mode="create"
+          onCreate={createTeam}
+          onUpdate={updateTeam}
+          onClose={() => setCreateTeamOpen(false)}
+          returnFocusRef={createTeamTriggerRef}
+        />
+      )}
+      {editTeamTarget && (
+        <TeamFormModal
+          mode="edit"
+          team={editTeamTarget}
+          memberCount={
+            accounts.filter(
+              (account) =>
+                account.teamId === editTeamTarget.id &&
+                account.status === "active",
+            ).length
+          }
+          onCreate={createTeam}
+          onUpdate={updateTeam}
+          onClose={() => setEditTeamTarget(undefined)}
+          returnFocusRef={teamActionTriggerRef}
+        />
+      )}
+      {leaderTeamTarget && (
+        <AssignTeamLeaderModal
+          team={leaderTeamTarget}
+          accounts={accounts}
+          onAssign={(accountId) => assignLeader(leaderTeamTarget.id, accountId)}
+          onClose={() => setLeaderTeamTarget(undefined)}
+          returnFocusRef={teamActionTriggerRef}
         />
       )}
       {editTarget && (

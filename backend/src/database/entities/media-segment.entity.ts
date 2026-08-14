@@ -53,6 +53,9 @@ export class MediaSegmentEntity {
   @Column({ type: "jsonb", default: () => "'{}'::jsonb" })
   details: Record<string, unknown> = {};
 
+  @Column({ name: "evidence_object_key", type: "text", nullable: true })
+  evidenceObjectKey: string | null = null;
+
   @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt!: Date;
 }

@@ -1,12 +1,13 @@
 "use client";
 
 import { Bell, LogOut, Menu, X } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { navigationByRole } from "../app/navigation";
 import { BrandMark } from "../components/BrandMark";
 import { NotificationPanel } from "../components/NotificationPanel";
 import { useIdentity } from "../auth/client/IdentityContext";
 import { useInteractions } from "../interactions/InteractionContext";
+import { getOperationsStatus } from "../operations/client/operationsApi";
 
 const roleLabel = {
   collector: "数采人员",
@@ -30,8 +31,26 @@ export function DashboardShell({
   const [loggingOut, setLoggingOut] = useState(false);
   const loggingOutRef = useRef(false);
   const { currentAccount } = useIdentity();
-  const { notify, unreadCount } = useInteractions();
+  const { notify, unreadCount, navigationBadges, syncOperationsStatus } =
+    useInteractions();
+  const badgeByPath = useMemo(
+    () => new Map(navigationBadges.map((badge) => [badge.path, badge.label])),
+    [navigationBadges],
+  );
   const navigation = navigationByRole[currentAccount.role];
+
+  useEffect(() => {
+    let active = true;
+    getOperationsStatus()
+      .then((status) => {
+        if (!active) return;
+        syncOperationsStatus(status);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [currentAccount.id, syncOperationsStatus]);
 
   function go(path: string) {
     setMobileOpen(false);
@@ -81,7 +100,9 @@ export function DashboardShell({
               >
                 <Icon size={19} />
                 <span>{item.label}</span>
-                {item.badge && <em>{item.badge}</em>}
+                {(badgeByPath.get(item.path) ?? item.badge) && (
+                  <em>{badgeByPath.get(item.path) ?? item.badge}</em>
+                )}
               </a>
             );
           })}
@@ -123,7 +144,7 @@ export function DashboardShell({
               <Bell size={19} />
               {unreadCount > 0 && <span />}
             </button>
-            {notificationsOpen && <NotificationPanel />}
+            {notificationsOpen && <NotificationPanel navigate={go} />}
             <div className="user-chip">
               <span>{currentAccount.displayName.slice(0, 1)}</span>
               <div><strong>{currentAccount.displayName}</strong><small>{roleLabel[currentAccount.role]}</small></div>

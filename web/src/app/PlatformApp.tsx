@@ -15,7 +15,6 @@ import { RulesPage } from "../features/admin/RulesPage";
 import { SettlementPage } from "../features/admin/SettlementPage";
 import { SubmissionsAdminPage } from "../features/admin/SubmissionsAdminPage";
 import { UsersTeamsPage } from "../features/admin/UsersTeamsPage";
-import { WithdrawalsPage } from "../features/admin/WithdrawalsPage";
 import { CollectorDashboard } from "../features/collector/CollectorDashboard";
 import { EarningsPage } from "../features/collector/EarningsPage";
 import { GuidePage } from "../features/collector/GuidePage";
@@ -107,14 +106,23 @@ function AuthenticatedPlatformContent({
     else if (safePath === "/team/income") page = <TeamIncomePage />;
     else page = <TeamDashboard />;
   } else if (currentAccount.role === "admin") {
-    if (safePath === "/admin/submissions") page = <SubmissionsAdminPage />;
+    if (safePath === "/admin/submissions") page = <SubmissionsAdminPage navigate={navigate} />;
+    else if (safePath.startsWith("/admin/submissions/")) {
+      page = (
+        <SubmissionDetail
+          id={safePath.split("/").at(-1) ?? ""}
+          navigate={navigate}
+          backPath="/admin/submissions"
+          backLabel="返回数据提交"
+        />
+      );
+    }
     else if (safePath === "/admin/ai") page = <AiQueuePage />;
     else if (safePath === "/admin/review") page = <QualityReviewPage />;
     else if (safePath === "/admin/assets") page = <AssetsPage />;
     else if (safePath === "/admin/people") page = <UsersTeamsPage />;
     else if (safePath === "/admin/rules") page = <RulesPage />;
     else if (safePath === "/admin/settlements") page = <SettlementPage />;
-    else if (safePath === "/admin/withdrawals") page = <WithdrawalsPage />;
     else if (safePath === "/admin/public") page = <PublicConfigPage />;
     else if (safePath === "/admin/audit") page = <AuditLogPage />;
     else page = <AdminDashboard />;

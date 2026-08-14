@@ -6,6 +6,7 @@ import { MediaMetadataEntity } from "../database/entities/media-metadata.entity.
 import { SubmissionEntity } from "../database/entities/submission.entity.js";
 import { VideoQualityResultEntity } from "../database/entities/video-quality-result.entity.js";
 import { StorageModule } from "../storage/storage.module.js";
+import { OperationsModule } from "../operations/operations.module.js";
 import { VideoQualityMediaPreprocessor } from "../video-quality/media-preprocessor.js";
 import { QwenVideoQualityProvider } from "../video-quality/qwen-video-quality.provider.js";
 import { VideoQualityService } from "../video-quality/video-quality.service.js";
@@ -33,6 +34,7 @@ function required(name: string): string {
     ]),
     StorageModule,
     AiQualityModule,
+    OperationsModule,
   ],
   providers: [
     {

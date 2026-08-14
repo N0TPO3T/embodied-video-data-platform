@@ -19,11 +19,17 @@ export type ProcessingPipelineStage =
 
 export type QualityStatus = "pending" | "passed" | "failed";
 export type SettlementStatus = "unsettled" | "settled";
-export type WithdrawalStatus =
-  | "pending"
-  | "approved"
-  | "paid"
-  | "rejected";
+export type AssetStatus = "active" | "quarantined";
+export type StorageStatus = "available" | "deleted";
+
+export interface DuplicateCandidate {
+  id: string;
+  candidateSubmissionId: string;
+  candidateFileName?: string;
+  similarity: number;
+  status: "candidate" | "cleared";
+  createdAt: string;
+}
 
 export interface User {
   id: string;
@@ -73,6 +79,21 @@ export interface Submission {
   processingStatus: ProcessingStatus;
   pipelineStage?: ProcessingPipelineStage;
   qualityStatus: QualityStatus;
+  assetStatus?: AssetStatus;
+  storageStatus?: StorageStatus;
+  storage?: {
+    status: StorageStatus;
+    retainUntil?: string;
+    deletedAt?: string;
+    deletedByName?: string;
+    deleteReason?: string;
+  };
+  quarantine?: {
+    reason: string;
+    quarantinedAt?: string;
+    quarantinedByName?: string;
+  };
+  duplicateCandidates?: DuplicateCandidate[];
   aiScore: number;
   finalScore: number;
   qualityResult?: {
@@ -91,6 +112,17 @@ export interface Submission {
     promptRevision: number;
     promptContentSha256: string;
     settlementRatio: number | null;
+    passed?: boolean | null;
+    passThreshold?: number;
+    reviewRevision: number;
+    manualReview?: {
+      reviewedByAccountId: string;
+      reviewedByName: string;
+      reviewedAt: string;
+      reason: string;
+      issues: Array<{ label: string; start: number; end: number }>;
+      finalScore: number | null;
+    };
     attempts: number;
     lastError?: string;
     startedAt?: string;
@@ -104,22 +136,13 @@ export interface Submission {
   audit: AuditRecord[];
 }
 
-export interface Withdrawal {
-  id: string;
-  userId: string;
-  userName: string;
-  amount: number;
-  status: WithdrawalStatus;
-  account: string;
-  createdAt: string;
-}
-
 export interface SettlementBatch {
   id: string;
   date: string;
+  businessDate?: string;
   submissionCount: number;
   effectiveMinutes: number;
-  amount: number;
+  points: number;
   status: "locked" | "processing";
 }
 
@@ -152,9 +175,4 @@ export interface OperationLog {
   target: string;
   reason: string;
   createdAt: string;
-}
-
-export interface ValidationResult {
-  valid: boolean;
-  message: string;
 }

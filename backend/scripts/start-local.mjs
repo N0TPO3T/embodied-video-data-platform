@@ -20,6 +20,7 @@ pointServiceToLocalhost("QDRANT_URL", "qdrant", 6333);
 
 process.env.NODE_ENV = "production";
 process.env.PORT ??= "4000";
+process.env.EVDP_ALLOW_LOCAL_DEFAULT_PASSWORDS ??= "true";
 
 function runNodeScript(scriptUrl) {
   return new Promise((resolveRun, rejectRun) => {

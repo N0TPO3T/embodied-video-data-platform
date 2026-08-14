@@ -91,8 +91,12 @@ export class AccountsService {
 
     try {
       return await this.dataSource.transaction(async (manager) => {
-        await this.assertRoleTeam(manager.getRepository(TeamEntity), mutation);
         const users = manager.getRepository(UserEntity);
+        await this.assertRoleTeam(
+          manager.getRepository(TeamEntity),
+          users,
+          mutation,
+        );
         const normalized = normalizeUsername(mutation.username);
         if (await users.findOneBy({ usernameNormalized: normalized })) {
           throw new IdentityFailure(
@@ -135,64 +139,73 @@ export class AccountsService {
     id: string,
     input: UpdateAccountDto,
   ): Promise<PublicUser> {
-    return this.dataSource.transaction(async (manager) => {
-      await this.lockActiveAdminInvariant(manager);
-      const users = manager.getRepository(UserEntity);
-      const target = await users.findOneBy({ id });
-      if (!target) {
-        throw new IdentityFailure("NOT_FOUND", "账号不存在", 404);
-      }
-      const mutation = {
-        displayName: input.displayName.trim(),
-        username: input.username.trim(),
-        role: input.role,
-        teamId: input.teamId,
-      };
-      this.policy.assertCanUpdate(actor, target, mutation);
-      await this.protectLastAdmin(users, target, {
-        role: mutation.role,
-        status: target.status,
+    try {
+      return await this.dataSource.transaction(async (manager) => {
+        await this.lockActiveAdminInvariant(manager);
+        const users = manager.getRepository(UserEntity);
+        const target = await users.findOneBy({ id });
+        if (!target) {
+          throw new IdentityFailure("NOT_FOUND", "账号不存在", 404);
+        }
+        const mutation = {
+          displayName: input.displayName.trim(),
+          username: input.username.trim(),
+          role: input.role,
+          teamId: input.teamId,
+        };
+        this.policy.assertCanUpdate(actor, target, mutation);
+        await this.protectLastAdmin(users, target, {
+          role: mutation.role,
+          status: target.status,
+        });
+        await this.assertRoleTeam(
+          manager.getRepository(TeamEntity),
+          users,
+          mutation,
+          target.id,
+        );
+        const normalized = normalizeUsername(mutation.username);
+        if (
+          await users.findOne({
+            where: {
+              usernameNormalized: normalized,
+              id: Not(target.id),
+            },
+          })
+        ) {
+          throw new IdentityFailure("CONFLICT", "用户名已存在", 409);
+        }
+        const before = auditAccount(target);
+        const identityChanged =
+          target.role !== mutation.role ||
+          target.teamId !== (mutation.teamId ?? null);
+        Object.assign(target, mutation, {
+          teamId: mutation.teamId ?? null,
+          usernameNormalized: normalized,
+        });
+        const saved = await users.save(target);
+        if (identityChanged) {
+          await manager
+            .getRepository(SessionEntity)
+            .delete({ accountId: saved.id });
+        }
+        await this.audit.record(
+          manager,
+          actor,
+          "update",
+          { id: saved.id, name: saved.displayName },
+          "更新账号信息",
+          before,
+          auditAccount(saved),
+        );
+        return toPublicUser(saved);
       });
-      await this.assertRoleTeam(
-        manager.getRepository(TeamEntity),
-        mutation,
-      );
-      const normalized = normalizeUsername(mutation.username);
-      if (
-        await users.findOne({
-          where: {
-            usernameNormalized: normalized,
-            id: Not(target.id),
-          },
-        })
-      ) {
+    } catch (error) {
+      if (isUniqueFailure(error)) {
         throw new IdentityFailure("CONFLICT", "用户名已存在", 409);
       }
-      const before = auditAccount(target);
-      const identityChanged =
-        target.role !== mutation.role ||
-        target.teamId !== (mutation.teamId ?? null);
-      Object.assign(target, mutation, {
-        teamId: mutation.teamId ?? null,
-        usernameNormalized: normalized,
-      });
-      const saved = await users.save(target);
-      if (identityChanged) {
-        await manager
-          .getRepository(SessionEntity)
-          .delete({ accountId: saved.id });
-      }
-      await this.audit.record(
-        manager,
-        actor,
-        "update",
-        { id: saved.id, name: saved.displayName },
-        "更新账号信息",
-        before,
-        auditAccount(saved),
-      );
-      return toPublicUser(saved);
-    });
+      throw error;
+    }
   }
 
   async resetPassword(
@@ -283,6 +296,18 @@ export class AccountsService {
         role: target.role,
         status: input.status,
       });
+      if (input.status === "active" && target.teamId) {
+        const team = await manager
+          .getRepository(TeamEntity)
+          .findOneBy({ id: target.teamId });
+        if (!team || team.status !== "active") {
+          throw new IdentityFailure(
+            "VALIDATION",
+            "请先启用所属团队，再启用该账号",
+            400,
+          );
+        }
+      }
       const before = auditAccount(target);
       target.status = input.status;
       const saved = await users.save(target);
@@ -306,10 +331,12 @@ export class AccountsService {
 
   private async assertRoleTeam(
     teams: Repository<TeamEntity>,
+    users: Repository<UserEntity>,
     input: {
       role: UserEntity["role"];
       teamId?: string;
     },
+    excludedAccountId?: string,
   ): Promise<void> {
     if (input.role === "admin") {
       if (input.teamId) {
@@ -335,6 +362,26 @@ export class AccountsService {
         "所属团队不存在或已停用",
         400,
       );
+    }
+    if (input.role === "leader") {
+      await users.manager.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        [`team-leader:${input.teamId}`],
+      );
+      const existingLeader = await users.findOne({
+        where: {
+          role: "leader",
+          teamId: input.teamId,
+          ...(excludedAccountId ? { id: Not(excludedAccountId) } : {}),
+        },
+      });
+      if (existingLeader) {
+        throw new IdentityFailure(
+          "VALIDATION",
+          "该团队已有团长，请使用团队管理中的指定团长功能进行更换",
+          400,
+        );
+      }
     }
   }
 
