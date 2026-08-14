@@ -10,7 +10,13 @@ import {
 } from "typeorm";
 
 import { SubmissionEntity } from "./submission.entity.js";
+import { LabelSetVersionEntity } from "./label-set-version.entity.js";
+import { QualityRuleVersionEntity } from "./quality-rule-version.entity.js";
 import { VideoQualityPromptVersionEntity } from "./video-quality-prompt-version.entity.js";
+import type {
+  LabelSetSnapshot,
+  QualityRuleSnapshot,
+} from "../../rules/rule-calculator.js";
 
 export type VideoQualityResultStatus =
   | "queued"
@@ -51,6 +57,32 @@ export class VideoQualityResultEntity {
   @Column({ name: "system_prompt_snapshot", type: "text" })
   systemPromptSnapshot!: string;
 
+  @Column({ name: "quality_rule_version_id", type: "varchar", length: 64, nullable: true })
+  qualityRuleVersionId: string | null = null;
+
+  @ManyToOne(() => QualityRuleVersionEntity, { onDelete: "RESTRICT" })
+  @JoinColumn({ name: "quality_rule_version_id" })
+  qualityRule?: QualityRuleVersionEntity;
+
+  @Column({ name: "quality_rule_revision", type: "integer", nullable: true })
+  qualityRuleRevision: number | null = null;
+
+  @Column({ name: "label_set_version_id", type: "varchar", length: 64, nullable: true })
+  labelSetVersionId: string | null = null;
+
+  @ManyToOne(() => LabelSetVersionEntity, { onDelete: "RESTRICT" })
+  @JoinColumn({ name: "label_set_version_id" })
+  labelSet?: LabelSetVersionEntity;
+
+  @Column({ name: "label_set_revision", type: "integer", nullable: true })
+  labelSetRevision: number | null = null;
+
+  @Column({ name: "quality_rule_snapshot", type: "jsonb", nullable: true })
+  qualityRuleSnapshot: QualityRuleSnapshot | null = null;
+
+  @Column({ name: "label_set_snapshot", type: "jsonb", nullable: true })
+  labelSetSnapshot: LabelSetSnapshot | null = null;
+
   @Column({ name: "initial_model", type: "varchar", length: 120 })
   initialModel!: string;
 
@@ -69,11 +101,44 @@ export class VideoQualityResultEntity {
   @Column({ name: "settlement_ratio", type: "numeric", precision: 6, scale: 4, nullable: true })
   settlementRatio: string | null = null;
 
+  @Column({ name: "passed", type: "boolean", nullable: true })
+  passed: boolean | null = null;
+
   @Column({ name: "invalid_duration_ms", type: "bigint", nullable: true })
   invalidDurationMs: string | null = null;
 
   @Column({ name: "billable_duration_ms", type: "bigint", nullable: true })
   billableDurationMs: string | null = null;
+
+  @Column({ name: "manual_final_score", type: "numeric", precision: 6, scale: 1, nullable: true })
+  manualFinalScore: string | null = null;
+
+  @Column({ name: "manual_settlement_ratio", type: "numeric", precision: 6, scale: 4, nullable: true })
+  manualSettlementRatio: string | null = null;
+
+  @Column({ name: "manual_invalid_duration_ms", type: "bigint", nullable: true })
+  manualInvalidDurationMs: string | null = null;
+
+  @Column({ name: "manual_billable_duration_ms", type: "bigint", nullable: true })
+  manualBillableDurationMs: string | null = null;
+
+  @Column({ name: "manual_issues", type: "jsonb", nullable: true })
+  manualIssues: Array<Record<string, unknown>> | null = null;
+
+  @Column({ name: "manual_review_reason", type: "text", nullable: true })
+  manualReviewReason: string | null = null;
+
+  @Column({ name: "manual_reviewed_by_account_id", type: "varchar", length: 64, nullable: true })
+  manualReviewedByAccountId: string | null = null;
+
+  @Column({ name: "manual_reviewed_by_name", type: "varchar", length: 120, nullable: true })
+  manualReviewedByName: string | null = null;
+
+  @Column({ name: "manual_reviewed_at", type: "timestamptz", nullable: true })
+  manualReviewedAt: Date | null = null;
+
+  @Column({ name: "review_revision", type: "integer", default: 0 })
+  reviewRevision = 0;
 
   @Column({ type: "text", default: "" })
   summary = "";

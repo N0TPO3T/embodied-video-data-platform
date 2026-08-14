@@ -1,11 +1,19 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AccountPublic } from "../auth/contracts";
 import { IdentityProvider } from "../auth/client/IdentityContext";
 import { DemoStoreProvider } from "../data/DemoStoreContext";
 import type { Role } from "../domain/types";
 import { PlatformApp } from "./PlatformApp";
+
+const operationsApi = vi.hoisted(() => ({
+  getStatus: vi.fn(),
+}));
+
+vi.mock("../operations/client/operationsApi", () => ({
+  getOperationsStatus: operationsApi.getStatus,
+}));
 
 function account(role: Role): AccountPublic {
   if (role === "admin") {
@@ -75,6 +83,10 @@ function renderPlatform(path: string, role?: Role, demoRole = role) {
 }
 
 describe("platform routing", () => {
+  beforeEach(() => {
+    operationsApi.getStatus.mockRejectedValue(new Error("offline"));
+  });
+
   it("renders the public site at the root route", () => {
     renderPlatform("/");
     expect(
@@ -107,14 +119,15 @@ describe("platform routing", () => {
   it("shows team review navigation to a leader", () => {
     renderPlatform("/team", "leader");
     expect(
-      screen.getByRole("link", { name: /^结算前复核/ }),
+      screen.getByRole("link", { name: "质检结果" }),
     ).toBeVisible();
   });
 
   it("shows full operations navigation to an administrator", () => {
     renderPlatform("/admin", "admin");
     expect(screen.getByRole("link", { name: /^AI 任务/ })).toBeVisible();
-    expect(screen.getByRole("link", { name: /^提现审核/ })).toBeVisible();
+    expect(screen.getByRole("link", { name: /^积分规则/ })).toBeVisible();
+    expect(screen.queryByText("提现审核")).not.toBeInTheDocument();
   });
 
   it.each(["admin", "leader", "collector"] as const)(

@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeAccountPublic } from "../testFactories";
 import {
   AccountApiError,
+  accountAuditExportUrl,
+  assignTeamLeader,
   createAccount,
   createTeam,
   changeOwnPassword,
@@ -11,6 +13,7 @@ import {
   listTeams,
   logout,
   resetAccountPassword,
+  searchAccountAudit,
   setAccountStatus,
   updateAccount,
   updateTeam,
@@ -167,6 +170,62 @@ describe("account API client", () => {
     ]);
   });
 
+  it("sends audit log search filters as query parameters", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          logs: [],
+          pagination: {
+            page: 2,
+            pageSize: 20,
+            total: 0,
+            totalPages: 1,
+          },
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      searchAccountAudit({
+        q: "密码",
+        actor: "管理员",
+        action: "reset_password",
+        from: "2026-08-04",
+        to: "2026-08-05",
+        page: 2,
+        pageSize: 20,
+      }),
+    ).resolves.toMatchObject({
+      pagination: {
+        page: 2,
+        pageSize: 20,
+      },
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/v1/audit-logs?q=%E5%AF%86%E7%A0%81&actor=%E7%AE%A1%E7%90%86%E5%91%98&action=reset_password&from=2026-08-04&to=2026-08-05&page=2&pageSize=20",
+      expect.objectContaining({ credentials: "include" }),
+    );
+    expect(
+      accountAuditExportUrl({
+        q: " 密码 ",
+        actor: "管理员",
+        action: "reset_password",
+        from: "2026-08-04",
+        to: "2026-08-05",
+        page: 2,
+        pageSize: 20,
+      }),
+    ).toBe(
+      "http://localhost:4000/api/v1/audit-logs/export.csv?q=%E5%AF%86%E7%A0%81&actor=%E7%AE%A1%E7%90%86%E5%91%98&action=reset_password&from=2026-08-04&to=2026-08-05",
+    );
+  });
+
   it("maps team list and mutations to typed values", async () => {
     const team = {
       id: "TEAM-01",
@@ -178,9 +237,15 @@ describe("account API client", () => {
     };
     const fetchMock = vi
       .fn()
-      .mockImplementation(() =>
+      .mockImplementation((_input, init?: RequestInit) =>
         Promise.resolve(
-          new Response(JSON.stringify({ team, teams: [team] }), {
+          new Response(JSON.stringify({
+            team,
+            teams: [team],
+            accounts: init?.body === JSON.stringify({ accountId: "U-LEAD-01" })
+              ? [{ id: "U-LEAD-01" }]
+              : undefined,
+          }), {
             status: 200,
             headers: { "content-type": "application/json" },
           }),
@@ -199,11 +264,15 @@ describe("account API client", () => {
         status: "disabled",
       }),
     ).resolves.toEqual(team);
+    await expect(
+      assignTeamLeader("TEAM/01", "U-LEAD-01"),
+    ).resolves.toEqual([{ id: "U-LEAD-01" }]);
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "http://localhost:4000/api/v1/teams",
       "http://localhost:4000/api/v1/teams",
       "http://localhost:4000/api/v1/teams/TEAM%2F01",
+      "http://localhost:4000/api/v1/teams/TEAM%2F01/leader",
     ]);
   });
 });

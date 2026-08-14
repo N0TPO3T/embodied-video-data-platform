@@ -7,6 +7,7 @@ import type {
   RawVideoQcResultV1,
   VideoQcInputV1,
 } from "./video-quality.types.js";
+import { coefficientForScore } from "../rules/rule-calculator.js";
 
 export type NormalizeVideoQcInput = {
   raw: RawVideoQcResultV1;
@@ -29,13 +30,6 @@ function roundOne(value: number): number {
 
 function nearlyEqual(left: number, right: number, tolerance = 0.05): boolean {
   return Math.abs(left - right) <= tolerance;
-}
-
-function scoreBand(score: number): number {
-  if (score >= 80) return 1;
-  if (score >= 60) return 0.8;
-  if (score >= 40) return 0.6;
-  return 0.4;
 }
 
 type Interval = { startMs: number; endMs: number };
@@ -175,7 +169,7 @@ export function normalizeVideoQcResult(
     evaluationStatus === "hard_reject"
       ? 0
       : evaluationStatus === "scored"
-        ? scoreBand(finalScore)
+        ? coefficientForScore(finalScore)
         : null;
 
   if (input.raw.review_required && input.raw.review_reasons.length === 0) {

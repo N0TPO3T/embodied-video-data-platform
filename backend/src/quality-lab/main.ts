@@ -5,6 +5,7 @@ import { VideoQualityService } from "../video-quality/video-quality.service.js";
 import { parseQualityLabEnvironment } from "./environment.js";
 import { createQualityLabApp } from "./server.js";
 import { QualityLabJobStore } from "./job-store.js";
+import { QualityLabPromptStore } from "./prompt-store.js";
 
 async function bootstrap(): Promise<void> {
   const environment = parseQualityLabEnvironment(process.env);
@@ -15,36 +16,43 @@ async function bootstrap(): Promise<void> {
   const writeLog = (event: Record<string, unknown>) => {
     process.stdout.write(`${JSON.stringify({ timestamp: new Date().toISOString(), ...event })}\n`);
   };
-  let evaluator: VideoQualityService | null = null;
-  if (environment.qwenApiKey) {
-    const prompt = await loadVideoQualityPrompt(environment.promptPath);
-    if (
-      prompt.initialModel !== environment.initialModel ||
-      prompt.reviewModel !== environment.reviewModel
-    ) {
-      throw new Error("环境中的模型 ID 与提示词版本不一致");
-    }
-    evaluator = new VideoQualityService({
-      preprocessor: new VideoQualityMediaPreprocessor(),
-      provider: new QwenVideoQualityProvider({
-        config: {
-          apiKey: environment.qwenApiKey,
-          baseUrl: environment.qwenBaseUrl,
-          initialModel: environment.initialModel,
-          reviewModel: environment.reviewModel,
-          timeoutMs: environment.modelTimeoutMs,
-        },
-        prompt,
-        diagnosticSink: (diagnostic) => {
-          store.appendDiagnostic(diagnostic.taskId, diagnostic);
-          writeLog({ event: "bailian_call_attempt", ...diagnostic });
-        },
-      }),
-    });
+  const committedPrompt = await loadVideoQualityPrompt(environment.promptPath);
+  if (
+    committedPrompt.initialModel !== environment.initialModel ||
+    committedPrompt.reviewModel !== environment.reviewModel
+  ) {
+    throw new Error("环境中的模型 ID 与提示词版本不一致");
   }
+  const promptStore = new QualityLabPromptStore({
+    committedPrompt,
+    persistencePath: environment.promptStatePath,
+  });
+  const qwenApiKey = environment.qwenApiKey;
+  const evaluatorFactory = qwenApiKey
+    ? (prompt: ReturnType<QualityLabPromptStore["getCurrent"]>) =>
+        new VideoQualityService({
+          preprocessor: new VideoQualityMediaPreprocessor(),
+          provider: new QwenVideoQualityProvider({
+            config: {
+              apiKey: qwenApiKey,
+              baseUrl: environment.qwenBaseUrl,
+              initialModel: environment.initialModel,
+              reviewModel: environment.reviewModel,
+              timeoutMs: environment.modelTimeoutMs,
+            },
+            prompt,
+            diagnosticSink: (diagnostic) => {
+              store.appendDiagnostic(diagnostic.taskId, diagnostic);
+              writeLog({ event: "bailian_call_attempt", ...diagnostic });
+            },
+          }),
+        })
+    : undefined;
   const app = createQualityLabApp({
     environment,
-    evaluator,
+    evaluator: null,
+    evaluatorFactory,
+    promptStore,
     store,
     logger: writeLog,
   });

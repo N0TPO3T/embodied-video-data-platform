@@ -1,8 +1,167 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
 import { BadgeCheck, ChartNoAxesCombined, RotateCcw, Target } from "lucide-react";
 import { MetricCard } from "../../components/MetricCard";
+import { useIdentity } from "../../auth/client/IdentityContext";
 import { useDemoStore } from "../../data/DemoStoreContext";
+import type { Submission } from "../../domain/types";
+import { loadAllSubmissions } from "../../submissions/client/submissionApi";
+import { backendSubmissionToDomain } from "../../submissions/submissionMapper";
+import {
+  contributionMetrics,
+  formatDuration,
+  formatRate,
+  sceneContributions,
+  submissionsSince,
+} from "./teamMetrics";
+
+const sceneColors = ["#4775ef", "#805de2", "#39b985", "#e5a03f"];
+type PageMode = "loading" | "live" | "demo";
+
+function visibleScenes(scenes: ReturnType<typeof sceneContributions>) {
+  if (scenes.length <= 4) return scenes;
+  const leading = scenes.slice(0, 3);
+  const remaining = scenes.slice(3);
+  return [
+    ...leading,
+    {
+      scene: "其他",
+      seconds: remaining.reduce((sum, scene) => sum + scene.seconds, 0),
+      percentage: remaining.reduce((sum, scene) => sum + scene.percentage, 0),
+    },
+  ];
+}
+
+function sceneGradient(scenes: ReturnType<typeof sceneContributions>): string {
+  if (scenes.length === 0) return "#edf1f8";
+  let offset = 0;
+  const stops = scenes.map((scene, index) => {
+    const start = offset;
+    offset += scene.percentage;
+    return `${sceneColors[index]} ${start}% ${offset}%`;
+  });
+  return `conic-gradient(${stops.join(", ")})`;
+}
 
 export function TeamAnalyticsPage() {
-  const { currentTeam } = useDemoStore();
-  return <div className="page-stack"><div className="page-heading"><div><p className="page-kicker">近 30 日表现</p><h1>团队分析</h1><span>{currentTeam?.name} 的场景分布、成员贡献和返工趋势</span></div></div><div className="metric-grid"><MetricCard label="团队通过率" value="91.2%" detail="较上月 +2.8%" icon={BadgeCheck} tone="green" /><MetricCard label="人均有效时长" value="18.6h" detail="本月累计" icon={ChartNoAxesCombined} /><MetricCard label="返工率" value="6.8%" detail="下降 1.4%" icon={RotateCcw} tone="amber" /><MetricCard label="紧缺场景占比" value="42%" detail="目标 50%" icon={Target} tone="violet" /></div><div className="dashboard-grid"><section className="content-card"><div className="card-heading"><div><h2>场景分布</h2><p>通过质检的有效时长占比</p></div></div><div className="distribution-chart"><div className="donut-chart"><strong>28.6h<small>有效时长</small></strong></div><ul><li><i style={{background:"#4775ef"}}/>家庭厨房 <strong>32%</strong></li><li><i style={{background:"#805de2"}}/>工作台 <strong>26%</strong></li><li><i style={{background:"#39b985"}}/>家庭收纳 <strong>24%</strong></li><li><i style={{background:"#e5a03f"}}/>其他 <strong>18%</strong></li></ul></div></section><aside className="content-card"><div className="card-heading"><div><h2>成员贡献</h2><p>按本月有效时长排序</p></div></div><div className="ranking-list">{[["测试人员3","26.8h",94],["测试人员1","23.4h",82],["测试人员4","18.7h",68],["测试人员5","15.2h",55]].map(([name,value,width],index)=><div key={String(name)}><em>{index+1}</em><span><strong>{name}</strong><i><b style={{width:`${width}%`}}/></i></span><small>{value}</small></div>)}</div></aside></div></div>;
+  const { accounts, currentAccount, teams } = useIdentity();
+  const { state } = useDemoStore();
+  const currentTeam = teams.find((team) => team.id === currentAccount.teamId);
+  const members = accounts.filter(
+    (account) => account.teamId === currentTeam?.id,
+  );
+  const fallbackSubmissions = useMemo(
+    () =>
+      state.submissions.filter(
+        (submission) => submission.teamId === currentTeam?.id,
+      ),
+    [currentTeam?.id, state.submissions],
+  );
+  const [teamSubmissions, setTeamSubmissions] =
+    useState<Submission[]>(fallbackSubmissions);
+  const [mode, setMode] = useState<PageMode>("loading");
+
+  useEffect(() => {
+    let active = true;
+    setMode((current) => (current === "demo" ? current : "loading"));
+    loadAllSubmissions({ status: "all" })
+      .then((result) => {
+        if (!active) return;
+        setTeamSubmissions(result.map(backendSubmissionToDomain));
+        setMode("live");
+      })
+      .catch(() => {
+        if (!active) return;
+        setTeamSubmissions(fallbackSubmissions);
+        setMode("demo");
+      });
+    return () => {
+      active = false;
+    };
+  }, [fallbackSubmissions]);
+
+  const monthSubmissions = submissionsSince(teamSubmissions, 30);
+  const metrics = contributionMetrics(monthSubmissions);
+  const scenes = sceneContributions(monthSubmissions);
+  const displayedScenes = visibleScenes(scenes);
+  const contributions = members
+    .map((member) => ({
+      member,
+      metrics: contributionMetrics(
+        monthSubmissions.filter((submission) => submission.ownerId === member.id),
+      ),
+    }))
+    .filter((item) => item.metrics.uploads > 0)
+    .sort((left, right) => right.metrics.effectiveSeconds - left.metrics.effectiveSeconds);
+  const maxContribution = Math.max(
+    1,
+    ...contributions.map((item) => item.metrics.effectiveSeconds),
+  );
+  const averageEffectiveSeconds =
+    members.length === 0 ? 0 : metrics.effectiveSeconds / members.length;
+  const pendingCount = monthSubmissions.filter(
+    (submission) => submission.qualityStatus === "pending",
+  ).length;
+
+  return (
+    <div className="page-stack">
+      <div className="page-heading">
+        <div>
+          <p className="page-kicker">近 30 日表现</p>
+          <h1>团队分析</h1>
+          <span>{currentTeam?.name} 的场景分布、成员贡献和质量结果</span>
+        </div>
+        <span className="live-pill">
+          <i />
+          {mode === "live"
+            ? "已连接后端数据"
+            : mode === "loading"
+              ? "正在读取数据"
+              : "演示数据"}
+        </span>
+      </div>
+      <div className="metric-grid">
+        <MetricCard label="团队通过率" value={formatRate(metrics.passRate)} detail={`${metrics.reviewed} 条终态结果`} icon={BadgeCheck} tone="green" />
+        <MetricCard label="人均有效时长" value={formatDuration(averageEffectiveSeconds)} detail="近 30 日累计" icon={ChartNoAxesCombined} />
+        <MetricCard label="不通过率" value={metrics.passRate === null ? "—" : formatRate(100 - metrics.passRate)} detail={`${metrics.failed} 条未通过`} icon={RotateCcw} tone="amber" />
+        <MetricCard label="待质检数据" value={`${pendingCount} 条`} detail={`共上传 ${metrics.uploads} 条`} icon={Target} tone="violet" />
+      </div>
+      <div className="dashboard-grid">
+        <section className="content-card">
+          <div className="card-heading">
+            <div><h2>场景分布</h2><p>通过质检的真实有效时长占比</p></div>
+          </div>
+          <div className="distribution-chart">
+            <div className="donut-chart" style={{ background: sceneGradient(displayedScenes) }}><strong>{formatDuration(scenes.reduce((sum, scene) => sum + scene.seconds, 0))}<small>有效时长</small></strong></div>
+            {displayedScenes.length > 0 ? (
+              <ul>
+                {displayedScenes.map((scene, index) => (
+                  <li key={scene.scene}>
+                    <i style={{ background: sceneColors[index] }} />
+                    {scene.scene}
+                    <strong>{scene.percentage.toFixed(1)}%</strong>
+                  </li>
+                ))}
+              </ul>
+            ) : <div className="empty-state compact-empty"><strong>暂无已通过数据</strong><span>AI 质检完成后将在这里显示场景占比</span></div>}
+          </div>
+        </section>
+        <aside className="content-card">
+          <div className="card-heading"><div><h2>成员贡献</h2><p>按近 30 日有效时长排序</p></div></div>
+          {contributions.length > 0 ? (
+            <div className="ranking-list">
+              {contributions.map(({ member, metrics: memberMetrics }, index) => (
+                <div key={member.id}>
+                  <em>{index + 1}</em>
+                  <span><strong>{member.displayName}</strong><i><b style={{ width: `${(memberMetrics.effectiveSeconds / maxContribution) * 100}%` }} /></i></span>
+                  <small>{formatDuration(memberMetrics.effectiveSeconds)}</small>
+                </div>
+              ))}
+            </div>
+          ) : <div className="empty-state compact-empty"><strong>暂无成员贡献</strong><span>成员上传视频后将在这里汇总</span></div>}
+        </aside>
+      </div>
+    </div>
+  );
 }

@@ -8,41 +8,27 @@ export type MemberMetrics = {
   uploads: number;
   duration: string;
   passRate: string;
+  averageScore: string;
 };
-
-const metricsByMember: Record<string, MemberMetrics> = {
-  "U-LEAD-01": { uploads: 0, duration: "—", passRate: "—" },
-  "U-COL-01": { uploads: 18, duration: "4.8h", passRate: "94.2%" },
-  "U-COL-03": { uploads: 23, duration: "5.2h", passRate: "91.8%" },
-  "U-COL-04": { uploads: 16, duration: "3.7h", passRate: "89.6%" },
-  "U-COL-05": { uploads: 11, duration: "2.9h", passRate: "87.4%" },
-};
-
-export function memberMetrics(userId: string): MemberMetrics {
-  return (
-    metricsByMember[userId] ?? {
-      uploads: 12,
-      duration: "3.1h",
-      passRate: "90.1%",
-    }
-  );
-}
 
 export function MemberDetailModal({
   member,
   team,
+  metrics,
+  periodLabel,
   open,
   onClose,
   returnFocusRef,
 }: {
   member?: User;
   team?: Team;
+  metrics: MemberMetrics;
+  periodLabel: string;
   open: boolean;
   onClose(): void;
   returnFocusRef: RefObject<HTMLButtonElement | null>;
 }) {
   if (!member) return null;
-  const metrics = memberMetrics(member.id);
 
   return (
     <Modal
@@ -64,18 +50,19 @@ export function MemberDetailModal({
           <div><dt>所属团队</dt><dd>{team?.name ?? "未加入团队"}</dd></div>
           <div><dt>手机号</dt><dd>{member.phone}</dd></div>
         </dl>
-        <p id="member-detail-demo-metrics-note" role="note">
-          示例数据：今日上传、有效时长和通过率为演示业务指标
+        <p id="member-detail-metrics-note" role="note">
+          以下指标根据该成员{periodLabel}的真实视频提交和 AI 质检结果计算
         </p>
         <div
           className="member-detail-metrics"
           role="group"
           aria-label="成员表现"
-          aria-describedby="member-detail-demo-metrics-note"
+          aria-describedby="member-detail-metrics-note"
         >
-          <div><span>今日上传</span><strong>{metrics.uploads} 条</strong></div>
+          <div><span>{periodLabel}上传</span><strong>{metrics.uploads} 条</strong></div>
           <div><span>有效时长</span><strong>{metrics.duration}</strong></div>
           <div><span>通过率</span><strong>{metrics.passRate}</strong></div>
+          <div><span>平均分</span><strong>{metrics.averageScore}</strong></div>
         </div>
       </div>
     </Modal>

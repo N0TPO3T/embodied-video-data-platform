@@ -36,7 +36,20 @@ export type KnownAccountAuditAction =
   | "disable"
   | "local_identity_reconcile"
   | "team_create"
-  | "team_update";
+  | "team_update"
+  | "team_assign_leader"
+  | "quality_review"
+  | "ai_quality_rerun"
+  | "point_cycle_lock"
+  | "point_cycle_adjustment"
+  | "delivery_package_create"
+  | "asset_quarantine"
+  | "asset_release"
+  | "ai_quality_prompt_update"
+  | "quality_rule_publish"
+  | "label_set_update"
+  | "point_rule_publish"
+  | "public_site_snapshot_publish";
 
 export type AccountAuditAction =
   | KnownAccountAuditAction
@@ -50,7 +63,31 @@ export type AccountAuditLog = {
   targetAccountId: string;
   targetName: string;
   summary: string;
+  beforeValue?: Record<string, unknown> | null;
+  afterValue?: Record<string, unknown> | null;
   createdAt: number;
+};
+
+export type AccountAuditPagination = {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+};
+
+export type AccountAuditListResult = {
+  logs: AccountAuditLog[];
+  pagination: AccountAuditPagination;
+};
+
+export type SearchAccountAuditInput = {
+  q?: string;
+  actor?: string;
+  action?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  pageSize?: number;
 };
 
 export type CreateAccountInput = {

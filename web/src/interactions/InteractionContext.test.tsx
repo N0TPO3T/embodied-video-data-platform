@@ -42,7 +42,7 @@ describe("InteractionProvider", () => {
     );
 
     expect(screen.getByText("3 条未读")).toBeVisible();
-    expect(screen.getByText("3 条数据等待结算前复核")).toBeVisible();
+    expect(screen.getByText("团队质检结果已更新")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "发送成功提示" }));
     expect(screen.getByText("操作已完成")).toBeVisible();
 

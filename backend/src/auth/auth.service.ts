@@ -1,8 +1,13 @@
 import { createHash, randomBytes } from "node:crypto";
 
-import { Injectable } from "@nestjs/common";
+import {
+  Injectable,
+  Logger,
+  type OnModuleDestroy,
+  type OnModuleInit,
+} from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { MoreThan, Repository } from "typeorm";
+import { LessThanOrEqual, MoreThan, Repository } from "typeorm";
 
 import { SessionEntity } from "../database/entities/session.entity.js";
 import { UserEntity } from "../database/entities/user.entity.js";
@@ -15,6 +20,7 @@ import { PasswordService } from "./password.service.js";
 const FAILURE_WINDOW_MS = 15 * 60 * 1_000;
 const LOCK_DURATION_MS = 15 * 60 * 1_000;
 const MAX_FAILED_ATTEMPTS = 5;
+const EXPIRED_SESSION_CLEANUP_INTERVAL_MS = 60 * 60 * 1_000;
 export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 
 type LoginTransactionResult =
@@ -47,7 +53,11 @@ function digestToken(token: string): string {
 }
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(AuthService.name);
+  private nextExpiredSessionCleanupAtMs = 0;
+  private expiredSessionCleanupTimer: NodeJS.Timeout | null = null;
+
   constructor(
     @InjectRepository(UserEntity)
     private readonly users: Repository<UserEntity>,
@@ -55,6 +65,28 @@ export class AuthService {
     private readonly sessions: Repository<SessionEntity>,
     private readonly passwords: PasswordService,
   ) {}
+
+  onModuleInit(): void {
+    void this.cleanupExpiredSessions().catch((error: unknown) => {
+      this.logger.warn(
+        `Failed to clean expired sessions on startup: ${String(error)}`,
+      );
+    });
+    this.expiredSessionCleanupTimer = setInterval(() => {
+      void this.cleanupExpiredSessions().catch((error: unknown) => {
+        this.logger.warn(
+          `Failed to clean expired sessions: ${String(error)}`,
+        );
+      });
+    }, EXPIRED_SESSION_CLEANUP_INTERVAL_MS);
+    this.expiredSessionCleanupTimer.unref();
+  }
+
+  onModuleDestroy(): void {
+    if (this.expiredSessionCleanupTimer) {
+      clearInterval(this.expiredSessionCleanupTimer);
+    }
+  }
 
   async login(
     username: string,
@@ -65,6 +97,7 @@ export class AuthService {
     token: string;
     expiresAt: Date;
   }> {
+    await this.cleanupExpiredSessions(now);
     const normalized = normalizeUsername(username);
     const result: LoginTransactionResult = await this.users.manager.transaction(
       async (manager): Promise<LoginTransactionResult> => {
@@ -148,6 +181,7 @@ export class AuthService {
     token: string | null,
     now = new Date(),
   ): Promise<PublicUser | null> {
+    await this.cleanupExpiredSessionsIfDue(now);
     if (!token) return null;
     const session = await this.sessions.findOne({
       where: {
@@ -165,6 +199,20 @@ export class AuthService {
   async logout(token: string | null): Promise<void> {
     if (!token) return;
     await this.sessions.delete({ tokenHash: digestToken(token) });
+  }
+
+  async cleanupExpiredSessions(now = new Date()): Promise<number> {
+    const result = await this.sessions.delete({
+      expiresAt: LessThanOrEqual(now),
+    });
+    this.nextExpiredSessionCleanupAtMs =
+      now.getTime() + EXPIRED_SESSION_CLEANUP_INTERVAL_MS;
+    return result.affected ?? 0;
+  }
+
+  private async cleanupExpiredSessionsIfDue(now: Date): Promise<void> {
+    if (now.getTime() < this.nextExpiredSessionCleanupAtMs) return;
+    await this.cleanupExpiredSessions(now);
   }
 
   private async recordFailure(

@@ -17,6 +17,7 @@ import { CurrentUser } from "../auth/current-user.decorator.js";
 import { clearSessionCookie } from "../auth/session-cookie.js";
 import { SessionGuard } from "../auth/session.guard.js";
 import { AllowedOriginGuard } from "../http/allowed-origin.guard.js";
+import { SensitiveActionRateLimitGuard } from "../security/sensitive-action-rate-limit.guard.js";
 import { AccountsService } from "./accounts.service.js";
 import {
   ChangeOwnPasswordDto,
@@ -39,7 +40,7 @@ export class AccountsController {
   }
 
   @Post()
-  @UseGuards(AllowedOriginGuard)
+  @UseGuards(AllowedOriginGuard, SensitiveActionRateLimitGuard)
   async create(
     @CurrentUser() actor: PublicUser,
     @Body() input: CreateAccountDto,
@@ -48,7 +49,7 @@ export class AccountsController {
   }
 
   @Patch(":id")
-  @UseGuards(AllowedOriginGuard)
+  @UseGuards(AllowedOriginGuard, SensitiveActionRateLimitGuard)
   async update(
     @CurrentUser() actor: PublicUser,
     @Param("id") id: string,
@@ -58,7 +59,7 @@ export class AccountsController {
   }
 
   @Post(":id/reset-password")
-  @UseGuards(AllowedOriginGuard)
+  @UseGuards(AllowedOriginGuard, SensitiveActionRateLimitGuard)
   resetPassword(
     @CurrentUser() actor: PublicUser,
     @Param("id") id: string,
@@ -69,7 +70,7 @@ export class AccountsController {
 
   @Post("me/change-password")
   @HttpCode(204)
-  @UseGuards(AllowedOriginGuard)
+  @UseGuards(AllowedOriginGuard, SensitiveActionRateLimitGuard)
   async changeOwnPassword(
     @CurrentUser() actor: PublicUser,
     @Body() input: ChangeOwnPasswordDto,
@@ -80,7 +81,7 @@ export class AccountsController {
   }
 
   @Patch(":id/status")
-  @UseGuards(AllowedOriginGuard)
+  @UseGuards(AllowedOriginGuard, SensitiveActionRateLimitGuard)
   async setStatus(
     @CurrentUser() actor: PublicUser,
     @Param("id") id: string,

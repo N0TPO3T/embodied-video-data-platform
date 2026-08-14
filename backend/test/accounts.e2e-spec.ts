@@ -149,6 +149,170 @@ describe("account and team API", () => {
     expect(log.actorAccountId).toBe("U-ADMIN");
   });
 
+  it("cleans expired sessions when a user logs in", async () => {
+    const sessions = dataSource.getRepository(SessionEntity);
+    await sessions.save([
+      {
+        tokenHash: "1".repeat(64),
+        accountId: "U-ADMIN",
+        expiresAt: new Date(Date.now() - 60_000),
+      },
+      {
+        tokenHash: "2".repeat(64),
+        accountId: "U-LEADER",
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    ]);
+
+    await login("admin");
+
+    expect(await sessions.findOneBy({ tokenHash: "1".repeat(64) })).toBeNull();
+    expect(await sessions.findOneBy({ tokenHash: "2".repeat(64) })).toMatchObject({
+      accountId: "U-LEADER",
+    });
+  });
+
+  it("creates and updates teams while enforcing normalized names and safe disable", async () => {
+    const cookie = await login("admin");
+    const created = await request(app.getHttpServer())
+      .post("/api/v1/teams")
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", cookie)
+      .send({ name: " 新团队 ", unitPricePerMinute: 18.5 })
+      .expect(201);
+
+    expect(created.body.team).toMatchObject({
+      name: "新团队",
+      status: "active",
+      unitPricePerMinute: 18.5,
+    });
+    await request(app.getHttpServer())
+      .post("/api/v1/teams")
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", cookie)
+      .send({ name: "新团队", unitPricePerMinute: 20 })
+      .expect(409);
+
+    await request(app.getHttpServer())
+      .patch("/api/v1/teams/TEAM-01")
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", cookie)
+      .send({ name: "测试一队", unitPricePerMinute: 12, status: "disabled" })
+      .expect(400);
+
+    await dataSource.getRepository(UserEntity).update(
+      { teamId: "TEAM-01" },
+      { status: "disabled" },
+    );
+    const disabled = await request(app.getHttpServer())
+      .patch("/api/v1/teams/TEAM-01")
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", cookie)
+      .send({ name: "测试先锋队", unitPricePerMinute: 13, status: "disabled" })
+      .expect(200);
+    expect(disabled.body.team).toMatchObject({
+      name: "测试先锋队",
+      status: "disabled",
+      unitPricePerMinute: 13,
+    });
+  });
+
+  it("atomically replaces a team leader, revokes sessions and audits the change", async () => {
+    const cookie = await login("admin");
+    await dataSource.getRepository(UserEntity).save({
+      id: "U-CANDIDATE",
+      displayName: "候选团长",
+      username: "candidate",
+      usernameNormalized: "candidate",
+      passwordHash,
+      role: "collector",
+      teamId: "TEAM-01",
+      status: "active",
+    });
+    await login("leader");
+    await login("candidate");
+
+    const response = await request(app.getHttpServer())
+      .patch("/api/v1/teams/TEAM-01/leader")
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", cookie)
+      .send({ accountId: "U-CANDIDATE" })
+      .expect(200);
+
+    expect(response.body.accounts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "U-LEADER", role: "collector" }),
+        expect.objectContaining({ id: "U-CANDIDATE", role: "leader" }),
+      ]),
+    );
+    expect(await dataSource.getRepository(SessionEntity).countBy({
+      accountId: "U-LEADER",
+    })).toBe(0);
+    expect(await dataSource.getRepository(SessionEntity).countBy({
+      accountId: "U-CANDIDATE",
+    })).toBe(0);
+    expect(await dataSource.getRepository(AuditLogEntity).countBy({
+      action: "team_assign_leader",
+    })).toBe(1);
+  });
+
+  it("normalizes historic duplicate leaders only after an administrator explicitly selects one", async () => {
+    const cookie = await login("admin");
+    await dataSource.getRepository(UserEntity).save([
+      {
+        id: "U-LEGACY-LEADER",
+        displayName: "历史重复团长",
+        username: "legacy-leader",
+        usernameNormalized: "legacy-leader",
+        passwordHash,
+        role: "leader",
+        teamId: "TEAM-01",
+        status: "active",
+      },
+      {
+        id: "U-SELECTED-LEADER",
+        displayName: "选定团长",
+        username: "selected-leader",
+        usernameNormalized: "selected-leader",
+        passwordHash,
+        role: "collector",
+        teamId: "TEAM-01",
+        status: "active",
+      },
+    ]);
+
+    await request(app.getHttpServer())
+      .patch("/api/v1/teams/TEAM-01/leader")
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", cookie)
+      .send({ accountId: "U-SELECTED-LEADER" })
+      .expect(200);
+
+    const leaders = await dataSource.getRepository(UserEntity).findBy({
+      teamId: "TEAM-01",
+      role: "leader",
+    });
+    expect(leaders.map((leader) => leader.id)).toEqual([
+      "U-SELECTED-LEADER",
+    ]);
+  });
+
+  it("rejects a second leader through ordinary account mutations", async () => {
+    const cookie = await login("admin");
+    await request(app.getHttpServer())
+      .post("/api/v1/accounts")
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", cookie)
+      .send({
+        displayName: "重复团长",
+        username: "duplicate-leader",
+        password: TEST_PASSWORD,
+        role: "leader",
+        teamId: "TEAM-01",
+      })
+      .expect(400);
+  });
+
   it("accepts 8 and 64 character account passwords but rejects 65 characters", async () => {
     const cookie = await login("admin");
     const password8 = "12345678";
@@ -291,6 +455,135 @@ describe("account and team API", () => {
       })
       .expect(403);
     expect(forbidden.body.code).toBe("FORBIDDEN");
+  });
+
+  it("filters and paginates audit logs for administrators only", async () => {
+    const adminCookie = await login("admin");
+    const leaderCookie = await login("leader");
+    await dataSource.getRepository(AuditLogEntity).save([
+      {
+        id: "AUD-CREATE-OLD",
+        actorAccountId: "U-ADMIN",
+        actorName: "管理员",
+        action: "create",
+        targetAccountId: "U-OTHER",
+        targetName: "二队数采",
+        summary: "管理员创建了二队数采",
+        createdAt: new Date("2026-08-03T06:00:00.000Z"),
+      },
+      {
+        id: "AUD-RESET-OLDER",
+        actorAccountId: "U-ADMIN",
+        actorName: "管理员",
+        action: "reset_password",
+        targetAccountId: "U-OTHER",
+        targetName: "二队数采",
+        summary: "管理员重置了二队数采密码",
+        beforeValue: { status: "active" },
+        afterValue: { passwordReset: true },
+        createdAt: new Date("2026-08-04T06:30:00.000Z"),
+      },
+      {
+        id: "AUD-RESET-NEWER",
+        actorAccountId: "U-ADMIN",
+        actorName: "管理员",
+        action: "reset_password",
+        targetAccountId: "U-LEADER",
+        targetName: "一队团长",
+        summary: "管理员重置了团长密码",
+        createdAt: new Date("2026-08-04T07:30:00.000Z"),
+      },
+      {
+        id: "AUD-LEADER-DISABLE",
+        actorAccountId: "U-LEADER",
+        actorName: "一队团长",
+        action: "disable",
+        targetAccountId: "U-OTHER",
+        targetName: "二队数采",
+        summary: "团长停用了账号",
+        createdAt: new Date("2026-08-04T08:30:00.000Z"),
+      },
+    ]);
+
+    const firstPage = await request(app.getHttpServer())
+      .get("/api/v1/audit-logs")
+      .query({
+        q: "密码",
+        actor: "管理员",
+        action: "reset_password",
+        from: "2026-08-04",
+        to: "2026-08-04",
+        page: 1,
+        pageSize: 1,
+      })
+      .set("Cookie", adminCookie)
+      .expect(200);
+
+    expect(firstPage.body.pagination).toEqual({
+      page: 1,
+      pageSize: 1,
+      total: 2,
+      totalPages: 2,
+    });
+    expect(firstPage.body.logs).toEqual([
+      expect.objectContaining({
+        id: "AUD-RESET-NEWER",
+        actorName: "管理员",
+        action: "reset_password",
+        targetName: "一队团长",
+      }),
+    ]);
+
+    const secondPage = await request(app.getHttpServer())
+      .get("/api/v1/audit-logs")
+      .query({
+        q: "密码",
+        actor: "管理员",
+        action: "reset_password",
+        from: "2026-08-04",
+        to: "2026-08-04",
+        page: 2,
+        pageSize: 1,
+      })
+      .set("Cookie", adminCookie)
+      .expect(200);
+    expect(secondPage.body.logs[0]).toMatchObject({
+      id: "AUD-RESET-OLDER",
+      beforeValue: { status: "active" },
+      afterValue: { passwordReset: true },
+    });
+
+    const exported = await request(app.getHttpServer())
+      .get("/api/v1/audit-logs/export.csv")
+      .query({
+        q: "密码",
+        actor: "管理员",
+        action: "reset_password",
+        from: "2026-08-04",
+        to: "2026-08-04",
+      })
+      .set("Cookie", adminCookie)
+      .expect(200);
+    expect(exported.headers["content-type"]).toContain("text/csv");
+    expect(exported.headers["content-disposition"]).toContain(
+      "audit-logs-export.csv",
+    );
+    expect(exported.text).toContain("audit_id,created_at,actor_account_id");
+    expect(exported.text).toContain("AUD-RESET-NEWER");
+    expect(exported.text).toContain("AUD-RESET-OLDER");
+    expect(exported.text).toContain('"{""status"":""active""}"');
+    expect(exported.text).not.toContain("AUD-CREATE-OLD");
+    expect(exported.text).not.toContain("AUD-LEADER-DISABLE");
+
+    const forbidden = await request(app.getHttpServer())
+      .get("/api/v1/audit-logs")
+      .set("Cookie", leaderCookie)
+      .expect(403);
+    expect(forbidden.body.code).toBe("FORBIDDEN");
+    await request(app.getHttpServer())
+      .get("/api/v1/audit-logs/export.csv")
+      .set("Cookie", leaderCookie)
+      .expect(403);
   });
 
   it("rejects a case-insensitive duplicate username", async () => {

@@ -5,9 +5,11 @@ import { extname, join } from "node:path";
 
 import { Inject, Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { DataSource, Repository } from "typeorm";
+import { DataSource, Repository, type QueryRunner } from "typeorm";
 
 import { MediaMetadataEntity } from "../database/entities/media-metadata.entity.js";
+import type { LabelSetVersionEntity } from "../database/entities/label-set-version.entity.js";
+import { QualityRuleVersionEntity } from "../database/entities/quality-rule-version.entity.js";
 import { SubmissionEntity } from "../database/entities/submission.entity.js";
 import {
   VideoQualityResultEntity,
@@ -21,12 +23,25 @@ import {
 import { BailianRequestError } from "../video-quality/qwen-video-quality.provider.js";
 import { loadVideoQualityPrompt } from "../video-quality/prompt-loader.js";
 import type { NormalizedVideoQcResultV1 } from "../video-quality/video-quality.types.js";
+import {
+  labelSetSnapshot,
+  passesQualityRule,
+  qualityRuleSnapshot,
+  settlementRatioForScore,
+  type QualityRuleSnapshot,
+} from "../rules/rule-calculator.js";
 import { videoQualityPromptPath } from "./ai-quality.config.js";
 import { AiQualityPromptService } from "./ai-quality-prompt.service.js";
 import {
   AI_QUALITY_EVALUATOR_FACTORY,
   type AiQualityEvaluatorFactory,
 } from "./ai-quality.tokens.js";
+import { LabelSetService } from "./label-set.service.js";
+import { QualityRuleService } from "./quality-rule.service.js";
+import {
+  evaluationSystemPrompt,
+  promptContentSha256,
+} from "./evaluation-context.js";
 
 const TERMINAL_RESULT_STATUSES = new Set<VideoQualityResultStatus>([
   "scored",
@@ -34,6 +49,8 @@ const TERMINAL_RESULT_STATUSES = new Set<VideoQualityResultStatus>([
   "review_pending",
   "system_failed",
 ]);
+const SENSITIVE_RESULT_PATTERN =
+  /PRIVACY_OR_SAFETY|privacy|sensitive|隐私|敏感|合规|安全|人脸|门牌|定位|账号/u;
 
 export class TerminalAiQualityError extends Error {}
 
@@ -43,7 +60,61 @@ export class RetryableAiQualityError extends Error {
   }
 }
 
-export type AiQualityProcessOutcome = "processed" | "skipped";
+export type AiQualityProcessOutcome = "processed" | "skipped" | "lock_busy";
+
+type PostgresSessionQueryRunner = QueryRunner & {
+  releasePostgresConnection(error?: Error): Promise<void>;
+};
+
+async function releaseSubmissionLock(
+  queryRunner: QueryRunner,
+  submissionId: string,
+): Promise<void> {
+  try {
+    const rows = (await queryRunner.query(
+      "SELECT pg_advisory_unlock(hashtextextended($1, 0)) AS unlocked",
+      [submissionId],
+    )) as Array<{ unlocked: boolean }>;
+    if (rows[0]?.unlocked !== true) {
+      throw new Error("AI submission advisory lock was not held by this session");
+    }
+  } catch (error) {
+    // TypeORM's normal release returns the client to pg-pool. If unlock failed,
+    // discard the physical PostgreSQL session instead so a session lock can
+    // never leak into the pool.
+    await (
+      queryRunner as PostgresSessionQueryRunner
+    ).releasePostgresConnection(
+      error instanceof Error ? error : new Error("AI advisory unlock failed"),
+    );
+    return;
+  }
+  await queryRunner.release();
+}
+
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new RetryableAiQualityError("AI 质检任务已超时取消");
+}
+
+async function abortable<T>(
+  operation: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (!signal) return operation;
+  if (signal.aborted) throw abortReason(signal);
+  let onAbort: () => void = () => undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(abortReason(signal));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([operation, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
 
 function resultStatus(
   result: NormalizedVideoQcResultV1,
@@ -69,6 +140,7 @@ function compactError(error: unknown): string {
 
 function classify(error: unknown): Error {
   if (error instanceof TerminalAiQualityError) return error;
+  if (error instanceof RetryableAiQualityError) return error;
   if (error instanceof BailianRequestError) {
     const retryable =
       error.status === null ||
@@ -96,6 +168,48 @@ function decimal(value: number | null, digits: number): string | null {
   return value === null ? null : value.toFixed(digits);
 }
 
+function textValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object") return "";
+  return Object.values(value as Record<string, unknown>).map(textValue).join(" ");
+}
+
+function containsSensitiveRisk(result: NormalizedVideoQcResultV1): boolean {
+  return SENSITIVE_RESULT_PATTERN.test(
+    [
+      ...result.reviewReasons,
+      result.summary,
+      ...result.hardVeto.reasons.map(textValue),
+      ...result.deductions.flatMap((deduction) => [
+        deduction.reason_code,
+        deduction.description,
+      ]),
+    ].join(" "),
+  );
+}
+
+function enforceExactDuplicate(
+  result: NormalizedVideoQcResultV1,
+): NormalizedVideoQcResultV1 {
+  return {
+    ...result,
+    evaluationStatus: "hard_reject",
+    settlementRatio: 0,
+    hardVeto: {
+      triggered: true,
+      reasons: [...result.hardVeto.reasons, "EXACT_DUPLICATE"],
+    },
+    summary: `服务端 SHA-256 精确重复校验未通过。${result.summary}`,
+    reviewRequired: false,
+    reviewReasons: [
+      ...new Set([
+        ...result.reviewReasons,
+        "文件 SHA-256 与更早登记的视频完全一致",
+      ]),
+    ],
+  };
+}
+
 @Injectable()
 export class AiQualityAnalysisService {
   constructor(
@@ -105,6 +219,8 @@ export class AiQualityAnalysisService {
     @InjectRepository(VideoQualityResultEntity)
     private readonly results: Repository<VideoQualityResultEntity>,
     private readonly prompts: AiQualityPromptService,
+    private readonly qualityRules: QualityRuleService,
+    private readonly labelSets: LabelSetService,
     @Inject(OBJECT_STORAGE)
     private readonly storage: ObjectStoragePort,
     @Inject(AI_QUALITY_EVALUATOR_FACTORY)
@@ -113,6 +229,8 @@ export class AiQualityAnalysisService {
 
   async process(input: {
     submissionId: string;
+    signal?: AbortSignal;
+    terminalOnRetryableFailure?: boolean;
   }): Promise<AiQualityProcessOutcome> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -123,7 +241,7 @@ export class AiQualityAnalysisService {
         [input.submissionId],
       )) as Array<{ acquired: boolean }>;
       acquired = rows[0]?.acquired === true;
-      if (!acquired) return "skipped";
+      if (!acquired) return "lock_busy";
 
       const existing = await this.results.findOneBy({
         submissionId: input.submissionId,
@@ -134,10 +252,21 @@ export class AiQualityAnalysisService {
       let task: Awaited<ReturnType<AiQualityAnalysisService["begin"]>>;
       try {
         const activePrompt = existing ? null : await this.prompts.getActive();
-        task = await this.begin(input.submissionId, activePrompt);
+        const qualityRule = existing
+          ? null
+          : await this.qualityRules.ensureDefault();
+        const labelSet = existing ? null : await this.labelSets.ensureDefault();
+        task = await this.begin(input.submissionId, {
+          activePrompt,
+          qualityRule,
+          labelSet,
+        });
       } catch (error) {
         const classified = classify(error);
-        if (classified instanceof TerminalAiQualityError) {
+        if (
+          classified instanceof TerminalAiQualityError ||
+          (input.terminalOnRetryableFailure && !input.signal?.aborted)
+        ) {
           await this.markTerminalFailure(input.submissionId, classified);
         }
         throw classified;
@@ -150,10 +279,13 @@ export class AiQualityAnalysisService {
         `original${extname(task.submission.originalFileName).toLowerCase()}`,
       );
       try {
-        await this.storage.downloadObject({
-          objectKey: task.submission.objectKey,
-          destinationPath: mediaPath,
-        });
+        await abortable(
+          this.storage.downloadObject({
+            objectKey: task.submission.objectKey,
+            destinationPath: mediaPath,
+          }),
+          input.signal,
+        );
         const exactDuplicate = await this.hasExactDuplicate(
           task.submission.id,
           task.submission.checksumSha256,
@@ -168,22 +300,37 @@ export class AiQualityAnalysisService {
           initialModel: task.result.initialModel,
           reviewModel: task.result.reviewModel,
         });
-        const normalized = await evaluator.evaluate({
-          videoId: task.submission.id,
-          filePath: mediaPath,
-          workDirectory: join(directory, "evidence"),
-          registerSha256: (sha256) => {
-            if (sha256 !== task.submission.checksumSha256) {
-              throw new TerminalAiQualityError("AI 质检视频 SHA-256 校验失败");
-            }
-            return exactDuplicate;
-          },
-        });
-        await this.complete(task.submission.id, normalized);
+        const normalized = await abortable(
+          evaluator.evaluate(
+            {
+              videoId: task.submission.id,
+              filePath: mediaPath,
+              workDirectory: join(directory, "evidence"),
+              registerSha256: (sha256) => {
+                if (sha256 !== task.submission.checksumSha256) {
+                  throw new TerminalAiQualityError(
+                    "AI 质检视频 SHA-256 校验失败",
+                  );
+                }
+                return exactDuplicate;
+              },
+            },
+            undefined,
+            input.signal,
+          ),
+          input.signal,
+        );
+        await this.complete(
+          task.submission.id,
+          exactDuplicate ? enforceExactDuplicate(normalized) : normalized,
+        );
         return "processed";
       } catch (error) {
         const classified = classify(error);
-        if (classified instanceof TerminalAiQualityError) {
+        if (
+          classified instanceof TerminalAiQualityError ||
+          (input.terminalOnRetryableFailure && !input.signal?.aborted)
+        ) {
           await this.markTerminalFailure(task.submission.id, classified);
         } else {
           await this.markRetryPending(task.submission.id, classified);
@@ -194,13 +341,10 @@ export class AiQualityAnalysisService {
       }
     } finally {
       if (acquired) {
-        await queryRunner
-          .query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [
-            input.submissionId,
-          ])
-          .catch(() => undefined);
+        await releaseSubmissionLock(queryRunner, input.submissionId);
+      } else {
+        await queryRunner.release();
       }
-      await queryRunner.release();
     }
   }
 
@@ -231,7 +375,11 @@ export class AiQualityAnalysisService {
 
   private async begin(
     submissionId: string,
-    activePrompt: VideoQualityPromptVersionEntity | null,
+    context: {
+      activePrompt: VideoQualityPromptVersionEntity | null;
+      qualityRule: QualityRuleVersionEntity | null;
+      labelSet: LabelSetVersionEntity | null;
+    },
   ): Promise<{
     submission: SubmissionEntity;
     result: VideoQualityResultEntity;
@@ -259,19 +407,32 @@ export class AiQualityAnalysisService {
       });
       if (result && TERMINAL_RESULT_STATUSES.has(result.status)) return null;
       if (!result) {
-        if (!activePrompt) {
+        if (!context.activePrompt || !context.qualityRule || !context.labelSet) {
           throw new TerminalAiQualityError("当前 AI 质检提示词不存在");
         }
+        const qualitySnapshot = qualityRuleSnapshot(context.qualityRule);
+        const labelsSnapshot = labelSetSnapshot(context.labelSet);
+        const systemPromptSnapshot = evaluationSystemPrompt({
+          basePrompt: context.activePrompt.systemPrompt,
+          qualityRule: qualitySnapshot,
+          labelSet: labelsSnapshot,
+        });
         result = repository.create({
           submissionId,
           status: "queued",
           attempts: 0,
-          promptVersionId: activePrompt.id,
-          promptRevision: activePrompt.revision,
-          promptContentSha256: activePrompt.contentSha256,
-          systemPromptSnapshot: activePrompt.systemPrompt,
-          initialModel: activePrompt.initialModel,
-          reviewModel: activePrompt.reviewModel,
+          promptVersionId: context.activePrompt.id,
+          promptRevision: context.activePrompt.revision,
+          promptContentSha256: promptContentSha256(systemPromptSnapshot),
+          systemPromptSnapshot,
+          qualityRuleVersionId: context.qualityRule.id,
+          qualityRuleRevision: context.qualityRule.revision,
+          labelSetVersionId: context.labelSet.id,
+          labelSetRevision: context.labelSet.revision,
+          qualityRuleSnapshot: qualitySnapshot,
+          labelSetSnapshot: labelsSnapshot,
+          initialModel: context.activePrompt.initialModel,
+          reviewModel: context.activePrompt.reviewModel,
           modelRuns: [],
           recommendations: [],
           deductions: [],
@@ -296,19 +457,22 @@ export class AiQualityAnalysisService {
     submissionId: string,
     checksumSha256: string,
   ): Promise<boolean> {
-    return (
-      (await this.results
-        .createQueryBuilder("quality")
-        .innerJoin(SubmissionEntity, "submission", "submission.id = quality.submission_id")
-        .where("quality.submission_id <> :submissionId", { submissionId })
-        .andWhere("submission.checksum_sha256 = :checksumSha256", {
-          checksumSha256,
-        })
-        .andWhere("quality.status IN (:...statuses)", {
-          statuses: ["scored", "hard_reject", "review_pending"],
-        })
-        .getCount()) > 0
-    );
+    const canonical = await this.submissions
+      .createQueryBuilder("submission")
+      .where("submission.checksumSha256 = :checksumSha256", {
+        checksumSha256,
+      })
+      .andWhere("submission.uploadStatus = :uploaded", {
+        uploaded: "uploaded",
+      })
+      .andWhere("submission.storageStatus = :available", {
+        available: "available",
+      })
+      .orderBy("COALESCE(submission.uploadedAt, submission.createdAt)", "ASC")
+      .addOrderBy("submission.createdAt", "ASC")
+      .addOrderBy("submission.id", "ASC")
+      .getOne();
+    return canonical !== null && canonical.id !== submissionId;
   }
 
   private async complete(
@@ -322,13 +486,32 @@ export class AiQualityAnalysisService {
         lock: { mode: "pessimistic_write" },
       });
       if (!result) throw new Error("AI 质检运行记录不存在");
-      result.status = resultStatus(normalized);
+      const status = resultStatus(normalized);
+      const qualityRule = await this.qualityRuleForResult(manager, result);
+      const passed =
+        status === "scored"
+          ? passesQualityRule(normalized.finalScore, qualityRule.passThreshold)
+          : status === "hard_reject"
+            ? false
+            : null;
+      const settlementRatio =
+        status === "scored"
+          ? settlementRatioForScore({
+              score: normalized.finalScore,
+              passThreshold: qualityRule.passThreshold,
+            })
+          : status === "hard_reject"
+            ? 0
+            : null;
+      const persistedNormalized = { ...normalized, settlementRatio };
+      result.status = status;
       result.modelRuns = normalized.modelRuns as unknown as Array<
         Record<string, unknown>
       >;
       result.finalScore = decimal(normalized.finalScore, 1);
       result.rawTotalScore = decimal(normalized.rawTotalScore, 1);
-      result.settlementRatio = decimal(normalized.settlementRatio, 4);
+      result.settlementRatio = decimal(settlementRatio, 4);
+      result.passed = passed;
       result.invalidDurationMs = String(normalized.invalidDurationMs);
       result.billableDurationMs = String(normalized.billableDurationMs);
       result.summary = normalized.summary;
@@ -338,7 +521,10 @@ export class AiQualityAnalysisService {
       >;
       result.reviewRequired = normalized.reviewRequired;
       result.reviewReasons = normalized.reviewReasons;
-      result.normalizedResult = normalized as unknown as Record<string, unknown>;
+      result.normalizedResult = persistedNormalized as unknown as Record<
+        string,
+        unknown
+      >;
       result.rawModelResult = normalized.rawModelResult as unknown as Record<
         string,
         unknown
@@ -352,9 +538,44 @@ export class AiQualityAnalysisService {
           processingStatus: "completed",
           failureCode: null,
           failureMessage: null,
+          ...(containsSensitiveRisk(normalized)
+            ? {
+                assetStatus: "quarantined" as const,
+                quarantineReason: "AI 命中敏感或隐私风险",
+                quarantinedAt: new Date(),
+                quarantinedByAccountId: null,
+                quarantinedByName: "AI 质检",
+              }
+            : {
+                assetStatus: "active" as const,
+                quarantineReason: null,
+                quarantinedAt: null,
+                quarantinedByAccountId: null,
+                quarantinedByName: null,
+              }),
         },
       );
     });
+  }
+
+  private async qualityRuleForResult(
+    manager: import("typeorm").EntityManager,
+    result: VideoQualityResultEntity,
+  ): Promise<QualityRuleSnapshot> {
+    if (result.qualityRuleSnapshot) return result.qualityRuleSnapshot;
+    if (result.qualityRuleVersionId) {
+      const rule = await manager
+        .getRepository(QualityRuleVersionEntity)
+        .findOneBy({ id: result.qualityRuleVersionId });
+      if (rule) return qualityRuleSnapshot(rule);
+    }
+    return {
+      id: "legacy-default",
+      revision: 0,
+      version: "legacy-default",
+      passThreshold: 60,
+      description: "历史任务默认质量规则",
+    };
   }
 
   private async markRetryPending(

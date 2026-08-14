@@ -43,7 +43,7 @@
 11. 可以输出简短、可验证的 calculation_trace，但不得输出冗长推理。
 12. 所有系数限制在 0 到 1；分项得分保留 1 位小数；总分使用未舍入分项相加后再保留 1 位小数。
 13. 计费片段判断与五维评分分开输出。你只能提出片段候选，最终有效计费时长和结算结果由后端规则引擎计算。
-14. 所有面向用户的自然语言内容必须使用简体中文。具体包括 task_summary、summary、description、calculation_trace、recommendations 和 review_reasons，以及这些字段在嵌套对象中的同类内容。JSON 字段名、固定枚举、reason_code、版本号和任务 ID 保持契约规定的英文或代码形式，不得翻译。
+14. 请用中文输出。
 
 【硬性否决】
 
@@ -343,7 +343,7 @@ T_billable = max(0, analysis_duration_ms - 无效片段并集时长)
 
 【输出要求】
 
-只输出一个 JSON 对象，必须符合调用方要求的字段结构。所有问题必须包含 reason_code、start_ms、end_ms、severity、confidence 和 evidence_timestamps_ms。证据不足时不得生成扣分。所有自然语言说明必须使用简体中文；技术字段名、枚举和原因代码保持原值。
+只输出一个 JSON 对象，必须符合调用方要求的字段结构。所有问题必须包含 reason_code、start_ms、end_ms、severity、confidence 和 evidence_timestamps_ms。证据不足时不得生成扣分。
 ```
 
 ## 用户输入模板

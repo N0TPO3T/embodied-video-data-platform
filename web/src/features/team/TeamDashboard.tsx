@@ -1,30 +1,179 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import { BadgeCheck, Clock3, FileVideo, Users } from "lucide-react";
 import { MetricCard } from "../../components/MetricCard";
+import { useIdentity } from "../../auth/client/IdentityContext";
 import { useDemoStore } from "../../data/DemoStoreContext";
 import { useInteractions } from "../../interactions/InteractionContext";
+import type { Submission } from "../../domain/types";
+import { loadAllSubmissions } from "../../submissions/client/submissionApi";
+import { backendSubmissionToDomain } from "../../submissions/submissionMapper";
+import {
+  contributionMetrics,
+  dailyContributions,
+  formatDuration,
+  formatRate,
+  submissionsSince,
+} from "./teamMetrics";
+
+type PageMode = "loading" | "live" | "demo";
+
+function trendHeight(uploads: number, maxUploads: number): string {
+  if (uploads === 0) return "0%";
+  return `${Math.max(8, (uploads / maxUploads) * 100)}%`;
+}
+
+function countPendingReview(submissions: Submission[]): number {
+  return submissions.filter(
+    (submission) =>
+      submission.qualityResult?.status === "review_pending" &&
+      submission.qualityResult.manualReview === undefined,
+  ).length;
+}
+
+function countFailedTasks(submissions: Submission[]): number {
+  return submissions.filter(
+    (submission) => submission.pipelineStage === "system_failed",
+  ).length;
+}
 
 export function TeamDashboard() {
-  const { currentTeam } = useDemoStore();
+  const { accounts, currentAccount, teams } = useIdentity();
+  const { state } = useDemoStore();
   const { notify } = useInteractions();
-  const memberCount = currentTeam ? currentTeam.memberIds.length + 1 : 0;
+  const currentTeam = teams.find((team) => team.id === currentAccount.teamId);
+  const members = accounts.filter(
+    (account) => account.teamId === currentTeam?.id,
+  );
+  const fallbackSubmissions = useMemo(
+    () =>
+      state.submissions.filter(
+        (submission) => submission.teamId === currentTeam?.id,
+      ),
+    [currentTeam?.id, state.submissions],
+  );
+  const [teamSubmissions, setTeamSubmissions] =
+    useState<Submission[]>(fallbackSubmissions);
+  const [mode, setMode] = useState<PageMode>("loading");
+
+  useEffect(() => {
+    let active = true;
+    setMode((current) => (current === "demo" ? current : "loading"));
+    loadAllSubmissions({ status: "all" })
+      .then((result) => {
+        if (!active) return;
+        setTeamSubmissions(result.map(backendSubmissionToDomain));
+        setMode("live");
+      })
+      .catch(() => {
+        if (!active) return;
+        setTeamSubmissions(fallbackSubmissions);
+        setMode("demo");
+      });
+    return () => {
+      active = false;
+    };
+  }, [fallbackSubmissions]);
+
+  const today = submissionsSince(teamSubmissions, 1);
+  const month = submissionsSince(teamSubmissions, 30);
+  const monthMetrics = contributionMetrics(month);
+  const trend = dailyContributions(teamSubmissions, 7);
+  const maxUploads = Math.max(1, ...trend.map((record) => record.uploads));
+  const pendingReview = countPendingReview(teamSubmissions);
+  const failedTasks = countFailedTasks(teamSubmissions);
 
   return (
     <div className="page-stack">
       <div className="page-heading">
-        <div><p className="page-kicker">团队运营总览</p><h1>{currentTeam?.name ?? "团队工作台"}</h1><span>成员今日活跃 16 人，还有 3 条数据待结算前复核</span></div>
-        <button className="button button-primary" onClick={() => notify("info", "请联系管理员在“用户与团队”中创建账号")}>邀请成员</button>
+        <div>
+          <p className="page-kicker">团队运营总览</p>
+          <h1>{currentTeam?.name ?? "团队工作台"}</h1>
+          <span>
+            当前 {members.filter((member) => member.status === "active").length} 个启用账号，
+            {pendingReview} 条数据需要人工关注
+          </span>
+        </div>
+        <div className="button-row">
+          <span className="live-pill">
+            <i />
+            {mode === "live"
+              ? "已连接后端数据"
+              : mode === "loading"
+                ? "正在读取数据"
+                : "演示数据"}
+          </span>
+          <button
+            className="button button-primary"
+            onClick={() => notify("info", "请前往“成员管理”新增数采账号")}
+          >
+            邀请成员
+          </button>
+        </div>
       </div>
       <div className="metric-grid">
-        <MetricCard label="团队成员" value={`${memberCount} 人`} detail="本月新增 3 人" icon={Users} />
-        <MetricCard label="今日上传" value="86 条" detail="较昨日 +12.4%" icon={FileVideo} tone="violet" />
-        <MetricCard label="有效时长" value="28.6h" detail="本周累计" icon={Clock3} tone="amber" />
-        <MetricCard label="团队通过率" value="91.2%" detail="高于平台 2.8%" icon={BadgeCheck} tone="green" />
+        <MetricCard
+          label="上传视频数"
+          value={`${monthMetrics.uploads} 条`}
+          detail={`近 30 日 · 今日 ${today.length} 条`}
+          icon={FileVideo}
+          tone="violet"
+        />
+        <MetricCard
+          label="上传总时长"
+          value={formatDuration(monthMetrics.totalSeconds)}
+          detail={`近 30 日 · 有效 ${formatDuration(monthMetrics.effectiveSeconds)}`}
+          icon={Clock3}
+          tone="amber"
+        />
+        <MetricCard
+          label="视频平均分"
+          value={monthMetrics.averageScore === null ? "—" : monthMetrics.averageScore.toFixed(1)}
+          detail={`${monthMetrics.reviewed} 条已有终态质检`}
+          icon={BadgeCheck}
+          tone="green"
+        />
+        <MetricCard
+          label="高分有效时长"
+          value={formatDuration(monthMetrics.highScoreEffectiveSeconds)}
+          detail={`80 分及以上 · 通过率 ${formatRate(monthMetrics.passRate)}`}
+          icon={Users}
+        />
       </div>
       <div className="dashboard-grid">
-        <section className="content-card content-card-wide"><div className="card-heading"><div><h2>团队数据趋势</h2><p>近 7 日上传量与有效时长</p></div></div><div className="large-chart-placeholder">{[45,68,53,82,74,96,88].map((height,index) => <i key={index} style={{ height: `${height}%` }} />)}</div></section>
-        <aside className="content-card"><div className="card-heading"><div><h2>待处理事项</h2><p>需要你关注的异常</p></div></div><div className="todo-list"><div><span className="dot dot-red"/><p><strong>3 条数据待复核</strong><small>将于今日 24:00 锁定</small></p></div><div><span className="dot dot-amber"/><p><strong>2 个 AI 任务失败</strong><small>建议联系平台管理员</small></p></div></div></aside>
+        <section className="content-card content-card-wide">
+          <div className="card-heading">
+            <div>
+              <h2>团队数据趋势</h2>
+              <p>近 7 日真实上传量</p>
+            </div>
+          </div>
+          <div className="large-chart-placeholder" aria-label="近 7 日上传趋势">
+            {trend.map((record) => (
+              <i
+                key={record.date}
+                title={`${record.date} · ${record.uploads} 条 · ${formatDuration(record.effectiveSeconds)}`}
+                style={{ height: trendHeight(record.uploads, maxUploads) }}
+              />
+            ))}
+          </div>
+        </section>
+        <aside className="content-card">
+          <div className="card-heading">
+            <div><h2>待处理事项</h2><p>根据真实任务状态汇总</p></div>
+          </div>
+          <div className="todo-list">
+            <div>
+              <span className="dot dot-red" />
+              <p><strong>{pendingReview} 条数据待关注</strong><small>AI 已标记需要人工复核</small></p>
+            </div>
+            <div>
+              <span className="dot dot-amber" />
+              <p><strong>{failedTasks} 个系统任务失败</strong><small>可联系平台管理员排查或重跑</small></p>
+            </div>
+          </div>
+        </aside>
       </div>
     </div>
   );

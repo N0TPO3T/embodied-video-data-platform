@@ -3,7 +3,10 @@ import type { DataSource } from "typeorm";
 
 import { AuthService } from "../src/auth/auth.service.js";
 import { PasswordService } from "../src/auth/password.service.js";
-import { bootstrapLocalIdentity } from "../src/cli/bootstrap-local-identity.js";
+import {
+  assertLocalDefaultPasswordsAllowed,
+  bootstrapLocalIdentity,
+} from "../src/cli/bootstrap-local-identity.js";
 import { createDataSource } from "../src/database/data-source.js";
 import { AuditLogEntity } from "../src/database/entities/audit-log.entity.js";
 import { SessionEntity } from "../src/database/entities/session.entity.js";
@@ -91,6 +94,20 @@ describe("production-local identity bootstrap", () => {
     if (dataSource?.isInitialized) {
       await dataSource.destroy();
     }
+  });
+
+  it("requires explicit opt-in before creating local default accounts in production mode", () => {
+    expect(() =>
+      assertLocalDefaultPasswordsAllowed({
+        NODE_ENV: "production",
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/EVDP_ALLOW_LOCAL_DEFAULT_PASSWORDS=true/);
+    expect(() =>
+      assertLocalDefaultPasswordsAllowed({
+        NODE_ENV: "production",
+        EVDP_ALLOW_LOCAL_DEFAULT_PASSWORDS: "true",
+      } as NodeJS.ProcessEnv),
+    ).not.toThrow();
   });
 
   it("creates the approved active local identities from an empty database", async () => {

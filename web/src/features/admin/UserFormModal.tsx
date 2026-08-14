@@ -36,6 +36,9 @@ export function UserFormModal({
   returnFocusRef: RefObject<HTMLButtonElement | null>;
 }) {
   const { teams } = useIdentity();
+  const availableTeams = teams.filter(
+    (team) => team.status === "active" || team.id === account?.teamId,
+  );
   const [displayName, setDisplayName] = useState(
     account?.displayName ?? "",
   );
@@ -45,7 +48,7 @@ export function UserFormModal({
     account?.role ?? "collector",
   );
   const [teamId, setTeamId] = useState(
-    account?.teamId ?? teams[0]?.id ?? "",
+    account?.teamId ?? availableTeams[0]?.id ?? "",
   );
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -143,7 +146,7 @@ export function UserFormModal({
               const nextRole = event.target.value as Role;
               setRole(nextRole);
               if (nextRole !== "admin" && !teamId) {
-                setTeamId(teams[0]?.id ?? "");
+                setTeamId(availableTeams[0]?.id ?? "");
               }
             }}
           >
@@ -160,9 +163,12 @@ export function UserFormModal({
               onChange={(event) => setTeamId(event.target.value)}
               required
             >
-              {teams.map((team) => (
+              <option value="" disabled>
+                请选择团队
+              </option>
+              {availableTeams.map((team) => (
                 <option key={team.id} value={team.id}>
-                  {team.name}
+                  {team.name}{team.status === "disabled" ? "（已停用）" : ""}
                 </option>
               ))}
             </select>

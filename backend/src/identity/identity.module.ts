@@ -7,6 +7,7 @@ import { SessionEntity } from "../database/entities/session.entity.js";
 import { TeamEntity } from "../database/entities/team.entity.js";
 import { UserEntity } from "../database/entities/user.entity.js";
 import { AllowedOriginGuard } from "../http/allowed-origin.guard.js";
+import { SecurityModule } from "../security/security.module.js";
 import { AccountsController } from "./accounts.controller.js";
 import { AccountsService } from "./accounts.service.js";
 import { IdentityPolicy } from "./identity.policy.js";
@@ -18,6 +19,7 @@ import { TeamsService } from "./teams.service.js";
     TypeOrmModule.forFeature([UserEntity, TeamEntity, SessionEntity]),
     AuthModule,
     AuditModule,
+    SecurityModule,
   ],
   controllers: [AccountsController, TeamsController],
   providers: [

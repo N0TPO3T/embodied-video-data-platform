@@ -103,7 +103,7 @@ describe("quality review workflow", () => {
   });
 });
 
-describe("upload and withdrawal workflows", () => {
+describe("upload workflow", () => {
   it("creates one queued submission for each uploaded file", () => {
     const store = createDemoStore(demoSeed);
     store.loginAs("collector");
@@ -122,42 +122,6 @@ describe("upload and withdrawal workflows", () => {
     ]);
     expect(uploads.every((item) => item.processingStatus === "queued")).toBe(
       true,
-    );
-  });
-
-  it("freezes the amount when a collector requests a valid withdrawal", () => {
-    const store = createDemoStore(demoSeed);
-    store.loginAs("collector");
-    store.requestWithdrawal(200);
-
-    expect(store.getState().wallet.available).toBe(1286.5);
-    expect(store.getState().wallet.frozen).toBe(200);
-    expect(store.getState().withdrawals[0].status).toBe("pending");
-  });
-
-  it("rejects a withdrawal below the configured minimum", () => {
-    const store = createDemoStore(demoSeed);
-    store.loginAs("collector");
-
-    expect(() => store.requestWithdrawal(80)).toThrow(
-      "最低提现金额为 ¥100",
-    );
-  });
-
-  it("lets an administrator approve a pending withdrawal", () => {
-    const store = createDemoStore(demoSeed);
-    store.loginAs("admin");
-    store.reviewWithdrawal("WD-001", "approved");
-
-    expect(store.getState().withdrawals[0].status).toBe("approved");
-  });
-
-  it("prevents collectors from reviewing withdrawals", () => {
-    const store = createDemoStore(demoSeed);
-    store.loginAs("collector");
-
-    expect(() => store.reviewWithdrawal("WD-001", "approved")).toThrow(
-      "仅管理员可审核提现",
     );
   });
 
@@ -385,13 +349,13 @@ describe("administrator rule, settlement, and delivery workflows", () => {
 
     expect(batch.submissionCount).toBe(4);
     expect(batch.effectiveMinutes).toBe(11.27);
-    expect(batch.amount).toBe(116.12);
+    expect(batch.points).toBe(116.12);
     expect(batch.status).toBe("locked");
     expect(store.getState().settlements[0]).toEqual(batch);
     expect(store.getSubmission("SUB-001").settlementStatus).toBe("settled");
     expect(store.getSubmission("SUB-003").settlementStatus).toBe("unsettled");
     expect(store.getSubmission("SUB-004").settlementStatus).toBe("unsettled");
-    expect(store.getState().operationLogs[0].action).toBe("生成结算批次");
+    expect(store.getState().operationLogs[0].action).toBe("生成积分周期");
   });
 
   it("rejects a second settlement when nothing remains eligible", () => {

@@ -27,10 +27,15 @@ export type SubmissionProcessingStatus =
   | "completed"
   | "system_failed";
 
+export type SubmissionAssetStatus = "active" | "quarantined";
+export type SubmissionStorageStatus = "available" | "deleted";
+
 @Entity({ name: "submissions" })
 @Index("idx_submissions_owner_created", ["ownerId", "createdAt"])
 @Index("idx_submissions_team_created", ["teamId", "createdAt"])
 @Index("idx_submissions_processing_status", ["processingStatus"])
+@Index("idx_submissions_asset_status", ["assetStatus"])
+@Index("idx_submissions_storage_status", ["storageStatus"])
 export class SubmissionEntity {
   @PrimaryColumn({ type: "varchar", length: 64 })
   id!: string;
@@ -82,6 +87,59 @@ export class SubmissionEntity {
 
   @Column({ name: "is_test_data", type: "boolean", default: false })
   isTestData = false;
+
+  @Column({ name: "asset_status", type: "varchar", length: 24, default: "active" })
+  assetStatus: SubmissionAssetStatus = "active";
+
+  @Column({ name: "quarantine_reason", type: "text", nullable: true })
+  quarantineReason: string | null = null;
+
+  @Column({ name: "quarantined_at", type: "timestamptz", nullable: true })
+  quarantinedAt: Date | null = null;
+
+  @Column({ name: "quarantined_by_account_id", type: "varchar", length: 64, nullable: true })
+  quarantinedByAccountId: string | null = null;
+
+  @Column({ name: "quarantined_by_name", type: "varchar", length: 120, nullable: true })
+  quarantinedByName: string | null = null;
+
+  @Column({ name: "storage_status", type: "varchar", length: 24, default: "available" })
+  storageStatus: SubmissionStorageStatus = "available";
+
+  @Column({ name: "storage_retain_until", type: "timestamptz", nullable: true })
+  storageRetainUntil: Date | null = null;
+
+  @Column({ name: "storage_deleted_at", type: "timestamptz", nullable: true })
+  storageDeletedAt: Date | null = null;
+
+  @Column({ name: "storage_deleted_by_account_id", type: "varchar", length: 64, nullable: true })
+  storageDeletedByAccountId: string | null = null;
+
+  @Column({ name: "storage_deleted_by_name", type: "varchar", length: 120, nullable: true })
+  storageDeletedByName: string | null = null;
+
+  @Column({ name: "storage_delete_reason", type: "text", nullable: true })
+  storageDeleteReason: string | null = null;
+
+  @Column({ name: "data_usage_authorized", type: "boolean", default: false })
+  dataUsageAuthorized = false;
+
+  @Column({ name: "privacy_confirmed", type: "boolean", default: false })
+  privacyConfirmed = false;
+
+  @Column({ name: "sensitive_content_confirmed", type: "boolean", default: false })
+  sensitiveContentConfirmed = false;
+
+  @Column({
+    name: "upload_policy_version",
+    type: "varchar",
+    length: 64,
+    default: "DATA-AUTH-2026-08",
+  })
+  uploadPolicyVersion = "DATA-AUTH-2026-08";
+
+  @Column({ name: "authorization_confirmed_at", type: "timestamptz", nullable: true })
+  authorizationConfirmedAt: Date | null = null;
 
   @Column({ name: "uploaded_at", type: "timestamptz", nullable: true })
   uploadedAt: Date | null = null;

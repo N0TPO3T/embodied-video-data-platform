@@ -3,27 +3,41 @@
 import { useRef, useState, type FormEvent, type RefObject } from "react";
 import { Modal } from "../../components/Modal";
 import { useDemoStore } from "../../data/DemoStoreContext";
+import {
+  createDeliveryPackage,
+  DeliveryPackageApiError,
+} from "../../delivery/client/deliveryPackageApi";
+import type {
+  BackendDeliveryPackage,
+  BackendDeliveryPreview,
+} from "../../delivery/contracts";
 import { useInteractions } from "../../interactions/InteractionContext";
 
 export function DeliveryPackageModal({
   open,
   onClose,
   returnFocusRef,
+  preview,
+  onCreated,
 }: {
   open: boolean;
   onClose(): void;
   returnFocusRef: RefObject<HTMLButtonElement | null>;
+  preview?: BackendDeliveryPreview | null;
+  onCreated?(deliveryPackage: BackendDeliveryPackage): void;
 }) {
-  const { state, createDeliveryPackage } = useDemoStore();
+  const { state, createDeliveryPackage: createDemoDeliveryPackage } =
+    useDemoStore();
   const { notify } = useInteractions();
   const [name, setName] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const nameRef = useRef<HTMLInputElement>(null);
-  const assetCount = state.submissions.filter(
+  const demoAssetCount = state.submissions.filter(
     (item) => item.settlementStatus === "settled" && item.qualityStatus === "passed",
   ).length;
+  const assetCount = preview?.assetCount ?? demoAssetCount;
 
   function close() {
     setName("");
@@ -33,18 +47,26 @@ export function DeliveryPackageModal({
     onClose();
   }
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submittingRef.current || assetCount === 0) return;
     submittingRef.current = true;
     setSubmitting(true);
     setError("");
     try {
-      createDeliveryPackage({ name });
+      if (preview) {
+        onCreated?.(await createDeliveryPackage({ name }));
+      } else {
+        createDemoDeliveryPackage({ name });
+      }
       notify("success", "交付包已创建");
       close();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "交付包创建失败");
+      const message =
+        reason instanceof DeliveryPackageApiError || reason instanceof Error
+          ? reason.message
+          : "交付包创建失败";
+      setError(message);
       setSubmitting(false);
       submittingRef.current = false;
     }

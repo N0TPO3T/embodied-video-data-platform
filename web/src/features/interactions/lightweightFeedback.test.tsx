@@ -37,24 +37,24 @@ describe("lightweight feedback interactions", () => {
     });
   });
 
-  it("shows feedback instead of creating a fake submissions export", async () => {
-    const user = userEvent.setup();
+  it("links submissions export to the backend CSV endpoint", async () => {
     renderPath("/admin/submissions", true);
 
-    await user.click(
-      await screen.findByRole("button", { name: "导出当前结果" }),
+    expect(
+      await screen.findByRole("link", { name: "导出当前结果" }),
+    ).toHaveAttribute(
+      "href",
+      "http://localhost:4000/api/v1/submissions/export.csv",
     );
-
-    expect(screen.getByText("导出任务已创建")).toBeVisible();
   });
 
-  it("renders session operation logs and gives audit export feedback", async () => {
-    const user = userEvent.setup();
+  it("renders session operation logs and links audit export to CSV", async () => {
     renderPath("/admin/audit", true);
 
-    expect(await screen.findByText("调整团队单价")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "导出日志" }));
-
-    expect(screen.getByText("导出任务已创建")).toBeVisible();
+    expect(await screen.findByText("调整团队积分规则")).toBeVisible();
+    expect(screen.getByRole("link", { name: "导出日志" })).toHaveAttribute(
+      "href",
+      "http://localhost:4000/api/v1/audit-logs/export.csv",
+    );
   });
 });

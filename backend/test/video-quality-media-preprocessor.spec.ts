@@ -80,10 +80,13 @@ describe("video quality media preprocessor", () => {
     expect(metadata.nominal_fps).toBe(60);
   });
 
-  it("keeps the confirmed 0.2 fps and guarantees four short-video frames", () => {
+  it("samples enough frames for short videos and caps long-video model input", () => {
     expect(calculateSamplingFps(60_000)).toBe(0.2);
     expect(calculateSamplingFps(10_000)).toBe(0.4);
     expect(calculateSamplingFps(1_000)).toBe(4);
+    expect(
+      Math.ceil(calculateSamplingFps(1_111_533) * (1_111_533 / 1_000)),
+    ).toBeLessThanOrEqual(96);
   });
 
   it("prepares timestamped frames and deterministic black/freeze windows", async () => {

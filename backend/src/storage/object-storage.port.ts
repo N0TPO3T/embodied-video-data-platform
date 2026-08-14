@@ -6,10 +6,23 @@ export type PresignedUploadPart = {
   expiresAt: Date;
 };
 
+export type PresignedDownload = {
+  url: string;
+  expiresAt: Date;
+};
+
 export interface ObjectStoragePort {
   downloadObject(input: {
     objectKey: string;
     destinationPath: string;
+  }): Promise<void>;
+  readObject(input: {
+    objectKey: string;
+  }): Promise<NodeJS.ReadableStream>;
+  uploadObject(input: {
+    objectKey: string;
+    sourcePath: string;
+    contentType: string;
   }): Promise<void>;
   createMultipartUpload(input: {
     objectKey: string;
@@ -22,6 +35,13 @@ export interface ObjectStoragePort {
     partNumber: number;
     expiresInSeconds: number;
   }): Promise<PresignedUploadPart>;
+  presignDownloadObject(input: {
+    objectKey: string;
+    expiresInSeconds: number;
+  }): Promise<PresignedDownload>;
+  deleteObject(input: {
+    objectKey: string;
+  }): Promise<void>;
   completeMultipartUpload(input: {
     objectKey: string;
     uploadId: string;

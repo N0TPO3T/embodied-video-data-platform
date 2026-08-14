@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import type { AccountPublic, TeamPublic } from "../auth/contracts";
-import type { User, WithdrawalStatus } from "../domain/types";
+import type { User } from "../domain/types";
 import type { BackendSubmission } from "../submissions/contracts";
 import { backendSubmissionToDomain } from "../submissions/submissionMapper";
 import {
@@ -30,14 +30,13 @@ type DemoStoreValue = {
     input: RuleVersionInput,
   ): ReturnType<DemoStore["createRuleVersion"]>;
   updateLabel(input: UpdateLabelInput): ReturnType<DemoStore["updateLabel"]>;
+  createPointCycle(): ReturnType<DemoStore["createPointCycle"]>;
   createSettlementBatch(): ReturnType<DemoStore["createSettlementBatch"]>;
   createDeliveryPackage(
     input: DeliveryPackageInput,
   ): ReturnType<DemoStore["createDeliveryPackage"]>;
   addUploads(files: File[]): void;
   adjustQuality(id: string, score: number, reason: string): void;
-  requestWithdrawal(amount: number): void;
-  reviewWithdrawal(id: string, status: WithdrawalStatus): void;
 };
 
 const DemoStoreContext = createContext<DemoStoreValue | null>(null);
@@ -148,14 +147,12 @@ export function DemoStoreProvider({
           store.upsertSubmission(backendSubmissionToDomain(submission)),
         createRuleVersion: (input) => store.createRuleVersion(input),
         updateLabel: (input) => store.updateLabel(input),
+        createPointCycle: () => store.createPointCycle(),
         createSettlementBatch: () => store.createSettlementBatch(),
         createDeliveryPackage: (input) => store.createDeliveryPackage(input),
         addUploads: (files) => store.addUploads(files),
         adjustQuality: (id, score, reason) =>
           store.adjustQuality(id, score, reason),
-        requestWithdrawal: (amount) => store.requestWithdrawal(amount),
-        reviewWithdrawal: (id, status) =>
-          store.reviewWithdrawal(id, status),
       }}
     >
       {children}

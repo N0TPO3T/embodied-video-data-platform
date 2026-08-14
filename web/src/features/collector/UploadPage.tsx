@@ -1,23 +1,49 @@
 "use client";
 
 import { CheckCircle2, CloudUpload, FileVideo, Info, ShieldCheck, XCircle } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useDemoStore } from "../../data/DemoStoreContext";
-import { uploadVideo } from "../../submissions/upload/multipartUploader";
+import { listActiveUploads } from "../../submissions/client/submissionApi";
+import type { ActiveUploadResult } from "../../submissions/contracts";
+import { resumeUploadVideo, uploadVideo } from "../../submissions/upload/multipartUploader";
 
 const isSupported = (file: File) => /\.(mov|mp4)$/i.test(file.name);
 
 export function UploadPage() {
   const inputRef = useRef<HTMLInputElement>(null);
+  const resumeInputRef = useRef<HTMLInputElement>(null);
+  const resumeTargetRef = useRef<ActiveUploadResult | null>(null);
   const [error, setError] = useState("");
+  const [authorization, setAuthorization] = useState({
+    dataUsageAuthorized: false,
+    privacyConfirmed: false,
+    sensitiveContentConfirmed: false,
+  });
+  const [activeUploads, setActiveUploads] = useState<ActiveUploadResult[]>([]);
   const [uploads, setUploads] = useState<Array<{
     key: string;
     name: string;
     progress: number;
-    status: "hashing" | "uploading" | "queued" | "failed";
+    status: "hashing" | "uploading" | "queued" | "failed" | "paused";
+    file?: File;
+    session?: ActiveUploadResult;
+    controller?: AbortController;
     error?: string;
   }>>([]);
   const { upsertSubmission } = useDemoStore();
+
+  useEffect(() => {
+    let active = true;
+    listActiveUploads()
+      .then((items) => {
+        if (!active) return;
+        setActiveUploads(items);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
 
   function updateUpload(
     key: string,
@@ -31,19 +57,118 @@ export function UploadPage() {
   }
 
   async function upload(file: File, key: string) {
+    const controller = new AbortController();
+    updateUpload(key, { file, controller });
     try {
       const submission = await uploadVideo(file, {
+        signal: controller.signal,
+        authorization,
         onProgress: (progress) =>
           updateUpload(key, { progress, status: "uploading" }),
       });
       upsertSubmission(submission);
-      updateUpload(key, { progress: 100, status: "queued" });
+      updateUpload(key, { progress: 100, status: "queued", controller: undefined });
     } catch (reason) {
+      if (controller.signal.aborted) {
+        const active = await listActiveUploads().catch(() => []);
+        const session = active.find(
+          (item) =>
+            item.submission.fileName === file.name &&
+            Number(item.submission.sizeBytes) === file.size,
+        );
+        setActiveUploads(active);
+        updateUpload(key, {
+          status: "paused",
+          file,
+          session,
+          controller: undefined,
+          error: session ? "已暂停，可继续上传" : "已暂停，请在可恢复上传中继续",
+        });
+        return;
+      }
       updateUpload(key, {
         status: "failed",
+        controller: undefined,
         error: reason instanceof Error ? reason.message : "上传失败，请重试",
       });
     }
+  }
+
+  async function resumeUpload(
+    file: File,
+    session: ActiveUploadResult,
+    key = `resume-${session.submission.id}`,
+  ) {
+    const controller = new AbortController();
+    setUploads((current) => [
+      {
+        key,
+        name: session.submission.fileName,
+        progress: 0,
+        status: "uploading",
+        file,
+        session,
+        controller,
+      },
+      ...current.filter((item) => item.key !== key),
+    ]);
+    try {
+      const submission = await resumeUploadVideo(file, session, {
+        signal: controller.signal,
+        onProgress: (progress) =>
+          updateUpload(key, { progress, status: "uploading" }),
+      });
+      upsertSubmission(submission);
+      setActiveUploads((current) =>
+        current.filter((item) => item.submission.id !== session.submission.id),
+      );
+      updateUpload(key, { progress: 100, status: "queued", controller: undefined });
+    } catch (reason) {
+      if (controller.signal.aborted) {
+        updateUpload(key, {
+          status: "paused",
+          file,
+          session,
+          controller: undefined,
+          error: "已暂停，可继续上传",
+        });
+        return;
+      }
+      updateUpload(key, {
+        status: "failed",
+        controller: undefined,
+        error:
+          reason instanceof Error
+            ? reason.message
+            : "恢复上传失败，请重新选择原文件",
+      });
+    }
+  }
+
+  function pauseUpload(key: string) {
+    setUploads((current) => {
+      const target = current.find((item) => item.key === key);
+      target?.controller?.abort();
+      return current;
+    });
+  }
+
+  function continueUpload(item: (typeof uploads)[number]) {
+    if (!item.file || !item.session) return;
+    void resumeUpload(item.file, item.session, item.key);
+  }
+
+  function chooseResumeFile(session: ActiveUploadResult) {
+    resumeTargetRef.current = session;
+    resumeInputRef.current?.click();
+  }
+
+  function acceptResumeFile(file?: File) {
+    const session = resumeTargetRef.current;
+    resumeTargetRef.current = null;
+    if (!file || !session) return;
+    void resumeUpload(file, session);
+    if (resumeInputRef.current) resumeInputRef.current.value = "";
   }
 
   function acceptFiles(files: File[]) {
@@ -51,6 +176,14 @@ export function UploadPage() {
     if (valid.length !== files.length) setError("仅支持 MOV 和 MP4 视频");
     else setError("");
     if (!valid.length) return;
+    if (
+      !authorization.dataUsageAuthorized ||
+      !authorization.privacyConfirmed ||
+      !authorization.sensitiveContentConfirmed
+    ) {
+      setError("上传前请先确认数据授权、隐私规范和敏感内容处理要求");
+      return;
+    }
     const created = valid.map((file, index) => ({
       key: `${Date.now()}-${index}-${file.name}`,
       name: file.name,
@@ -59,11 +192,12 @@ export function UploadPage() {
       file,
     }));
     setUploads((current) => [
-      ...created.map(({ key, name, progress, status }) => ({
+      ...created.map(({ key, name, progress, status, file }) => ({
         key,
         name,
         progress,
         status,
+        file,
       })),
       ...current,
     ]);
@@ -76,6 +210,12 @@ export function UploadPage() {
       <section className="upload-layout">
         <div className="content-card upload-main-card">
           <input ref={inputRef} className="file-input" aria-label="选择视频文件" accept=".mov,.mp4,video/quicktime,video/mp4" multiple type="file" onChange={(event) => acceptFiles(Array.from(event.target.files ?? []))} />
+          <input ref={resumeInputRef} className="file-input" aria-label="选择恢复上传文件" accept=".mov,.mp4,video/quicktime,video/mp4" type="file" onChange={(event) => acceptResumeFile(event.target.files?.[0])} />
+          <div className="upload-consent-panel">
+            <label><input type="checkbox" checked={authorization.dataUsageAuthorized} onChange={(event) => setAuthorization((current) => ({ ...current, dataUsageAuthorized: event.target.checked }))} />我确认拥有本次上传视频的数据使用授权</label>
+            <label><input type="checkbox" checked={authorization.privacyConfirmed} onChange={(event) => setAuthorization((current) => ({ ...current, privacyConfirmed: event.target.checked }))} />我已按隐私规范检查人脸、门牌、屏幕账号、定位等信息</label>
+            <label><input type="checkbox" checked={authorization.sensitiveContentConfirmed} onChange={(event) => setAuthorization((current) => ({ ...current, sensitiveContentConfirmed: event.target.checked }))} />我确认发现敏感内容时已遮挡、重采或按要求处理</label>
+          </div>
           <button className="upload-dropzone" onClick={() => inputRef.current?.click()}>
             <span><CloudUpload size={27} /></span>
             <strong>点击选择或拖拽视频到这里</strong>
@@ -83,6 +223,7 @@ export function UploadPage() {
             <em>选择视频文件</em>
           </button>
           {error && <div className="inline-alert inline-alert-error"><XCircle size={16} />{error}</div>}
+          {activeUploads.length > 0 && <div className="upload-queue"><div className="card-heading"><div><h2>可恢复上传</h2><p>刷新前未完成的任务，可重新选择原文件继续上传</p></div></div>{activeUploads.map((item) => <div className="upload-item" key={item.submission.id}><span><FileVideo size={18} /></span><div><strong>{item.submission.fileName}</strong><small>{item.upload.partCount} 个分片 · 需要选择同名同大小文件</small><i><b style={{ width: "0%" }} /></i></div><button className="table-action" onClick={() => chooseResumeFile(item)}>继续上传</button></div>)}</div>}
           <div className="upload-queue">
             <div className="card-heading"><div><h2>本次上传</h2><p>{uploads.length ? `${uploads.length} 个视频上传任务` : "选择文件后在此查看上传进度"}</p></div></div>
             {uploads.length ? uploads.map((item) => (
@@ -97,11 +238,15 @@ export function UploadPage() {
                         ? `正在上传 ${item.progress}%`
                         : item.status === "queued"
                           ? "上传完成，等待媒体处理"
+                          : item.status === "paused"
+                            ? item.error ?? "已暂停，可继续上传"
                           : item.error ?? "上传失败，请重试"}
                   </small>
                   <i><b style={{ width: `${item.progress}%` }} /></i>
                 </div>
-                {item.status === "queued" ? <CheckCircle2 size={18} /> : item.status === "failed" ? <XCircle size={18} /> : <CloudUpload size={18} />}
+                {item.status === "uploading" ? <button className="table-action" onClick={() => pauseUpload(item.key)}>暂停</button> : null}
+                {item.status === "paused" && item.session ? <button className="table-action" onClick={() => continueUpload(item)}>继续</button> : null}
+                {item.status === "queued" ? <CheckCircle2 size={18} /> : item.status === "failed" ? <XCircle size={18} /> : item.status === "paused" ? <Info size={18} /> : <CloudUpload size={18} />}
               </div>
             )) : <div className="empty-inline">暂无待上传文件</div>}
           </div>

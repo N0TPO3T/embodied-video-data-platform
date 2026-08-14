@@ -6,6 +6,12 @@ import {
   type FormEvent,
   type RefObject,
 } from "react";
+import {
+  AiQualityApiError,
+  createQualityRule,
+  updateQualityLabel,
+} from "../../ai-quality/client/aiQualityApi";
+import type { LabelSet, QualityRule } from "../../ai-quality/contracts";
 import { Modal } from "../../components/Modal";
 import { useDemoStore } from "../../data/DemoStoreContext";
 import type { LabelConfig } from "../../domain/types";
@@ -15,19 +21,27 @@ export function RuleFormModal({
   open,
   mode,
   label,
+  currentRule,
+  onRulePublished,
+  onLabelSetPublished,
   onClose,
   returnFocusRef,
 }: {
   open: boolean;
   mode: "rule" | "label";
   label?: LabelConfig;
+  currentRule?: Pick<QualityRule, "passThreshold">;
+  onRulePublished?(rule: QualityRule): void;
+  onLabelSetPublished?(labelSet: LabelSet): void;
   onClose(): void;
   returnFocusRef: RefObject<HTMLButtonElement | null>;
 }) {
   const { state, createRuleVersion, updateLabel } = useDemoStore();
   const { notify } = useInteractions();
   const [version, setVersion] = useState("");
-  const [threshold, setThreshold] = useState(String(state.rule.passThreshold));
+  const [threshold, setThreshold] = useState(
+    String(currentRule?.passThreshold ?? state.rule.passThreshold),
+  );
   const [description, setDescription] = useState("");
   const [labelName, setLabelName] = useState(label?.name ?? "");
   const [enabled, setEnabled] = useState(label?.enabled ?? true);
@@ -43,7 +57,7 @@ export function RuleFormModal({
     onClose();
   }
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submittingRef.current) return;
     submittingRef.current = true;
@@ -52,14 +66,32 @@ export function RuleFormModal({
 
     try {
       if (mode === "rule") {
-        createRuleVersion({
+        const input = {
           version,
           passThreshold: Number(threshold),
           description,
-        });
+        };
+        try {
+          const published = await createQualityRule(input);
+          onRulePublished?.(published);
+        } catch (caught) {
+          if (caught instanceof AiQualityApiError && caught.status < 500) {
+            throw caught;
+          }
+          createRuleVersion(input);
+        }
         notify("success", "规则版本已发布");
       } else if (label) {
-        updateLabel({ id: label.id, name: labelName, enabled });
+        const input = { id: label.id, name: labelName, enabled };
+        try {
+          const published = await updateQualityLabel(input);
+          onLabelSetPublished?.(published);
+        } catch (caught) {
+          if (caught instanceof AiQualityApiError && caught.status < 500) {
+            throw caught;
+          }
+          updateLabel(input);
+        }
         notify("success", "标签已更新");
       }
       close();

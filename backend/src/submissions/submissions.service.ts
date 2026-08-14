@@ -1,16 +1,36 @@
 import { randomUUID } from "node:crypto";
 import { extname } from "node:path";
+import { Readable } from "node:stream";
 
 import { Inject, Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { DataSource, Repository } from "typeorm";
+import { Brackets, DataSource, EntityManager, Repository } from "typeorm";
 
+import { AuditService } from "../audit/audit.service.js";
 import type { PublicUser } from "../auth/auth.types.js";
+import { AuditLogEntity } from "../database/entities/audit-log.entity.js";
 import { JobOutboxEntity } from "../database/entities/job-outbox.entity.js";
+import { DeliveryPackageItemEntity } from "../database/entities/delivery-package-item.entity.js";
 import { MediaMetadataEntity } from "../database/entities/media-metadata.entity.js";
 import { MediaSegmentEntity } from "../database/entities/media-segment.entity.js";
+import { PointCycleAdjustmentEntity } from "../database/entities/point-cycle-adjustment.entity.js";
+import { PointCycleEntity } from "../database/entities/point-cycle.entity.js";
+import { PointCycleItemEntity } from "../database/entities/point-cycle-item.entity.js";
+import { PointRuleVersionEntity } from "../database/entities/point-rule-version.entity.js";
+import { QualityRuleVersionEntity } from "../database/entities/quality-rule-version.entity.js";
+import { SubmissionDuplicateCandidateEntity } from "../database/entities/submission-duplicate-candidate.entity.js";
 import { SubmissionEntity } from "../database/entities/submission.entity.js";
 import { VideoQualityResultEntity } from "../database/entities/video-quality-result.entity.js";
+import {
+  coefficientForScore,
+  DEFAULT_COEFFICIENT_BANDS,
+  passesQualityRule,
+  pointsForRule,
+  qualityRuleSnapshot,
+  settlementRatioForScore,
+  type PointRuleSnapshot,
+  type QualityRuleSnapshot,
+} from "../rules/rule-calculator.js";
 import {
   OBJECT_STORAGE,
   type ObjectStoragePort,
@@ -18,12 +38,234 @@ import {
 import type {
   CompleteUploadDto,
   CreateUploadDto,
+  DeleteSubmissionDto,
+  DeleteSubmissionObjectsDto,
+  RenameSubmissionDto,
+  ReviewIssueDto,
+  ReviewSubmissionQualityDto,
+  VerifyResumeUploadDto,
 } from "./dto/upload.dto.js";
 import { SubmissionFailure } from "./submission-failure.js";
 import { SubmissionsPolicy } from "./submissions.policy.js";
 
 export const UPLOAD_PART_SIZE_BYTES = 16 * 1024 * 1024;
+export const UPLOAD_POLICY_VERSION = "DATA-AUTH-2026-08";
 const UPLOAD_URL_TTL_SECONDS = 15 * 60;
+const PREVIEW_URL_TTL_SECONDS = 10 * 60;
+const DEFAULT_STORAGE_RETENTION_DAYS = 180;
+const ACTIVE_PROCESSING_STATUSES = new Set([
+  "queued",
+  "probing",
+  "awaiting_ai",
+  "ai_processing",
+]);
+const REVIEW_AUDIT_ACTIONS = [
+  "quality_review",
+  "point_cycle_adjustment",
+  "asset_quarantine",
+  "asset_release",
+  "storage_object_delete",
+  "duplicate_candidate_clear",
+  "ai_quality_rerun",
+  "submission_rename",
+];
+const SENSITIVE_REVIEW_PATTERN =
+  /PRIVACY_OR_SAFETY|privacy|sensitive|隐私|敏感|合规|安全|人脸|门牌|定位|账号/u;
+const HLS_FILE_NAME_PATTERN = /^[A-Za-z0-9._-]+\.(?:m3u8|ts)$/u;
+const QUALITY_EFFECTIVE_PASSED_SQL = `
+  CASE
+    WHEN quality.passed IS NOT NULL THEN quality.passed
+    WHEN quality.status = 'review_pending' AND quality.manualFinalScore IS NULL
+      THEN NULL
+    WHEN COALESCE(quality.manualFinalScore, quality.finalScore) IS NULL
+      THEN NULL
+    ELSE COALESCE(quality.manualFinalScore, quality.finalScore) >= COALESCE(
+      (quality.qualityRuleSnapshot ->> 'passThreshold')::numeric,
+      60
+    )
+  END
+`;
+const QUALITY_PASSED_SQL = `(${QUALITY_EFFECTIVE_PASSED_SQL}) IS TRUE`;
+const QUALITY_FAILED_SQL = `(${QUALITY_EFFECTIVE_PASSED_SQL}) IS FALSE`;
+const POINT_RULE_ELIGIBLE_SQL = `
+  (
+    (
+      NOT EXISTS (
+        SELECT 1
+        FROM point_rule_versions AS active_point_rule
+        WHERE active_point_rule.active = true
+      )
+      AND COALESCE(quality.manualFinalScore, quality.finalScore) >= 60
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM point_rule_versions AS active_point_rule
+      CROSS JOIN LATERAL jsonb_array_elements(
+        active_point_rule.coefficient_bands
+      ) AS point_band
+      WHERE active_point_rule.active = true
+        AND COALESCE(quality.manualFinalScore, quality.finalScore) >=
+          (point_band ->> 'minScore')::numeric
+        AND COALESCE(quality.manualFinalScore, quality.finalScore) <
+          (point_band ->> 'maxScore')::numeric + 1
+        AND (point_band ->> 'ratio')::numeric > 0
+    )
+  )
+`;
+
+type PublicReviewIssue = { label: string; start: number; end: number };
+type SubmissionListStatus =
+  | "all"
+  | "uploading"
+  | "queued"
+  | "processing"
+  | "completed"
+  | "failed"
+  | "passed"
+  | "reviewed"
+  | "review_queue"
+  | "unsettled";
+type SubmissionListQuery = {
+  q?: string;
+  status?: string;
+  page?: number;
+  pageSize?: number;
+};
+
+function decimal(value: number, digits: number): string {
+  return value.toFixed(digits);
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/gu, (match) => `\\${match}`);
+}
+
+function csvCell(value: string | number | boolean | null | undefined): string {
+  const raw = value === null || value === undefined ? "" : String(value);
+  if (!/[",\n\r]/u.test(raw)) return raw;
+  return `"${raw.replaceAll('"', '""')}"`;
+}
+
+function hlsDerivedObjectKeys(metadata?: MediaMetadataEntity | null): string[] {
+  return metadata?.hlsObjectKeys ?? [];
+}
+
+function storageRetentionDays(): number {
+  const configured = Number(process.env.SUBMISSION_OBJECT_RETENTION_DAYS);
+  if (Number.isInteger(configured) && configured >= 0 && configured <= 3650) {
+    return configured;
+  }
+  return DEFAULT_STORAGE_RETENTION_DAYS;
+}
+
+function storageRetainUntil(now = new Date()): Date | null {
+  const days = storageRetentionDays();
+  if (days === 0) return null;
+  return new Date(now.getTime() + days * 24 * 60 * 60 * 1_000);
+}
+
+function expectedVideoExtension(contentType: string): string | null {
+  if (contentType === "video/mp4") return ".mp4";
+  if (contentType === "video/quicktime") return ".mov";
+  return null;
+}
+
+function listStatus(value: string | undefined): SubmissionListStatus {
+  const supported = new Set<SubmissionListStatus>([
+    "all",
+    "uploading",
+    "queued",
+    "processing",
+    "completed",
+    "failed",
+    "passed",
+    "reviewed",
+    "review_queue",
+    "unsettled",
+  ]);
+  return supported.has(value as SubmissionListStatus)
+    ? (value as SubmissionListStatus)
+    : "all";
+}
+
+function unionDurationMs(intervals: Array<{ startMs: number; endMs: number }>) {
+  const sorted = intervals
+    .filter((interval) => interval.endMs > interval.startMs)
+    .sort((left, right) => left.startMs - right.startMs);
+  let total = 0;
+  let current: { startMs: number; endMs: number } | null = null;
+  for (const interval of sorted) {
+    if (!current) {
+      current = { ...interval };
+    } else if (interval.startMs <= current.endMs) {
+      current.endMs = Math.max(current.endMs, interval.endMs);
+    } else {
+      total += current.endMs - current.startMs;
+      current = { ...interval };
+    }
+  }
+  if (current) total += current.endMs - current.startMs;
+  return Math.round(total);
+}
+
+function normalizeReviewIssues(
+  issues: ReviewIssueDto[],
+  durationSeconds: number | null,
+): PublicReviewIssue[] {
+  return issues.map((issue, index) => {
+    const label = issue.label.trim();
+    if (!label) {
+      throw new SubmissionFailure(
+        "INVALID_REVIEW_ISSUE",
+        `第 ${index + 1} 个问题区间缺少问题类型`,
+        400,
+      );
+    }
+    if (!Number.isFinite(issue.start) || !Number.isFinite(issue.end)) {
+      throw new SubmissionFailure(
+        "INVALID_REVIEW_ISSUE",
+        `第 ${index + 1} 个问题区间时间无效`,
+        400,
+      );
+    }
+    const start = Math.round(issue.start * 1_000) / 1_000;
+    const end = Math.round(issue.end * 1_000) / 1_000;
+    if (end <= start) {
+      throw new SubmissionFailure(
+        "INVALID_REVIEW_ISSUE",
+        `第 ${index + 1} 个问题区间结束时间必须晚于开始时间`,
+        400,
+      );
+    }
+    if (durationSeconds !== null && end > durationSeconds + 0.001) {
+      throw new SubmissionFailure(
+        "INVALID_REVIEW_ISSUE",
+        `第 ${index + 1} 个问题区间超出视频时长`,
+        400,
+      );
+    }
+    return { label, start, end };
+  });
+}
+
+function auditValueNumber(
+  value: Record<string, unknown> | null,
+  key: string,
+): number | undefined {
+  const candidate = value?.[key];
+  return typeof candidate === "number" ? candidate : undefined;
+}
+
+function reviewAuditActionLabel(action: string): string {
+  if (action === "point_cycle_adjustment") return "锁定周期后调整";
+  if (action === "asset_quarantine") return "敏感资产隔离";
+  if (action === "asset_release") return "解除资产隔离";
+  if (action === "storage_object_delete") return "删除视频对象";
+  if (action === "duplicate_candidate_clear") return "解除近似重复候选";
+  if (action === "ai_quality_rerun") return "重跑 AI 质检";
+  if (action === "submission_rename") return "重命名提交数据";
+  return "人工复核质量结果";
+}
 
 function publicSubmission(submission: SubmissionEntity) {
   const metadata = (
@@ -42,6 +284,28 @@ function publicSubmission(submission: SubmissionEntity) {
       quality?: VideoQualityResultEntity | null;
     }
   ).quality;
+  const auditLogs = (
+    submission as SubmissionEntity & {
+      reviewAuditLogs?: AuditLogEntity[];
+    }
+  ).reviewAuditLogs ?? [];
+  const pointCycleItems = (
+    submission as SubmissionEntity & {
+      pointCycleItems?: PointCycleItemEntity[];
+    }
+  ).pointCycleItems ?? [];
+  const duplicateCandidates = (
+    submission as SubmissionEntity & {
+      duplicateCandidates?: SubmissionDuplicateCandidateEntity[];
+    }
+  ).duplicateCandidates ?? [];
+  const effectiveFinalScore = quality?.manualFinalScore ?? quality?.finalScore;
+  const effectiveSettlementRatio =
+    quality?.manualSettlementRatio ?? quality?.settlementRatio;
+  const effectiveInvalidDurationMs =
+    quality?.manualInvalidDurationMs ?? quality?.invalidDurationMs;
+  const effectiveBillableDurationMs =
+    quality?.manualBillableDurationMs ?? quality?.billableDurationMs;
   return {
     id: submission.id,
     fileName: submission.originalFileName,
@@ -55,6 +319,46 @@ function publicSubmission(submission: SubmissionEntity) {
     failureCode: submission.failureCode ?? undefined,
     failureMessage: submission.failureMessage ?? undefined,
     isTestData: submission.isTestData,
+    assetStatus: submission.assetStatus,
+    storageStatus: submission.storageStatus,
+    storage: {
+      status: submission.storageStatus,
+      retainUntil: submission.storageRetainUntil?.getTime(),
+      deletedAt: submission.storageDeletedAt?.getTime(),
+      deletedByAccountId: submission.storageDeletedByAccountId ?? undefined,
+      deletedByName: submission.storageDeletedByName ?? undefined,
+      deleteReason: submission.storageDeleteReason ?? undefined,
+    },
+    quarantine:
+      submission.assetStatus === "quarantined"
+        ? {
+            reason: submission.quarantineReason ?? "敏感内容隔离",
+            quarantinedAt: submission.quarantinedAt?.getTime(),
+            quarantinedByAccountId:
+              submission.quarantinedByAccountId ?? undefined,
+            quarantinedByName: submission.quarantinedByName ?? undefined,
+          }
+        : undefined,
+    authorization: {
+      dataUsageAuthorized: submission.dataUsageAuthorized,
+      privacyConfirmed: submission.privacyConfirmed,
+      sensitiveContentConfirmed: submission.sensitiveContentConfirmed,
+      uploadPolicyVersion: submission.uploadPolicyVersion,
+      confirmedAt: submission.authorizationConfirmedAt?.getTime(),
+    },
+    settlementStatus: pointCycleItems.length > 0 ? "settled" : "unsettled",
+    duplicateCandidates: duplicateCandidates
+      .filter((candidate) => candidate.status === "candidate")
+      .map((candidate) => ({
+        id: candidate.id,
+        candidateSubmissionId: candidate.candidateSubmissionId,
+        candidateFileName:
+          candidate.candidateSubmission?.originalFileName ?? undefined,
+        similarity: Number(candidate.similarity),
+        status: candidate.status,
+        details: candidate.details,
+        createdAt: candidate.createdAt.getTime(),
+      })),
     createdAt: submission.createdAt.getTime(),
     uploadedAt: submission.uploadedAt?.getTime(),
     media: metadata
@@ -74,6 +378,7 @@ function publicSubmission(submission: SubmissionEntity) {
       startSeconds: Number(segment.startSeconds),
       endSeconds: Number(segment.endSeconds),
       invalid: segment.invalid,
+      evidenceObjectKey: segment.evidenceObjectKey ?? undefined,
     })),
     quality: quality
       ? {
@@ -85,28 +390,66 @@ function publicSubmission(submission: SubmissionEntity) {
           reviewModel: quality.reviewModel,
           modelRuns: quality.modelRuns,
           finalScore:
+            effectiveFinalScore === null || effectiveFinalScore === undefined
+              ? null
+              : Number(effectiveFinalScore),
+          aiFinalScore:
             quality.finalScore === null ? null : Number(quality.finalScore),
           rawTotalScore:
             quality.rawTotalScore === null
               ? null
               : Number(quality.rawTotalScore),
           settlementRatio:
-            quality.settlementRatio === null
+            effectiveSettlementRatio === null ||
+            effectiveSettlementRatio === undefined
               ? null
-              : Number(quality.settlementRatio),
+              : Number(effectiveSettlementRatio),
+          passed:
+            quality.passed !== null
+              ? quality.passed
+              : quality.status === "review_pending" &&
+                  quality.manualFinalScore === null
+                ? null
+                : effectiveFinalScore === null ||
+                    effectiveFinalScore === undefined
+                  ? null
+                  : Number(effectiveFinalScore) >=
+                    (quality.qualityRuleSnapshot?.passThreshold ?? 60),
+          passThreshold: quality.qualityRuleSnapshot?.passThreshold ?? 60,
           invalidDurationMs:
-            quality.invalidDurationMs === null
+            effectiveInvalidDurationMs === null ||
+            effectiveInvalidDurationMs === undefined
               ? null
-              : Number(quality.invalidDurationMs),
+              : Number(effectiveInvalidDurationMs),
           billableDurationMs:
-            quality.billableDurationMs === null
+            effectiveBillableDurationMs === null ||
+            effectiveBillableDurationMs === undefined
               ? null
-              : Number(quality.billableDurationMs),
+              : Number(effectiveBillableDurationMs),
           summary: quality.summary,
           recommendations: quality.recommendations,
           deductions: quality.deductions,
           reviewRequired: quality.reviewRequired,
           reviewReasons: quality.reviewReasons,
+          reviewRevision: quality.reviewRevision,
+          manualReview:
+            quality.manualReviewedAt &&
+            quality.manualReviewedByAccountId &&
+            quality.manualReviewedByName &&
+            quality.manualReviewReason
+              ? {
+                  reviewedByAccountId: quality.manualReviewedByAccountId,
+                  reviewedByName: quality.manualReviewedByName,
+                  reviewedAt: quality.manualReviewedAt.getTime(),
+                  reason: quality.manualReviewReason,
+                  issues: quality.manualIssues ?? [],
+                  finalScore:
+                    quality.manualFinalScore === null
+                      ? null
+                      : Number(quality.manualFinalScore),
+                }
+              : undefined,
+          manualIssues: quality.manualIssues ?? [],
           lastError: quality.lastError ?? undefined,
           detectedTask:
             quality.normalizedResult &&
@@ -122,6 +465,15 @@ function publicSubmission(submission: SubmissionEntity) {
           completedAt: quality.completedAt?.getTime(),
         }
       : undefined,
+    audit: auditLogs.map((log) => ({
+      id: log.id,
+      actor: log.actorName,
+      action: reviewAuditActionLabel(log.action),
+      reason: log.summary,
+      createdAt: log.createdAt.getTime(),
+      previousScore: auditValueNumber(log.beforeValue, "finalScore"),
+      nextScore: auditValueNumber(log.afterValue, "finalScore"),
+    })),
   };
 }
 
@@ -132,12 +484,24 @@ export class SubmissionsService {
     private readonly submissions: Repository<SubmissionEntity>,
     private readonly dataSource: DataSource,
     private readonly policy: SubmissionsPolicy,
+    private readonly audit: AuditService,
     @Inject(OBJECT_STORAGE)
     private readonly storage: ObjectStoragePort,
   ) {}
 
   async createUpload(actor: PublicUser, input: CreateUploadDto) {
     this.policy.requireCreate(actor);
+    if (
+      !input.dataUsageAuthorized ||
+      !input.privacyConfirmed ||
+      !input.sensitiveContentConfirmed
+    ) {
+      throw new SubmissionFailure(
+        "UPLOAD_AUTHORIZATION_REQUIRED",
+        "上传前必须确认数据授权、隐私规范和敏感内容处理要求",
+        400,
+      );
+    }
     const extension = extname(input.fileName).toLocaleLowerCase("en-US");
     const expectedExtension =
       input.contentType === "video/mp4" ? ".mp4" : ".mov";
@@ -148,17 +512,45 @@ export class SubmissionsService {
         400,
       );
     }
-
     const id = `SUB-${randomUUID()}`;
     const objectKey = `uploads/${actor.teamId}/${actor.id}/${id}/original${extension}`;
-    const { uploadId } = await this.storage.createMultipartUpload({
-      objectKey,
-      contentType: input.contentType,
-      checksumSha256: input.checksumSha256,
-    });
+    let uploadId: string | null = null;
     try {
-      const submission = await this.submissions.save(
-        this.submissions.create({
+      return await this.dataSource.transaction(async (manager) => {
+        await manager.query(
+          "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+          [`submission-checksum:${input.checksumSha256}`],
+        );
+        const repository = manager.getRepository(SubmissionEntity);
+        const duplicate = await repository
+          .createQueryBuilder("submission")
+          .where("submission.checksumSha256 = :checksumSha256", {
+            checksumSha256: input.checksumSha256,
+          })
+          .andWhere("submission.uploadStatus IN (:...uploadStatuses)", {
+            uploadStatuses: ["created", "uploading", "uploaded"],
+          })
+          .andWhere("submission.storageStatus = :available", {
+            available: "available",
+          })
+          .orderBy("submission.createdAt", "ASC")
+          .addOrderBy("submission.id", "ASC")
+          .getOne();
+        if (duplicate) {
+          throw new SubmissionFailure(
+            "DUPLICATE_VIDEO",
+            `该视频已登记，重复任务编号 ${duplicate.id}`,
+            409,
+          );
+        }
+
+        ({ uploadId } = await this.storage.createMultipartUpload({
+          objectKey,
+          contentType: input.contentType,
+          checksumSha256: input.checksumSha256,
+        }));
+        const submission = await repository.save(
+          repository.create({
           id,
           ownerId: actor.id,
           teamId: actor.teamId,
@@ -171,19 +563,31 @@ export class SubmissionsService {
           uploadStatus: "uploading",
           processingStatus: "uploading",
           isTestData: false,
-        }),
-      );
-      return {
-        submission: publicSubmission(submission),
-        upload: {
-          uploadId,
-          partSizeBytes: UPLOAD_PART_SIZE_BYTES,
-          partCount: Math.ceil(input.sizeBytes / UPLOAD_PART_SIZE_BYTES),
-          expiresInSeconds: UPLOAD_URL_TTL_SECONDS,
-        },
-      };
+          dataUsageAuthorized: true,
+          privacyConfirmed: true,
+          sensitiveContentConfirmed: true,
+          uploadPolicyVersion: UPLOAD_POLICY_VERSION,
+          authorizationConfirmedAt: new Date(),
+          storageStatus: "available",
+          storageRetainUntil: storageRetainUntil(),
+          }),
+        );
+        return {
+          submission: publicSubmission(submission),
+          upload: {
+            uploadId,
+            partSizeBytes: UPLOAD_PART_SIZE_BYTES,
+            partCount: Math.ceil(input.sizeBytes / UPLOAD_PART_SIZE_BYTES),
+            expiresInSeconds: UPLOAD_URL_TTL_SECONDS,
+          },
+        };
+      });
     } catch (error) {
-      await this.storage.abortMultipartUpload({ objectKey, uploadId });
+      if (uploadId) {
+        await this.storage
+          .abortMultipartUpload({ objectKey, uploadId })
+          .catch(() => undefined);
+      }
       throw error;
     }
   }
@@ -223,6 +627,65 @@ export class SubmissionsService {
         ),
       ),
     };
+  }
+
+  async verifyResumeUpload(
+    actor: PublicUser,
+    id: string,
+    input: VerifyResumeUploadDto,
+  ) {
+    const submission = await this.findEntity(id);
+    this.policy.requireUploadControl(actor, submission);
+    this.requireUploading(submission);
+    if (
+      input.fileName !== submission.originalFileName ||
+      String(input.sizeBytes) !== submission.expectedSizeBytes ||
+      input.checksumSha256 !== submission.checksumSha256
+    ) {
+      throw new SubmissionFailure(
+        "RESUME_FILE_MISMATCH",
+        "请选择同名、同大小且内容一致的原始视频继续上传",
+        409,
+      );
+    }
+    return {
+      submission: publicSubmission(submission),
+      upload: {
+        uploadId: submission.multipartUploadId!,
+        partSizeBytes: UPLOAD_PART_SIZE_BYTES,
+        partCount: Math.ceil(
+          Number(submission.expectedSizeBytes) / UPLOAD_PART_SIZE_BYTES,
+        ),
+        expiresInSeconds: UPLOAD_URL_TTL_SECONDS,
+      },
+    };
+  }
+
+  async activeUploads(actor: PublicUser) {
+    if (actor.role !== "collector" || !actor.teamId) {
+      return [];
+    }
+    const submissions = await this.submissions.find({
+      where: {
+        ownerId: actor.id,
+        uploadStatus: "uploading",
+        processingStatus: "uploading",
+      },
+      order: { createdAt: "DESC" },
+    });
+    return submissions
+      .filter((submission) => submission.multipartUploadId)
+      .map((submission) => ({
+        submission: publicSubmission(submission),
+        upload: {
+          uploadId: submission.multipartUploadId!,
+          partSizeBytes: UPLOAD_PART_SIZE_BYTES,
+          partCount: Math.ceil(
+            Number(submission.expectedSizeBytes) / UPLOAD_PART_SIZE_BYTES,
+          ),
+          expiresInSeconds: UPLOAD_URL_TTL_SECONDS,
+        },
+      }));
   }
 
   async completeUpload(
@@ -314,41 +777,91 @@ export class SubmissionsService {
     await this.submissions.save(submission);
   }
 
-  async list(actor: PublicUser) {
-    const query = this.submissions
-      .createQueryBuilder("submission")
-      .leftJoinAndSelect("submission.owner", "owner")
-      .leftJoinAndSelect("submission.team", "team")
-      .leftJoinAndMapOne(
-        "submission.metadata",
-        MediaMetadataEntity,
-        "metadata",
-        "metadata.submissionId = submission.id",
-      )
-      .leftJoinAndMapMany(
-        "submission.segments",
-        MediaSegmentEntity,
-        "segment",
-        "segment.submissionId = submission.id",
-      )
-      .leftJoinAndMapOne(
-        "submission.quality",
-        VideoQualityResultEntity,
-        "quality",
-        "quality.submissionId = submission.id",
-      )
-      .orderBy("submission.createdAt", "DESC")
-      .addOrderBy("segment.startSeconds", "ASC");
-    if (actor.role === "leader") {
-      query.andWhere("submission.teamId = :teamId", {
-        teamId: actor.teamId,
-      });
-    } else if (actor.role === "collector") {
-      query.andWhere("submission.ownerId = :ownerId", {
-        ownerId: actor.id,
-      });
+  async list(actor: PublicUser, input: SubmissionListQuery = {}) {
+    const page = Math.max(1, input.page ?? 1);
+    const pageSize = Math.min(100, Math.max(1, input.pageSize ?? 100));
+    const paged = input.page !== undefined || input.pageSize !== undefined;
+    const status = listStatus(input.status);
+    const q = input.q?.trim();
+    const idQuery = this.createListIdQuery(actor, status, q);
+    const total = await idQuery.getCount();
+    if (paged) {
+      idQuery.skip((page - 1) * pageSize).take(pageSize);
     }
-    return (await query.getMany()).map(publicSubmission);
+    const rows = await idQuery.getRawMany<{ id: string }>();
+    const ids = rows.map((row) => row.id);
+    const submissions = await this.findDetailedByIds(ids);
+    const ordered = new Map(
+      submissions.map((submission) => [submission.id, submission]),
+    );
+    return {
+      submissions: ids.flatMap((id) => {
+        const submission = ordered.get(id);
+        return submission ? [publicSubmission(submission)] : [];
+      }),
+      pagination: {
+        page,
+        pageSize: paged ? pageSize : total,
+        total,
+        totalPages: paged ? Math.max(1, Math.ceil(total / pageSize)) : 1,
+      },
+    };
+  }
+
+  async exportCsv(actor: PublicUser, input: SubmissionListQuery = {}) {
+    const status = listStatus(input.status);
+    const q = input.q?.trim();
+    const ids = (
+      await this.createListIdQuery(actor, status, q).getRawMany<{ id: string }>()
+    ).map((row) => row.id);
+    const submissions = await this.findDetailedByIds(ids);
+    const ordered = new Map(
+      submissions.map((submission) => [submission.id, submission]),
+    );
+    const rows = [
+      [
+        "submission_id",
+        "file_name",
+        "owner_name",
+        "team_name",
+        "upload_status",
+        "processing_status",
+        "quality_status",
+        "final_score",
+        "settlement_status",
+        "asset_status",
+        "storage_status",
+        "duplicate_candidate_count",
+        "duration_seconds",
+        "created_at",
+        "uploaded_at",
+      ],
+      ...ids.flatMap((id) => {
+        const submission = ordered.get(id);
+        if (!submission) return [];
+        const item = publicSubmission(submission);
+        return [
+          [
+            item.id,
+            item.fileName,
+            item.ownerName,
+            item.teamName,
+            item.uploadStatus,
+            item.processingStatus,
+            item.quality?.status ?? "",
+            item.quality?.finalScore ?? "",
+            item.settlementStatus,
+            item.assetStatus,
+            item.storageStatus,
+            item.duplicateCandidates.length,
+            item.media?.durationSeconds ?? "",
+            new Date(item.createdAt).toISOString(),
+            item.uploadedAt ? new Date(item.uploadedAt).toISOString() : "",
+          ],
+        ];
+      }),
+    ];
+    return rows.map((row) => row.map(csvCell).join(",")).join("\n") + "\n";
   }
 
   async get(actor: PublicUser, id: string) {
@@ -374,8 +887,27 @@ export class SubmissionsService {
         "quality",
         "quality.submissionId = submission.id",
       )
+      .leftJoinAndMapMany(
+        "submission.duplicateCandidates",
+        SubmissionDuplicateCandidateEntity,
+        "duplicateCandidate",
+        "duplicateCandidate.submissionId = submission.id",
+      )
+      .leftJoinAndSelect(
+        "duplicateCandidate.candidateSubmission",
+        "duplicateCandidateSubmission",
+      )
+      .leftJoinAndMapMany(
+        "submission.reviewAuditLogs",
+        AuditLogEntity,
+        "reviewAudit",
+        "reviewAudit.targetAccountId = submission.id AND reviewAudit.action IN (:...reviewActions)",
+        { reviewActions: REVIEW_AUDIT_ACTIONS },
+      )
       .where("submission.id = :id", { id })
       .orderBy("segment.startSeconds", "ASC")
+      .addOrderBy("duplicateCandidate.similarity", "DESC")
+      .addOrderBy("reviewAudit.createdAt", "ASC")
       .getOne();
     if (!submission) {
       throw new SubmissionFailure("NOT_FOUND", "视频不存在", 404);
@@ -384,12 +916,1343 @@ export class SubmissionsService {
     return publicSubmission(submission);
   }
 
+  async reviewQuality(
+    actor: PublicUser,
+    id: string,
+    input: ReviewSubmissionQualityDto,
+  ) {
+    const reason = input.reason.trim();
+    if (!reason) {
+      throw new SubmissionFailure(
+        "REVIEW_REASON_REQUIRED",
+        "请填写调整原因",
+        400,
+      );
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      const submission = await manager
+        .getRepository(SubmissionEntity)
+        .findOne({
+          where: { id },
+          lock: { mode: "pessimistic_write" },
+        });
+      if (!submission) {
+        throw new SubmissionFailure("NOT_FOUND", "视频不存在", 404);
+      }
+      this.policy.requireQualityReview(actor, submission);
+      if (submission.processingStatus !== "completed") {
+        throw new SubmissionFailure(
+          "QUALITY_NOT_COMPLETED",
+          "视频尚未完成 AI 质检，暂不能人工复核",
+          409,
+        );
+      }
+      const lockedItem = await manager
+        .getRepository(PointCycleItemEntity)
+        .findOne({
+          where: { submissionId: id },
+          lock: { mode: "pessimistic_write" },
+        });
+
+      const quality = await manager
+        .getRepository(VideoQualityResultEntity)
+        .findOne({
+          where: { submissionId: id },
+          lock: { mode: "pessimistic_write" },
+        });
+      if (!quality) {
+        throw new SubmissionFailure(
+          "QUALITY_RESULT_NOT_FOUND",
+          "视频质检结果不存在",
+          404,
+        );
+      }
+      if (quality.status === "hard_reject") {
+        throw new SubmissionFailure(
+          "QUALITY_HARD_REJECT_IMMUTABLE",
+          "硬否决结果不能通过人工复核改为通过",
+          409,
+        );
+      }
+      if (
+        input.expectedReviewRevision !== undefined &&
+        input.expectedReviewRevision !== quality.reviewRevision
+      ) {
+        throw new SubmissionFailure(
+          "REVIEW_CONFLICT",
+          "该视频质检结果已被更新，请刷新后再复核",
+          409,
+        );
+      }
+
+      const metadata = await manager
+        .getRepository(MediaMetadataEntity)
+        .findOneBy({ submissionId: id });
+      const currentBillableDurationMs =
+        quality.manualBillableDurationMs ?? quality.billableDurationMs;
+      const currentInvalidDurationMs =
+        quality.manualInvalidDurationMs ?? quality.invalidDurationMs;
+      const existingDurationMs =
+        currentBillableDurationMs !== null && currentInvalidDurationMs !== null
+          ? Number(currentBillableDurationMs) + Number(currentInvalidDurationMs)
+          : null;
+      const durationSeconds =
+        metadata?.durationSeconds !== undefined
+          ? Number(metadata.durationSeconds)
+          : existingDurationMs === null
+            ? null
+            : existingDurationMs / 1_000;
+      const issues = normalizeReviewIssues(
+        input.issues,
+        Number.isFinite(durationSeconds) ? durationSeconds : null,
+      );
+      const invalidDurationMs = unionDurationMs(
+        issues.map((issue) => ({
+          startMs: Math.round(issue.start * 1_000),
+          endMs: Math.round(issue.end * 1_000),
+        })),
+      );
+      const durationMs =
+        durationSeconds === null
+          ? null
+          : Math.max(0, Math.round(durationSeconds * 1_000));
+      const billableDurationMs =
+        durationMs === null ? null : Math.max(0, durationMs - invalidDurationMs);
+      const finalScore = Math.round(input.finalScore * 10) / 10;
+      const qualityRule = await this.qualityRuleForResult(manager, quality);
+      const passed = passesQualityRule(finalScore, qualityRule.passThreshold);
+      const settlementRatio = settlementRatioForScore({
+        score: finalScore,
+        passThreshold: qualityRule.passThreshold,
+      });
+      const before = {
+        finalScore:
+          quality.manualFinalScore === null
+            ? quality.finalScore === null
+              ? null
+              : Number(quality.finalScore)
+            : Number(quality.manualFinalScore),
+        invalidDurationMs:
+          quality.manualInvalidDurationMs === null
+            ? quality.invalidDurationMs === null
+              ? null
+              : Number(quality.invalidDurationMs)
+            : Number(quality.manualInvalidDurationMs),
+        reviewRevision: quality.reviewRevision,
+        assetStatus: submission.assetStatus,
+        quarantineReason: submission.quarantineReason,
+      };
+
+      quality.manualFinalScore = decimal(finalScore, 1);
+      quality.manualSettlementRatio = decimal(settlementRatio, 4);
+      quality.passed = passed;
+      quality.manualInvalidDurationMs = String(invalidDurationMs);
+      quality.manualBillableDurationMs =
+        billableDurationMs === null ? null : String(billableDurationMs);
+      quality.manualIssues = issues;
+      quality.manualReviewReason = reason;
+      quality.manualReviewedByAccountId = actor.id;
+      quality.manualReviewedByName = actor.displayName;
+      quality.manualReviewedAt = new Date();
+      quality.reviewRevision += 1;
+      await manager.getRepository(VideoQualityResultEntity).save(quality);
+
+      const after = {
+        finalScore,
+        invalidDurationMs,
+        reviewRevision: quality.reviewRevision,
+      };
+      const previousAssetStatus = submission.assetStatus;
+      const previousQuarantineReason = submission.quarantineReason;
+      const shouldQuarantine =
+        input.quarantine === true ||
+        (input.quarantine === undefined &&
+          this.reviewContainsSensitiveRisk(reason, issues));
+      const shouldRelease = input.quarantine === false;
+      if (shouldQuarantine) {
+        submission.assetStatus = "quarantined";
+        submission.quarantineReason = reason;
+        submission.quarantinedAt = new Date();
+        submission.quarantinedByAccountId = actor.id;
+        submission.quarantinedByName = actor.displayName;
+        await manager.getRepository(SubmissionEntity).save(submission);
+      } else if (shouldRelease) {
+        submission.assetStatus = "active";
+        submission.quarantineReason = null;
+        submission.quarantinedAt = null;
+        submission.quarantinedByAccountId = null;
+        submission.quarantinedByName = null;
+        await manager.getRepository(SubmissionEntity).save(submission);
+      }
+      const quarantineAction =
+        previousAssetStatus !== submission.assetStatus
+          ? submission.assetStatus === "quarantined"
+            ? "asset_quarantine"
+            : "asset_release"
+          : null;
+      if (lockedItem) {
+        if (durationMs === null || billableDurationMs === null) {
+          throw new SubmissionFailure(
+            "MEDIA_DURATION_REQUIRED",
+            "视频时长未知，不能计算锁定后调整",
+            409,
+          );
+        }
+        const adjustmentRepository = manager.getRepository(
+          PointCycleAdjustmentEntity,
+        );
+        const latestAdjustment = await adjustmentRepository
+          .createQueryBuilder("adjustment")
+          .setLock("pessimistic_write")
+          .where("adjustment.submissionId = :id", { id })
+          .orderBy("adjustment.createdAt", "DESC")
+          .addOrderBy("adjustment.id", "DESC")
+          .getOne();
+        const previousFinalScore = latestAdjustment
+          ? Number(latestAdjustment.nextFinalScore)
+          : Number(lockedItem.finalScore);
+        const previousSettlementRatio = latestAdjustment
+          ? Number(latestAdjustment.nextSettlementRatio)
+          : Number(lockedItem.settlementRatio);
+        const previousInvalidDurationMs = latestAdjustment
+          ? Number(latestAdjustment.nextInvalidDurationMs)
+          : Math.max(
+              0,
+              durationMs - Number(lockedItem.effectiveDurationMs),
+            );
+        const previousEffectiveDurationMs = latestAdjustment
+          ? Number(latestAdjustment.nextEffectiveDurationMs)
+          : Number(lockedItem.effectiveDurationMs);
+        const previousPoints = latestAdjustment
+          ? Number(latestAdjustment.nextPoints)
+          : Number(lockedItem.points);
+        const pointRule = await this.pointRuleForCycle(
+          manager,
+          lockedItem.cycleId,
+        );
+        const cycleSettlementRatio = passed
+          ? coefficientForScore(finalScore, pointRule.coefficientBands)
+          : 0;
+        const nextPoints = pointsForRule({
+          pointsPerMinute: Number(lockedItem.pointsPerMinute),
+          effectiveDurationMs: billableDurationMs,
+          settlementRatio: cycleSettlementRatio,
+        });
+        const pointsDelta =
+          Math.round((nextPoints - previousPoints) * 100) / 100;
+        const adjustment = await adjustmentRepository.save({
+          id: `PCA-${randomUUID()}`,
+          pointCycleItemId: lockedItem.id,
+          submissionId: submission.id,
+          previousFinalScore: decimal(previousFinalScore, 1),
+          nextFinalScore: decimal(finalScore, 1),
+          previousSettlementRatio: decimal(previousSettlementRatio, 4),
+          nextSettlementRatio: decimal(cycleSettlementRatio, 4),
+          previousInvalidDurationMs: String(previousInvalidDurationMs),
+          nextInvalidDurationMs: String(invalidDurationMs),
+          previousEffectiveDurationMs: String(previousEffectiveDurationMs),
+          nextEffectiveDurationMs: String(billableDurationMs),
+          previousPoints: decimal(previousPoints, 2),
+          nextPoints: decimal(nextPoints, 2),
+          pointsDelta: decimal(pointsDelta, 2),
+          reason,
+          createdByAccountId: actor.id,
+          createdByName: actor.displayName,
+        });
+        await this.audit.record(
+          manager,
+          actor,
+          "point_cycle_adjustment",
+          { id: submission.id, name: submission.originalFileName },
+          reason,
+          {
+            ...before,
+            finalScore: previousFinalScore,
+            settlementRatio: previousSettlementRatio,
+            invalidDurationMs: previousInvalidDurationMs,
+            effectiveDurationMs: previousEffectiveDurationMs,
+            points: previousPoints,
+          },
+          {
+            ...after,
+            adjustmentId: adjustment.id,
+            pointCycleItemId: lockedItem.id,
+            settlementRatio: cycleSettlementRatio,
+            effectiveDurationMs: billableDurationMs,
+            points: nextPoints,
+            pointsDelta,
+            assetStatus: submission.assetStatus,
+            quarantineReason: submission.quarantineReason,
+          },
+        );
+        if (quarantineAction) {
+          await this.audit.record(
+            manager,
+            actor,
+            quarantineAction,
+            { id: submission.id, name: submission.originalFileName },
+            submission.assetStatus === "quarantined"
+              ? "人工复核将视频移入敏感隔离区"
+              : "人工复核解除视频敏感隔离",
+            {
+              assetStatus: previousAssetStatus,
+              quarantineReason: previousQuarantineReason,
+            },
+            {
+              assetStatus: submission.assetStatus,
+              quarantineReason: submission.quarantineReason,
+            },
+          );
+        }
+        return;
+      }
+      await this.audit.record(
+        manager,
+        actor,
+        "quality_review",
+        { id: submission.id, name: submission.originalFileName },
+        reason,
+        before,
+        {
+          ...after,
+          assetStatus: submission.assetStatus,
+          quarantineReason: submission.quarantineReason,
+        },
+      );
+      if (quarantineAction) {
+        await this.audit.record(
+          manager,
+          actor,
+          quarantineAction,
+          { id: submission.id, name: submission.originalFileName },
+          submission.assetStatus === "quarantined"
+            ? "人工复核将视频移入敏感隔离区"
+            : "人工复核解除视频敏感隔离",
+          {
+            assetStatus: previousAssetStatus,
+            quarantineReason: previousQuarantineReason,
+          },
+          {
+            assetStatus: submission.assetStatus,
+            quarantineReason: submission.quarantineReason,
+          },
+        );
+      }
+    });
+
+    return this.get(actor, id);
+  }
+
+  async renameSubmission(
+    actor: PublicUser,
+    id: string,
+    input: RenameSubmissionDto,
+  ) {
+    this.policy.requireSubmissionRename(actor);
+    const fileName = input.fileName.trim();
+    if (!fileName) {
+      throw new SubmissionFailure(
+        "SUBMISSION_NAME_REQUIRED",
+        "请填写视频文件名",
+        400,
+      );
+    }
+    const reason = input.reason?.trim() || "管理员重命名提交数据";
+
+    await this.dataSource.transaction(async (manager) => {
+      const submission = await manager
+        .getRepository(SubmissionEntity)
+        .findOne({
+          where: { id },
+          lock: { mode: "pessimistic_write" },
+        });
+      if (!submission) {
+        throw new SubmissionFailure("NOT_FOUND", "视频不存在", 404);
+      }
+      await this.assertSubmissionNotLockedForManagement(
+        manager,
+        id,
+        "重命名",
+      );
+      const expectedExtension = expectedVideoExtension(submission.contentType);
+      if (
+        expectedExtension &&
+        extname(fileName).toLocaleLowerCase("en-US") !== expectedExtension
+      ) {
+        throw new SubmissionFailure(
+          "INVALID_FILE_NAME",
+          "文件扩展名需与视频格式保持一致",
+          400,
+        );
+      }
+      if (submission.originalFileName === fileName) return;
+
+      const previousFileName = submission.originalFileName;
+      submission.originalFileName = fileName;
+      await manager.getRepository(SubmissionEntity).save(submission);
+      await this.audit.record(
+        manager,
+        actor,
+        "submission_rename",
+        { id: submission.id, name: fileName },
+        reason,
+        { fileName: previousFileName },
+        { fileName },
+      );
+    });
+
+    return this.get(actor, id);
+  }
+
+  async rerunAiQuality(actor: PublicUser, id: string, reasonInput: string) {
+    this.policy.requireAiQualityRerun(actor);
+    const reason = reasonInput.trim();
+    if (!reason) {
+      throw new SubmissionFailure(
+        "RERUN_REASON_REQUIRED",
+        "请填写重跑原因",
+        400,
+      );
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      const submission = await manager
+        .getRepository(SubmissionEntity)
+        .findOne({
+          where: { id },
+          lock: { mode: "pessimistic_write" },
+        });
+      if (!submission) {
+        throw new SubmissionFailure("NOT_FOUND", "视频不存在", 404);
+      }
+      if (submission.uploadStatus !== "uploaded") {
+        throw new SubmissionFailure(
+          "UPLOAD_NOT_COMPLETED",
+          "视频尚未完成上传，不能重跑 AI 质检",
+          409,
+        );
+      }
+      if (
+        !["awaiting_ai", "completed", "system_failed"].includes(
+          submission.processingStatus,
+        )
+      ) {
+        throw new SubmissionFailure(
+          "AI_RERUN_NOT_READY",
+          "视频尚未完成媒体解析，不能重跑 AI 质检",
+          409,
+        );
+      }
+      const metadata = await manager
+        .getRepository(MediaMetadataEntity)
+        .exists({ where: { submissionId: id } });
+      if (!metadata) {
+        throw new SubmissionFailure(
+          "MEDIA_METADATA_NOT_READY",
+          "视频媒体元数据尚未生成，不能重跑 AI 质检",
+          409,
+        );
+      }
+      const locked = await manager
+        .getRepository(PointCycleItemEntity)
+        .exists({ where: { submissionId: id } });
+      if (locked) {
+        throw new SubmissionFailure(
+          "POINT_CYCLE_LOCKED",
+          "视频已进入积分周期，不能重跑 AI 质检",
+          409,
+        );
+      }
+
+      const quality = await manager
+        .getRepository(VideoQualityResultEntity)
+        .findOne({
+          where: { submissionId: id },
+          lock: { mode: "pessimistic_write" },
+        });
+      const before = {
+        processingStatus: submission.processingStatus,
+        qualityStatus: quality?.status ?? null,
+        attempts: quality?.attempts ?? 0,
+      };
+      if (quality) {
+        quality.status = "queued";
+        quality.finalScore = null;
+        quality.rawTotalScore = null;
+        quality.settlementRatio = null;
+        quality.passed = null;
+        quality.invalidDurationMs = null;
+        quality.billableDurationMs = null;
+        quality.manualFinalScore = null;
+        quality.manualSettlementRatio = null;
+        quality.manualInvalidDurationMs = null;
+        quality.manualBillableDurationMs = null;
+        quality.manualIssues = null;
+        quality.manualReviewReason = null;
+        quality.manualReviewedByAccountId = null;
+        quality.manualReviewedByName = null;
+        quality.manualReviewedAt = null;
+        quality.summary = "";
+        quality.recommendations = [];
+        quality.deductions = [];
+        quality.reviewRequired = false;
+        quality.reviewReasons = [];
+        quality.normalizedResult = null;
+        quality.rawModelResult = null;
+        quality.lastError = null;
+        quality.startedAt = null;
+        quality.completedAt = null;
+        await manager.getRepository(VideoQualityResultEntity).save(quality);
+      }
+
+      submission.processingStatus = "awaiting_ai";
+      submission.failureCode = null;
+      submission.failureMessage = null;
+      submission.assetStatus = "active";
+      submission.quarantineReason = null;
+      submission.quarantinedAt = null;
+      submission.quarantinedByAccountId = null;
+      submission.quarantinedByName = null;
+      await manager.getRepository(SubmissionEntity).save(submission);
+
+      const outboxRepository = manager.getRepository(JobOutboxEntity);
+      const existingEvent = await outboxRepository.findOne({
+        where: { aggregateId: submission.id, eventType: "ai.quality.v1" },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (existingEvent) {
+        existingEvent.payload = { submissionId: submission.id };
+        existingEvent.status = "pending";
+        existingEvent.attempts = 0;
+        existingEvent.availableAt = new Date();
+        existingEvent.publishedAt = null;
+        existingEvent.lastError = null;
+        await outboxRepository.save(existingEvent);
+      } else {
+        await outboxRepository.save({
+          id: `JOB-${randomUUID()}`,
+          aggregateType: "submission",
+          aggregateId: submission.id,
+          eventType: "ai.quality.v1",
+          payload: { submissionId: submission.id },
+          status: "pending",
+          attempts: 0,
+          availableAt: new Date(),
+        });
+      }
+      await this.audit.record(
+        manager,
+        actor,
+        "ai_quality_rerun",
+        { id: submission.id, name: submission.originalFileName },
+        reason,
+        before,
+        {
+          processingStatus: "awaiting_ai",
+          qualityStatus: "queued",
+          attempts: quality?.attempts ?? 0,
+          assetStatus: submission.assetStatus,
+        },
+      );
+    });
+
+    return this.get(actor, id);
+  }
+
+  async deleteSubmission(
+    actor: PublicUser,
+    id: string,
+    input: DeleteSubmissionDto,
+  ) {
+    this.policy.requireSubmissionDelete(actor);
+    const reason = input.reason.trim();
+    if (!reason) {
+      throw new SubmissionFailure(
+        "DELETE_REASON_REQUIRED",
+        "请填写删除原因",
+        400,
+      );
+    }
+
+    const now = new Date();
+    return await this.dataSource.transaction(async (manager) => {
+      const submission = await manager
+        .getRepository(SubmissionEntity)
+        .findOne({
+          where: { id },
+          lock: { mode: "pessimistic_write" },
+        });
+      if (!submission) {
+        throw new SubmissionFailure("NOT_FOUND", "视频不存在", 404);
+      }
+      if (ACTIVE_PROCESSING_STATUSES.has(submission.processingStatus)) {
+        throw new SubmissionFailure(
+          "SUBMISSION_IN_PROCESSING",
+          "视频正在处理，不能删除提交记录",
+          409,
+        );
+      }
+      await this.assertSubmissionNotLockedForManagement(
+        manager,
+        id,
+        "删除",
+      );
+
+      const before = {
+        fileName: submission.originalFileName,
+        uploadStatus: submission.uploadStatus,
+        processingStatus: submission.processingStatus,
+        storageStatus: submission.storageStatus,
+        storageRetainUntil: submission.storageRetainUntil?.getTime() ?? null,
+      };
+      const deletedObjectKeys: string[] = [];
+      let abortedUploadId: string | null = null;
+
+      if (
+        submission.uploadStatus === "uploaded" &&
+        submission.storageStatus !== "deleted"
+      ) {
+        if (
+          !input.force &&
+          submission.storageRetainUntil &&
+          submission.storageRetainUntil.getTime() > now.getTime()
+        ) {
+          throw new SubmissionFailure(
+            "RETENTION_NOT_EXPIRED",
+            "视频仍在保留期内，需强制删除确认后才能删除提交记录",
+            409,
+          );
+        }
+        deletedObjectKeys.push(
+          ...(await this.collectSubmissionObjectKeys(manager, submission)),
+        );
+        for (const objectKey of deletedObjectKeys) {
+          await this.storage.deleteObject({ objectKey });
+        }
+      } else if (
+        submission.uploadStatus === "uploading" &&
+        submission.multipartUploadId
+      ) {
+        await this.storage.abortMultipartUpload({
+          objectKey: submission.objectKey,
+          uploadId: submission.multipartUploadId,
+        });
+        abortedUploadId = submission.multipartUploadId;
+      }
+
+      await manager.getRepository(JobOutboxEntity).delete({
+        aggregateId: submission.id,
+      });
+      await this.audit.record(
+        manager,
+        actor,
+        "submission_delete",
+        { id: submission.id, name: submission.originalFileName },
+        reason,
+        before,
+        {
+          deletedAt: now.getTime(),
+          force: input.force === true,
+          deletedObjectKeys,
+          abortedUploadId,
+        },
+      );
+      await manager.getRepository(SubmissionEntity).delete({ id });
+
+      return {
+        deletedSubmissionId: id,
+        deletedFileName: before.fileName,
+        deletedObjectKeys,
+        abortedUploadId: abortedUploadId ?? undefined,
+      };
+    });
+  }
+
+  async clearDuplicateCandidate(
+    actor: PublicUser,
+    id: string,
+    candidateId: string,
+    reasonInput: string,
+  ) {
+    this.policy.requireDuplicateCandidateReview(actor);
+    const reason = reasonInput.trim();
+    if (!reason) {
+      throw new SubmissionFailure(
+        "DUPLICATE_CLEAR_REASON_REQUIRED",
+        "请填写解除近似重复候选的原因",
+        400,
+      );
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      const submission = await manager
+        .getRepository(SubmissionEntity)
+        .findOne({ where: { id }, lock: { mode: "pessimistic_write" } });
+      if (!submission) {
+        throw new SubmissionFailure("NOT_FOUND", "视频不存在", 404);
+      }
+      const candidate = await manager
+        .getRepository(SubmissionDuplicateCandidateEntity)
+        .findOne({
+          where: { id: candidateId, submissionId: id },
+          lock: { mode: "pessimistic_write" },
+        });
+      if (!candidate) {
+        throw new SubmissionFailure(
+          "DUPLICATE_CANDIDATE_NOT_FOUND",
+          "近似重复候选不存在",
+          404,
+        );
+      }
+      if (candidate.status === "cleared") return;
+      const candidateSubmission = await manager
+        .getRepository(SubmissionEntity)
+        .findOneBy({ id: candidate.candidateSubmissionId });
+
+      candidate.status = "cleared";
+      candidate.clearedReason = reason;
+      candidate.clearedByAccountId = actor.id;
+      candidate.clearedByName = actor.displayName;
+      candidate.clearedAt = new Date();
+      await manager
+        .getRepository(SubmissionDuplicateCandidateEntity)
+        .save(candidate);
+      await this.audit.record(
+        manager,
+        actor,
+        "duplicate_candidate_clear",
+        { id: submission.id, name: submission.originalFileName },
+        reason,
+        {
+          duplicateCandidateId: candidate.id,
+          candidateSubmissionId: candidate.candidateSubmissionId,
+          similarity: Number(candidate.similarity),
+        },
+        {
+          status: "cleared",
+          candidateFileName: candidateSubmission?.originalFileName ?? null,
+        },
+      );
+    });
+
+    return this.get(actor, id);
+  }
+
+  async preview(actor: PublicUser, id: string) {
+    const submission = await this.findEntity(id);
+    this.policy.requireRead(actor, submission);
+    if (submission.storageStatus === "deleted") {
+      throw new SubmissionFailure(
+        "OBJECT_DELETED",
+        "视频对象已删除，不能预览",
+        410,
+      );
+    }
+    if (submission.uploadStatus !== "uploaded") {
+      throw new SubmissionFailure(
+        "PREVIEW_NOT_READY",
+        "视频尚未完成上传，暂不能预览",
+        409,
+      );
+    }
+    const metadata = await this.dataSource
+      .getRepository(MediaMetadataEntity)
+      .findOneBy({ submissionId: id });
+    const segments = await this.dataSource
+      .getRepository(MediaSegmentEntity)
+      .find({
+        where: { submissionId: id },
+        order: { startSeconds: "ASC" },
+      });
+    const videoObjectKey = metadata?.previewObjectKey ?? submission.objectKey;
+    const signed = await this.storage.presignDownloadObject({
+      objectKey: videoObjectKey,
+      expiresInSeconds: PREVIEW_URL_TTL_SECONDS,
+    });
+    const thumbnail =
+      metadata?.thumbnailObjectKey
+        ? await this.storage.presignDownloadObject({
+            objectKey: metadata.thumbnailObjectKey,
+            expiresInSeconds: PREVIEW_URL_TTL_SECONDS,
+          })
+        : null;
+    const evidenceFrames = await Promise.all(
+      segments.flatMap((segment) =>
+        segment.evidenceObjectKey
+          ? [
+              this.storage
+                .presignDownloadObject({
+                  objectKey: segment.evidenceObjectKey,
+                  expiresInSeconds: PREVIEW_URL_TTL_SECONDS,
+                })
+                .then((evidence) => ({
+                  segmentId: segment.id,
+                  type: segment.type,
+                  startSeconds: Number(segment.startSeconds),
+                  endSeconds: Number(segment.endSeconds),
+                  url: evidence.url,
+                  expiresAt: evidence.expiresAt.getTime(),
+                  contentType: "image/jpeg",
+                })),
+            ]
+          : [],
+      ),
+    );
+    await this.audit.record(
+      this.dataSource.manager,
+      actor,
+      "storage_preview_link",
+      { id: submission.id, name: submission.originalFileName },
+      "生成视频预览短期访问链接",
+      null,
+      {
+        objectKey: videoObjectKey,
+        source: metadata?.previewObjectKey ? "web_preview" : "original",
+        hlsMasterObjectKey: metadata?.hlsMasterObjectKey ?? null,
+        expiresInSeconds: PREVIEW_URL_TTL_SECONDS,
+        thumbnailObjectKey: metadata?.thumbnailObjectKey ?? null,
+        evidenceFrameCount: evidenceFrames.length,
+      },
+    );
+    return {
+      url: signed.url,
+      expiresAt: signed.expiresAt.getTime(),
+      contentType: metadata?.previewObjectKey ? "video/mp4" : submission.contentType,
+      fileName: submission.originalFileName,
+      source: metadata?.previewObjectKey ? "web_preview" : "original",
+      hls:
+        metadata?.hlsMasterObjectKey && metadata.hlsBaseObjectKey
+          ? {
+              url: `/api/v1/submissions/${encodeURIComponent(submission.id)}/preview/hls/master.m3u8`,
+              contentType: "application/vnd.apple.mpegurl",
+              qualities: metadata.hlsQualities,
+            }
+          : undefined,
+      thumbnail: thumbnail
+        ? {
+            url: thumbnail.url,
+            expiresAt: thumbnail.expiresAt.getTime(),
+            contentType: "image/jpeg",
+          }
+        : undefined,
+      evidenceFrames,
+    };
+  }
+
+  async previewHlsResource(actor: PublicUser, id: string, fileName: string) {
+    if (!HLS_FILE_NAME_PATTERN.test(fileName)) {
+      throw new SubmissionFailure("HLS_NOT_FOUND", "HLS 资源不存在", 404);
+    }
+    const submission = await this.findEntity(id);
+    this.policy.requireRead(actor, submission);
+    if (submission.storageStatus === "deleted") {
+      throw new SubmissionFailure(
+        "OBJECT_DELETED",
+        "视频对象已删除，不能预览",
+        410,
+      );
+    }
+    const metadata = await this.dataSource
+      .getRepository(MediaMetadataEntity)
+      .findOneBy({ submissionId: id });
+    if (!metadata?.hlsBaseObjectKey || !metadata.hlsMasterObjectKey) {
+      throw new SubmissionFailure("HLS_NOT_READY", "HLS 预览尚未生成", 404);
+    }
+    const objectKey =
+      fileName === "master.m3u8"
+        ? metadata.hlsMasterObjectKey
+        : `${metadata.hlsBaseObjectKey}/${fileName}`;
+    if (!metadata.hlsObjectKeys.includes(objectKey)) {
+      throw new SubmissionFailure("HLS_NOT_FOUND", "HLS 资源不存在", 404);
+    }
+    const stream = await this.storage.readObject({ objectKey });
+    return {
+      contentType: fileName.endsWith(".m3u8")
+        ? "application/vnd.apple.mpegurl"
+        : "video/mp2t",
+      stream: stream as Readable,
+    };
+  }
+
+  async deleteObjects(
+    actor: PublicUser,
+    id: string,
+    input: DeleteSubmissionObjectsDto,
+  ) {
+    this.policy.requireStorageDelete(actor);
+    const reason = input.reason.trim();
+    if (!reason) {
+      throw new SubmissionFailure(
+        "DELETE_REASON_REQUIRED",
+        "请填写删除原因",
+        400,
+      );
+    }
+
+    const now = new Date();
+    const deletedKeys = await this.dataSource.transaction(async (manager) => {
+      const submission = await manager
+        .getRepository(SubmissionEntity)
+        .findOne({
+          where: { id },
+          lock: { mode: "pessimistic_write" },
+        });
+      if (!submission) {
+        throw new SubmissionFailure("NOT_FOUND", "视频不存在", 404);
+      }
+      if (submission.storageStatus === "deleted") {
+        throw new SubmissionFailure(
+          "OBJECT_ALREADY_DELETED",
+          "视频对象已删除",
+          409,
+        );
+      }
+      if (submission.uploadStatus !== "uploaded") {
+        throw new SubmissionFailure(
+          "OBJECT_NOT_UPLOADED",
+          "视频尚未完成上传，不能删除对象",
+          409,
+        );
+      }
+      if (ACTIVE_PROCESSING_STATUSES.has(submission.processingStatus)) {
+        throw new SubmissionFailure(
+          "OBJECT_IN_PROCESSING",
+          "视频正在处理，不能删除对象",
+          409,
+        );
+      }
+      if (
+        !input.force &&
+        submission.storageRetainUntil &&
+        submission.storageRetainUntil.getTime() > now.getTime()
+      ) {
+        throw new SubmissionFailure(
+          "RETENTION_NOT_EXPIRED",
+          "视频仍在保留期内，需强制删除确认后才能删除对象",
+          409,
+        );
+      }
+
+      const objectKeys = await this.collectSubmissionObjectKeys(
+        manager,
+        submission,
+      );
+
+      for (const objectKey of objectKeys) {
+        await this.storage.deleteObject({ objectKey });
+      }
+
+      submission.storageStatus = "deleted";
+      submission.storageDeletedAt = now;
+      submission.storageDeletedByAccountId = actor.id;
+      submission.storageDeletedByName = actor.displayName;
+      submission.storageDeleteReason = reason;
+      submission.uploadStatus = "aborted";
+      submission.assetStatus = "quarantined";
+      submission.quarantineReason = "对象已删除";
+      submission.quarantinedAt = now;
+      submission.quarantinedByAccountId = actor.id;
+      submission.quarantinedByName = actor.displayName;
+      submission.failureCode = "OBJECT_DELETED";
+      submission.failureMessage = "视频对象已删除";
+      await manager.getRepository(SubmissionEntity).save(submission);
+      await manager.getRepository(JobOutboxEntity).delete({
+        aggregateId: submission.id,
+      });
+      await this.audit.record(
+        manager,
+        actor,
+        "storage_object_delete",
+        { id: submission.id, name: submission.originalFileName },
+        reason,
+        {
+          storageStatus: "available",
+          storageRetainUntil: submission.storageRetainUntil?.getTime() ?? null,
+        },
+        {
+          storageStatus: "deleted",
+          force: input.force === true,
+          objectKeys,
+          deletedAt: now.getTime(),
+        },
+      );
+      return objectKeys;
+    });
+
+    return {
+      ...(await this.get(actor, id)),
+      deletedObjectKeys: deletedKeys,
+    };
+  }
+
+  private async assertSubmissionNotLockedForManagement(
+    manager: EntityManager,
+    id: string,
+    action: string,
+  ): Promise<void> {
+    const [pointItems, pointAdjustments, deliveryItems] = await Promise.all([
+      manager.getRepository(PointCycleItemEntity).countBy({ submissionId: id }),
+      manager
+        .getRepository(PointCycleAdjustmentEntity)
+        .countBy({ submissionId: id }),
+      manager
+        .getRepository(DeliveryPackageItemEntity)
+        .countBy({ submissionId: id }),
+    ]);
+    if (pointItems + pointAdjustments > 0) {
+      throw new SubmissionFailure(
+        "SUBMISSION_LOCKED",
+        `视频已进入积分周期，不能${action}`,
+        409,
+      );
+    }
+    if (deliveryItems > 0) {
+      throw new SubmissionFailure(
+        "SUBMISSION_DELIVERED",
+        `视频已进入交付包，不能${action}`,
+        409,
+      );
+    }
+  }
+
+  private async collectSubmissionObjectKeys(
+    manager: EntityManager,
+    submission: SubmissionEntity,
+  ): Promise<string[]> {
+    const metadata = await manager
+      .getRepository(MediaMetadataEntity)
+      .findOneBy({ submissionId: submission.id });
+    const segments = await manager.getRepository(MediaSegmentEntity).find({
+      where: { submissionId: submission.id },
+    });
+    return Array.from(
+      new Set(
+        [
+          submission.objectKey,
+          metadata?.previewObjectKey,
+          metadata?.thumbnailObjectKey,
+          metadata?.hlsMasterObjectKey,
+          ...hlsDerivedObjectKeys(metadata),
+          ...segments.map((segment) => segment.evidenceObjectKey),
+        ].filter((key): key is string => Boolean(key)),
+      ),
+    );
+  }
+
   private async findEntity(id: string): Promise<SubmissionEntity> {
     const submission = await this.submissions.findOneBy({ id });
     if (!submission) {
       throw new SubmissionFailure("NOT_FOUND", "视频不存在", 404);
     }
     return submission;
+  }
+
+  private applyListScope(
+    query: ReturnType<Repository<SubmissionEntity>["createQueryBuilder"]>,
+    actor: PublicUser,
+  ): void {
+    if (actor.role === "leader") {
+      query.andWhere("submission.teamId = :teamId", {
+        teamId: actor.teamId,
+      });
+    } else if (actor.role === "collector") {
+      query.andWhere("submission.ownerId = :ownerId", {
+        ownerId: actor.id,
+      });
+    }
+  }
+
+  private createListIdQuery(
+    actor: PublicUser,
+    status: SubmissionListStatus,
+    q: string | undefined,
+  ) {
+    const idQuery = this.submissions
+      .createQueryBuilder("submission")
+      .leftJoin("submission.owner", "owner")
+      .leftJoin("submission.team", "team")
+      .leftJoin(
+        VideoQualityResultEntity,
+        "quality",
+        "quality.submissionId = submission.id",
+      )
+      .leftJoin(
+        PointCycleItemEntity,
+        "pointCycleItem",
+        "pointCycleItem.submissionId = submission.id",
+      )
+      .leftJoin(
+        SubmissionDuplicateCandidateEntity,
+        "duplicateCandidate",
+        "duplicateCandidate.submissionId = submission.id AND duplicateCandidate.status = :duplicateCandidateStatus",
+        { duplicateCandidateStatus: "candidate" },
+      )
+      .select("submission.id", "id")
+      .addSelect("submission.createdAt", "created_at")
+      .distinct(true);
+    this.applyListScope(idQuery, actor);
+    this.applyListFilters(idQuery, status, q);
+    return idQuery
+      .orderBy("submission.createdAt", "DESC")
+      .addOrderBy("submission.id", "DESC");
+  }
+
+  private applyListFilters(
+    query: ReturnType<Repository<SubmissionEntity>["createQueryBuilder"]>,
+    status: SubmissionListStatus,
+    search: string | undefined,
+  ): void {
+    if (search) {
+      const term = `%${escapeLike(search).toLowerCase()}%`;
+      query.andWhere(
+        new Brackets((builder) => {
+          builder
+            .where("LOWER(submission.id) LIKE :search ESCAPE '\\'", {
+              search: term,
+            })
+            .orWhere(
+              "LOWER(submission.originalFileName) LIKE :search ESCAPE '\\'",
+              { search: term },
+            )
+            .orWhere("LOWER(owner.displayName) LIKE :search ESCAPE '\\'", {
+              search: term,
+            })
+            .orWhere("LOWER(team.name) LIKE :search ESCAPE '\\'", {
+              search: term,
+            });
+        }),
+      );
+    }
+
+    if (status === "all") return;
+    if (status === "processing") {
+      query.andWhere("submission.processingStatus IN (:...processing)", {
+        processing: ["probing", "awaiting_ai", "ai_processing"],
+      });
+      return;
+    }
+    if (status === "failed") {
+      query.andWhere(
+        new Brackets((builder) => {
+          builder
+            .where("submission.processingStatus = :systemFailed", {
+              systemFailed: "system_failed",
+            })
+            .orWhere("quality.status = :qualityFailed", {
+              qualityFailed: "hard_reject",
+            })
+            .orWhere(
+              `quality.status IN (:...scoredQualityStatuses) AND ${QUALITY_FAILED_SQL}`,
+              {
+                scoredQualityStatuses: ["scored", "review_pending"],
+              },
+            );
+        }),
+      );
+      return;
+    }
+    if (status === "passed") {
+      query.andWhere(
+        `quality.status IN (:...passedStatuses) AND ${QUALITY_PASSED_SQL}`,
+        {
+          passedStatuses: ["scored", "review_pending"],
+        },
+      );
+      return;
+    }
+    if (status === "reviewed") {
+      query.andWhere(
+        new Brackets((builder) => {
+          builder
+            .where("quality.status IN (:...reviewedStatuses)", {
+              reviewedStatuses: [
+                "scored",
+                "hard_reject",
+                "system_failed",
+              ],
+            })
+            .orWhere(
+              "quality.status = :reviewPending AND quality.manualFinalScore IS NOT NULL",
+              { reviewPending: "review_pending" },
+            )
+            .orWhere("submission.processingStatus = :systemFailed", {
+              systemFailed: "system_failed",
+            });
+        }),
+      );
+      return;
+    }
+    if (status === "unsettled") {
+      query
+        .andWhere("submission.processingStatus = :completed", {
+          completed: "completed",
+        })
+        .andWhere("submission.assetStatus = :activeAsset", {
+          activeAsset: "active",
+        })
+        .andWhere("submission.storageStatus = :availableStorage", {
+          availableStorage: "available",
+        })
+        .andWhere(
+          `quality.status IN (:...passedStatuses) AND ${QUALITY_PASSED_SQL}`,
+          {
+            passedStatuses: ["scored", "review_pending"],
+          },
+        )
+        .andWhere(POINT_RULE_ELIGIBLE_SQL)
+        .andWhere("pointCycleItem.id IS NULL")
+        .andWhere("duplicateCandidate.id IS NULL");
+      return;
+    }
+    if (status === "review_queue") {
+      query
+        .andWhere("submission.processingStatus = :completed", {
+          completed: "completed",
+        })
+        .andWhere("submission.assetStatus = :activeAsset", {
+          activeAsset: "active",
+        })
+        .andWhere("submission.storageStatus = :availableStorage", {
+          availableStorage: "available",
+        })
+        .andWhere(
+          `quality.status IN (:...passedStatuses) AND ${QUALITY_PASSED_SQL}`,
+          {
+            passedStatuses: ["scored", "review_pending"],
+          },
+        )
+        .andWhere(POINT_RULE_ELIGIBLE_SQL)
+        .andWhere("pointCycleItem.id IS NULL");
+      return;
+    }
+    if (status === "queued") {
+      query.andWhere("submission.processingStatus IN (:...queued)", {
+        queued: ["queued", "awaiting_ai"],
+      });
+      return;
+    }
+    query.andWhere("submission.processingStatus = :status", { status });
+  }
+
+  private async findDetailedByIds(
+    ids: string[],
+  ): Promise<SubmissionEntity[]> {
+    if (ids.length === 0) return [];
+    return await this.submissions
+      .createQueryBuilder("submission")
+      .leftJoinAndSelect("submission.owner", "owner")
+      .leftJoinAndSelect("submission.team", "team")
+      .leftJoinAndMapOne(
+        "submission.metadata",
+        MediaMetadataEntity,
+        "metadata",
+        "metadata.submissionId = submission.id",
+      )
+      .leftJoinAndMapMany(
+        "submission.segments",
+        MediaSegmentEntity,
+        "segment",
+        "segment.submissionId = submission.id",
+      )
+      .leftJoinAndMapOne(
+        "submission.quality",
+        VideoQualityResultEntity,
+        "quality",
+        "quality.submissionId = submission.id",
+      )
+      .leftJoinAndMapMany(
+        "submission.duplicateCandidates",
+        SubmissionDuplicateCandidateEntity,
+        "duplicateCandidate",
+        "duplicateCandidate.submissionId = submission.id",
+      )
+      .leftJoinAndSelect(
+        "duplicateCandidate.candidateSubmission",
+        "duplicateCandidateSubmission",
+      )
+      .leftJoinAndMapMany(
+        "submission.pointCycleItems",
+        PointCycleItemEntity,
+        "pointCycleItem",
+        "pointCycleItem.submissionId = submission.id",
+      )
+      .leftJoinAndMapMany(
+        "submission.reviewAuditLogs",
+        AuditLogEntity,
+        "reviewAudit",
+        "reviewAudit.targetAccountId = submission.id AND reviewAudit.action IN (:...reviewActions)",
+        { reviewActions: REVIEW_AUDIT_ACTIONS },
+      )
+      .where("submission.id IN (:...ids)", { ids })
+      .orderBy("submission.createdAt", "DESC")
+      .addOrderBy("segment.startSeconds", "ASC")
+      .addOrderBy("duplicateCandidate.similarity", "DESC")
+      .addOrderBy("reviewAudit.createdAt", "ASC")
+      .getMany();
+  }
+
+  private reviewContainsSensitiveRisk(
+    reason: string,
+    issues: PublicReviewIssue[],
+  ): boolean {
+    return SENSITIVE_REVIEW_PATTERN.test(
+      [reason, ...issues.map((issue) => issue.label)].join(" "),
+    );
+  }
+
+  private async qualityRuleForResult(
+    manager: EntityManager,
+    quality: VideoQualityResultEntity,
+  ): Promise<QualityRuleSnapshot> {
+    if (quality.qualityRuleSnapshot) return quality.qualityRuleSnapshot;
+    if (quality.qualityRuleVersionId) {
+      const rule = await manager
+        .getRepository(QualityRuleVersionEntity)
+        .findOneBy({ id: quality.qualityRuleVersionId });
+      if (rule) return qualityRuleSnapshot(rule);
+    }
+    return {
+      id: "legacy-default",
+      revision: 0,
+      version: "legacy-default",
+      passThreshold: 60,
+      description: "历史任务默认质量规则",
+    };
+  }
+
+  private async pointRuleForCycle(
+    manager: EntityManager,
+    cycleId: string,
+  ): Promise<PointRuleSnapshot> {
+    const cycle = await manager
+      .getRepository(PointCycleEntity)
+      .findOneBy({ id: cycleId });
+    if (!cycle) throw new Error("积分周期不存在");
+    if (cycle.pointRuleSnapshot) return cycle.pointRuleSnapshot;
+    if (cycle.pointRuleVersionId) {
+      const rule = await manager
+        .getRepository(PointRuleVersionEntity)
+        .findOneBy({ id: cycle.pointRuleVersionId });
+      if (rule) {
+        return {
+          id: rule.id,
+          revision: rule.revision,
+          version: rule.version,
+          defaultPointsPerMinute: Number(rule.defaultPointsPerMinute),
+          coefficientBands: rule.coefficientBands,
+          description: rule.description,
+        };
+      }
+    }
+    return {
+      id: "legacy-default",
+      revision: 0,
+      version: "legacy-default",
+      defaultPointsPerMinute: 0,
+      coefficientBands: DEFAULT_COEFFICIENT_BANDS,
+      description: "历史周期默认积分规则",
+    };
   }
 
   private requireUploading(submission: SubmissionEntity): void {

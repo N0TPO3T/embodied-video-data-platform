@@ -7,7 +7,6 @@ import type {
   Submission,
   Team,
   User,
-  Withdrawal,
 } from "../domain/types";
 
 export interface DemoState {
@@ -15,19 +14,11 @@ export interface DemoState {
   users: User[];
   teams: Team[];
   submissions: Submission[];
-  withdrawals: Withdrawal[];
   settlements: SettlementBatch[];
   deliveryPackages: DeliveryPackage[];
   rule: RuleConfig;
   labels: LabelConfig[];
   operationLogs: OperationLog[];
-  wallet: {
-    available: number;
-    frozen: number;
-    pending: number;
-    withdrawn: number;
-    minimumWithdrawal: number;
-  };
 }
 
 const baseAudit = [
@@ -243,12 +234,52 @@ export const demoSeed: DemoState = {
       sizeMb: 502,
       resolution: "1920×1080",
       processingStatus: "processing",
+      pipelineStage: "ai_processing",
       qualityStatus: "pending",
       aiScore: 0,
       finalScore: 0,
       settlementStatus: "unsettled",
       createdAt: "2026-08-03 10:02",
       tags: ["工作台", "组装", "工具使用"],
+      issues: [],
+      audit: [],
+    },
+    {
+      id: "SUB-019",
+      fileName: "pantry_sorting_0803.mp4",
+      ownerId: "U-COL-03",
+      ownerName: "测试人员3",
+      teamId: "TEAM-01",
+      teamName: "星火一队",
+      scene: "储物间",
+      action: "物品分类",
+      object: "收纳箱、标签贴",
+      durationSeconds: 0,
+      invalidSeconds: 0,
+      sizeMb: 318,
+      resolution: "解析中",
+      processingStatus: "failed",
+      pipelineStage: "system_failed",
+      qualityStatus: "pending",
+      aiScore: 0,
+      finalScore: 0,
+      qualityResult: {
+        status: "system_failed",
+        summary: "",
+        recommendations: [],
+        reviewReasons: [],
+        initialModel: "qwen3.7-plus",
+        reviewModel: "qwen3.7-flash",
+        promptRevision: 1,
+        promptContentSha256: "0".repeat(64),
+        settlementRatio: null,
+        reviewRevision: 0,
+        attempts: 3,
+        lastError: "模型服务暂时不可用",
+      },
+      settlementStatus: "unsettled",
+      createdAt: "2026-08-03 10:18",
+      tags: ["异常任务"],
       issues: [],
       audit: [],
     },
@@ -353,33 +384,13 @@ export const demoSeed: DemoState = {
       audit: baseAudit,
     },
   ],
-  withdrawals: [
-    {
-      id: "WD-001",
-      userId: "U-COL-01",
-      userName: "测试人员1",
-      amount: 500,
-      status: "pending",
-      account: "lin***@example.com",
-      createdAt: "2026-08-03 08:40",
-    },
-    {
-      id: "WD-002",
-      userId: "U-COL-03",
-      userName: "测试人员3",
-      amount: 800,
-      status: "paid",
-      account: "qin***@example.com",
-      createdAt: "2026-08-02 14:20",
-    },
-  ],
   settlements: [
     {
       id: "SET-20260802",
       date: "2026-08-02",
       submissionCount: 126,
       effectiveMinutes: 468.5,
-      amount: 5128.6,
+      points: 5128.6,
       status: "locked",
     },
     {
@@ -387,7 +398,7 @@ export const demoSeed: DemoState = {
       date: "2026-08-01",
       submissionCount: 108,
       effectiveMinutes: 402.3,
-      amount: 4386.2,
+      points: 4386.2,
       status: "locked",
     },
   ],
@@ -431,25 +442,18 @@ export const demoSeed: DemoState = {
     {
       id: "OP-PRICE-0802",
       actor: "管理员",
-      action: "调整团队单价",
+      action: "调整团队积分规则",
       target: "远山二队",
       reason: "根据八月任务难度更新",
       createdAt: "2026-08-02 16:20",
     },
     {
-      id: "OP-WD-0802",
+      id: "OP-POINTS-0802",
       actor: "管理员",
-      action: "审核通过提现",
-      target: "WD-002",
-      reason: "账户信息与结算记录一致",
+      action: "锁定积分周期",
+      target: "SET-20260802",
+      reason: "团队核对后锁定周期积分",
       createdAt: "2026-08-02 15:04",
     },
   ],
-  wallet: {
-    available: 1486.5,
-    frozen: 0,
-    pending: 328.6,
-    withdrawn: 3200,
-    minimumWithdrawal: 100,
-  },
 };

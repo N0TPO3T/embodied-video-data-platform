@@ -16,6 +16,9 @@ vi.mock("../../auth/client/accountApi", async () => {
     ...actual,
     createAccount: vi.fn(),
     updateAccount: vi.fn(),
+    createTeam: vi.fn(),
+    updateTeam: vi.fn(),
+    assignTeamLeader: vi.fn(),
     resetAccountPassword: vi.fn(),
     setAccountStatus: vi.fn(),
   };
@@ -43,6 +46,9 @@ const collectorAccount: AccountPublic = {
 afterEach(() => {
   vi.mocked(accountApi.createAccount).mockReset();
   vi.mocked(accountApi.updateAccount).mockReset();
+  vi.mocked(accountApi.createTeam).mockReset();
+  vi.mocked(accountApi.updateTeam).mockReset();
+  vi.mocked(accountApi.assignTeamLeader).mockReset();
   vi.mocked(accountApi.resetAccountPassword).mockReset();
   vi.mocked(accountApi.setAccountStatus).mockReset();
 });
@@ -186,5 +192,72 @@ describe("administrator account management", () => {
     await user.selectOptions(screen.getByLabelText("角色筛选"), "admin");
     expect(screen.getByText("管理员", { selector: "strong" })).toBeVisible();
     expect(screen.queryByText("测试人员1")).not.toBeInTheDocument();
+  });
+
+  it("creates and edits a persistent team", async () => {
+    const user = userEvent.setup();
+    vi.mocked(accountApi.createTeam).mockResolvedValue({
+      id: "TEAM-02",
+      name: "远山二队",
+      status: "active",
+      unitPricePerMinute: 15,
+      createdAt: 1_722_708_100_000,
+      updatedAt: 1_722_708_100_000,
+    });
+    vi.mocked(accountApi.updateTeam).mockResolvedValue({
+      id: "TEAM-01",
+      name: "星火先锋队",
+      status: "active",
+      unitPricePerMinute: 13,
+      createdAt: 1_722_708_000_000,
+      updatedAt: 1_722_708_200_000,
+    });
+    renderAdminAccounts();
+
+    await user.click(screen.getByRole("button", { name: "新增团队" }));
+    await user.type(screen.getByLabelText("团队名称"), "远山二队");
+    await user.clear(screen.getByLabelText("每分钟积分"));
+    await user.type(screen.getByLabelText("每分钟积分"), "15");
+    await user.click(screen.getByRole("button", { name: "创建团队" }));
+
+    expect(accountApi.createTeam).toHaveBeenCalledWith({
+      name: "远山二队",
+      unitPricePerMinute: 15,
+    });
+    expect(screen.getAllByText("远山二队").length).toBeGreaterThan(0);
+
+    const teamRow = screen.getByText("TEAM-01").closest("tr")!;
+    await user.click(within(teamRow).getByRole("button", { name: "编辑团队" }));
+    await user.clear(screen.getByLabelText("团队名称"));
+    await user.type(screen.getByLabelText("团队名称"), "星火先锋队");
+    await user.clear(screen.getByLabelText("每分钟积分"));
+    await user.type(screen.getByLabelText("每分钟积分"), "13");
+    await user.click(screen.getByRole("button", { name: "保存团队" }));
+
+    expect(accountApi.updateTeam).toHaveBeenCalledWith("TEAM-01", {
+      name: "星火先锋队",
+      unitPricePerMinute: 13,
+      status: "active",
+    });
+    expect(screen.getAllByText("星火先锋队").length).toBeGreaterThan(0);
+  });
+
+  it("assigns a team leader and refreshes both affected account roles", async () => {
+    const user = userEvent.setup();
+    vi.mocked(accountApi.assignTeamLeader).mockResolvedValue([
+      { ...collectorAccount, role: "leader" },
+    ]);
+    renderAdminAccounts();
+    const teamRow = screen.getByText("TEAM-01").closest("tr")!;
+
+    await user.click(within(teamRow).getByRole("button", { name: /指定团长/ }));
+    await user.selectOptions(screen.getByLabelText("团长账号"), "U-COL-01");
+    await user.click(screen.getByRole("button", { name: "确认指定" }));
+
+    expect(accountApi.assignTeamLeader).toHaveBeenCalledWith(
+      "TEAM-01",
+      "U-COL-01",
+    );
+    expect(screen.getByText("团长已更新，相关账号需重新登录")).toBeVisible();
   });
 });

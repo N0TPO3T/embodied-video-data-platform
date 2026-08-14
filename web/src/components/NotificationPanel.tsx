@@ -2,7 +2,11 @@
 
 import { useInteractions } from "../interactions/InteractionContext";
 
-export function NotificationPanel() {
+export function NotificationPanel({
+  navigate,
+}: {
+  navigate?(path: string): void;
+}) {
   const { notifications, unreadCount, markAllRead, notify } = useInteractions();
 
   function clearUnread() {
@@ -36,6 +40,15 @@ export function NotificationPanel() {
             <div>
               <strong>{notification.title}</strong>
               <p>{notification.detail}</p>
+              {notification.path && navigate && (
+                <button
+                  type="button"
+                  className="table-action"
+                  onClick={() => navigate(notification.path!)}
+                >
+                  查看
+                </button>
+              )}
             </div>
           </article>
         ))}

@@ -1,4 +1,10 @@
-import type { AiQualityPrompt } from "../contracts";
+import type {
+  AiQualityPrompt,
+  CreateQualityRuleInput,
+  LabelSet,
+  QualityRule,
+  UpdateLabelInput,
+} from "../contracts";
 
 export class AiQualityApiError extends Error {
   constructor(
@@ -18,10 +24,14 @@ function apiUrl(path: string): string {
   return `${base.replace(/\/$/u, "")}/${path.replace(/^\//u, "")}`;
 }
 
-async function requestPrompt(init?: RequestInit): Promise<AiQualityPrompt> {
+async function requestJson<T>(
+  path: string,
+  failureMessage: string,
+  init?: RequestInit,
+): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body !== undefined) headers.set("content-type", "application/json");
-  const response = await fetch(apiUrl("/ai-quality/prompt"), {
+  const response = await fetch(apiUrl(path), {
     ...init,
     headers,
     credentials: "include",
@@ -40,11 +50,20 @@ async function requestPrompt(init?: RequestInit): Promise<AiQualityPrompt> {
       response.status,
       typeof error.error === "string"
         ? error.error
-        : "AI 系统提示词请求失败",
+        : failureMessage,
       typeof error.code === "string" ? error.code : undefined,
     );
   }
-  return (payload as { prompt: AiQualityPrompt }).prompt;
+  return payload as T;
+}
+
+async function requestPrompt(init?: RequestInit): Promise<AiQualityPrompt> {
+  const payload = await requestJson<{ prompt: AiQualityPrompt }>(
+    "/ai-quality/prompt",
+    "AI 系统提示词请求失败",
+    init,
+  );
+  return payload.prompt;
 }
 
 export function getAiQualityPrompt(): Promise<AiQualityPrompt> {
@@ -58,4 +77,48 @@ export function updateAiQualityPrompt(
     method: "PUT",
     body: JSON.stringify({ systemPrompt }),
   });
+}
+
+export async function getQualityRule(): Promise<QualityRule> {
+  const payload = await requestJson<{ rule: QualityRule }>(
+    "/ai-quality/quality-rule",
+    "质量规则请求失败",
+  );
+  return payload.rule;
+}
+
+export async function createQualityRule(
+  input: CreateQualityRuleInput,
+): Promise<QualityRule> {
+  const payload = await requestJson<{ rule: QualityRule }>(
+    "/ai-quality/quality-rule",
+    "质量规则保存失败",
+    {
+      method: "PUT",
+      body: JSON.stringify(input),
+    },
+  );
+  return payload.rule;
+}
+
+export async function getLabelSet(): Promise<LabelSet> {
+  const payload = await requestJson<{ labelSet: LabelSet }>(
+    "/ai-quality/label-set",
+    "标签体系请求失败",
+  );
+  return payload.labelSet;
+}
+
+export async function updateQualityLabel(
+  input: UpdateLabelInput,
+): Promise<LabelSet> {
+  const payload = await requestJson<{ labelSet: LabelSet }>(
+    `/ai-quality/labels/${encodeURIComponent(input.id)}`,
+    "标签保存失败",
+    {
+      method: "PUT",
+      body: JSON.stringify(input),
+    },
+  );
+  return payload.labelSet;
 }

@@ -3,18 +3,21 @@ import {
   CompleteMultipartUploadCommand,
   CreateBucketCommand,
   CreateMultipartUploadCommand,
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
   HeadObjectCommand,
+  PutObjectCommand,
   S3Client,
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
 
 import type {
   ObjectStoragePort,
+  PresignedDownload,
   PresignedUploadPart,
 } from "./object-storage.port.js";
 
@@ -52,6 +55,16 @@ export class MinioObjectStorageService implements ObjectStoragePort {
     objectKey: string;
     destinationPath: string;
   }): Promise<void> {
+    const body = await this.readObject({ objectKey: input.objectKey });
+    await pipeline(
+      body,
+      createWriteStream(input.destinationPath, { flags: "wx" }),
+    );
+  }
+
+  async readObject(input: {
+    objectKey: string;
+  }): Promise<NodeJS.ReadableStream> {
     const result = await this.client.send(
       new GetObjectCommand({
         Bucket: this.bucket,
@@ -61,9 +74,22 @@ export class MinioObjectStorageService implements ObjectStoragePort {
     if (!result.Body) {
       throw new Error("MinIO object body is unavailable");
     }
-    await pipeline(
-      result.Body as NodeJS.ReadableStream,
-      createWriteStream(input.destinationPath, { flags: "wx" }),
+    return result.Body as NodeJS.ReadableStream;
+  }
+
+  async uploadObject(input: {
+    objectKey: string;
+    sourcePath: string;
+    contentType: string;
+  }): Promise<void> {
+    await this.ensureBucket();
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: input.objectKey,
+        Body: createReadStream(input.sourcePath),
+        ContentType: input.contentType,
+      }),
     );
   }
 
@@ -128,6 +154,33 @@ export class MinioObjectStorageService implements ObjectStoragePort {
       { expiresIn: input.expiresInSeconds },
     );
     return { partNumber: input.partNumber, url, expiresAt };
+  }
+
+  async presignDownloadObject(input: {
+    objectKey: string;
+    expiresInSeconds: number;
+  }): Promise<PresignedDownload> {
+    const expiresAt = new Date(
+      Date.now() + input.expiresInSeconds * 1_000,
+    );
+    const url = await getSignedUrl(
+      this.presignClient,
+      new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: input.objectKey,
+      }),
+      { expiresIn: input.expiresInSeconds },
+    );
+    return { url, expiresAt };
+  }
+
+  async deleteObject(input: { objectKey: string }): Promise<void> {
+    await this.client.send(
+      new DeleteObjectCommand({
+        Bucket: this.bucket,
+        Key: input.objectKey,
+      }),
+    );
   }
 
   async completeMultipartUpload(input: {

@@ -11,3 +11,42 @@ export type AiQualityPrompt = {
   createdByName: string;
   createdAt: number;
 };
+
+export type QualityRule = {
+  id: string;
+  revision: number;
+  version: string;
+  passThreshold: number;
+  description: string;
+  active: boolean;
+  createdByAccountId: string;
+  createdByName: string;
+  createdAt: number;
+};
+
+export type CreateQualityRuleInput = {
+  version: string;
+  passThreshold: number;
+  description: string;
+};
+
+export type LabelSetItem = {
+  id: string;
+  name: string;
+  type: "scene" | "action" | "object" | "issue";
+  associationCount: number;
+  enabled: boolean;
+};
+
+export type LabelSet = {
+  id: string;
+  revision: number;
+  version: string;
+  labels: LabelSetItem[];
+  active: boolean;
+  createdByAccountId: string;
+  createdByName: string;
+  createdAt: number;
+};
+
+export type UpdateLabelInput = Pick<LabelSetItem, "id" | "name" | "enabled">;

@@ -173,7 +173,7 @@ describe("Qwen video quality provider", () => {
     >;
     expect(textInput.output_contract.hard_veto.triggered).toBe(false);
     expect(textInput.output_requirements.join(" ")).toContain("不得改名或遗漏字段");
-    expect(textInput.output_requirements.join(" ")).toContain("简体中文");
+    expect(textInput.output_requirements.join(" ")).not.toContain("简体中文");
     expect(result.raw.final_score).toBe(80);
     expect(result.metadata.requestId).toBe("req-123");
     expect(result.metadata.stage).toBe("initial");
@@ -231,27 +231,38 @@ describe("Qwen video quality provider", () => {
     );
   });
 
-  it("repairs structurally valid results whose natural-language fields are English", async () => {
+  it("accepts structurally valid English content without a repair call", async () => {
     const english = rawResult();
     english.detected_task.task_summary = "Clean an object";
     english.summary = "The video quality is stable";
     english.recommendations = ["Keep the camera steady"];
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(response(JSON.stringify(english), 200, "req-en"))
-      .mockResolvedValueOnce(response(JSON.stringify(rawResult()), 200, "req-zh"));
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      response(JSON.stringify(english), 200, "req-en"),
+    );
 
     const result = await provider(fetcher).analyze({ input, frames: [] });
 
-    expect(fetcher).toHaveBeenCalledTimes(2);
-    const repairBody = JSON.parse(
-      String(fetcher.mock.calls[1]?.[1]?.body),
-    ) as Record<string, any>;
-    expect(repairBody.messages.at(-1).content[0].text).toContain("简体中文");
-    expect(repairBody.messages.at(-1).content[0].text).toContain(
-      "detected_task.task_summary",
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(result.raw.summary).toBe("The video quality is stable");
+  });
+
+  it("preserves model-provided calculation traces", async () => {
+    const resultWithEnglishTraces = rawResult();
+    for (const dimension of Object.values(resultWithEnglishTraces.dimensions)) {
+      dimension.calculation_trace = "Dimension score = 20 * coefficient";
+    }
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      response(JSON.stringify(resultWithEnglishTraces), 200, "req-trace"),
     );
-    expect(result.raw.summary).toBe("质量稳定");
+
+    const result = await provider(fetcher).analyze({ input, frames: [] });
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    for (const dimension of Object.values(result.raw.dimensions)) {
+      expect(dimension.calculation_trace).toBe(
+        "Dimension score = 20 * coefficient",
+      );
+    }
   });
 
   it("uses Qwen3.7 Flash only for review input and preserves initial observations", async () => {

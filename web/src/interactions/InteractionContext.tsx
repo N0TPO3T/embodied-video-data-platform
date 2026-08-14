@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { ToastViewport } from "../components/ToastViewport";
+import type { BackendOperationsStatus } from "../operations/contracts";
 
 export type ToastTone = "success" | "error" | "info";
 export type ToastItem = { id: number; tone: ToastTone; message: string };
@@ -19,22 +20,26 @@ export type DemoNotification = {
   title: string;
   detail: string;
   read: boolean;
+  path?: string;
+  tone?: "info" | "success" | "warning" | "danger";
 };
 
 type InteractionValue = {
   toasts: ToastItem[];
   notifications: DemoNotification[];
   unreadCount: number;
+  navigationBadges: BackendOperationsStatus["navigationBadges"];
   notify(tone: ToastTone, message: string): void;
   dismissToast(id: number): void;
   markAllRead(): void;
+  syncOperationsStatus(status: BackendOperationsStatus): void;
 };
 
 const seedNotifications: DemoNotification[] = [
   {
     id: "NOTICE-REVIEW",
-    title: "3 条数据等待结算前复核",
-    detail: "请在生成新结算批次前确认质量结论。",
+    title: "团队质检结果已更新",
+    detail: "团长可只读查看本团队的终态质检结果。",
     read: false,
   },
   {
@@ -45,8 +50,8 @@ const seedNotifications: DemoNotification[] = [
   },
   {
     id: "NOTICE-WITHDRAWAL",
-    title: "提现申请 WD-20260803 已通过",
-    detail: "申请已进入打款处理阶段。",
+    title: "积分周期 SET-20260803 已锁定",
+    detail: "本周期积分可导出给团长线下核对。",
     read: false,
   },
 ];
@@ -57,6 +62,9 @@ export function InteractionProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [notifications, setNotifications] =
     useState<DemoNotification[]>(seedNotifications);
+  const [navigationBadges, setNavigationBadges] = useState<
+    BackendOperationsStatus["navigationBadges"]
+  >([]);
   const nextToastId = useRef(1);
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
 
@@ -85,6 +93,25 @@ export function InteractionProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
+  const syncOperationsStatus = useCallback((status: BackendOperationsStatus) => {
+    setNavigationBadges(status.navigationBadges);
+    setNotifications((current) => {
+      const read = new Set(
+        current
+          .filter((notification) => notification.read)
+          .map((notification) => notification.id),
+      );
+      return status.notifications.map((notification) => ({
+        id: notification.id,
+        title: notification.title,
+        detail: notification.detail,
+        path: notification.path,
+        tone: notification.tone,
+        read: read.has(notification.id),
+      }));
+    });
+  }, []);
+
   useEffect(
     () => () => {
       timers.current.forEach((timer) => clearTimeout(timer));
@@ -97,13 +124,23 @@ export function InteractionProvider({ children }: { children: ReactNode }) {
     () => ({
       toasts,
       notifications,
+      navigationBadges,
       unreadCount: notifications.filter((notification) => !notification.read)
         .length,
       notify,
       dismissToast,
       markAllRead,
+      syncOperationsStatus,
     }),
-    [dismissToast, markAllRead, notifications, notify, toasts],
+    [
+      dismissToast,
+      markAllRead,
+      navigationBadges,
+      notifications,
+      notify,
+      syncOperationsStatus,
+      toasts,
+    ],
   );
 
   return (
