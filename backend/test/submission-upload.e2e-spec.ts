@@ -29,6 +29,7 @@ import {
   type ObjectStoragePort,
 } from "../src/storage/object-storage.port.js";
 import { SubmissionsModule } from "../src/submissions/submissions.module.js";
+import { SubmissionsService } from "../src/submissions/submissions.service.js";
 
 const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL ??
@@ -42,6 +43,8 @@ class RecordingObjectStorage implements ObjectStoragePort {
   aborted: string[] = [];
   deleted: string[] = [];
   reportedSizeBytes = "33554432";
+  deleteFailuresRemaining = 0;
+  completedObjectKeys = new Set<string>();
 
   async downloadObject() {
     throw new Error("not used");
@@ -92,6 +95,10 @@ class RecordingObjectStorage implements ObjectStoragePort {
   }
 
   async deleteObject(input: { objectKey: string }) {
+    if (this.deleteFailuresRemaining > 0) {
+      this.deleteFailuresRemaining -= 1;
+      throw new Error("simulated object deletion failure");
+    }
     this.deleted.push(input.objectKey);
   }
 
@@ -100,6 +107,7 @@ class RecordingObjectStorage implements ObjectStoragePort {
     uploadId: string;
     parts: Array<{ partNumber: number; etag: string }>;
   }) {
+    this.completedObjectKeys.add(input.objectKey);
     this.completed.push({
       uploadId: input.uploadId,
       parts: input.parts.map((part) => part.partNumber),
@@ -108,6 +116,9 @@ class RecordingObjectStorage implements ObjectStoragePort {
   }
 
   async headObject(input: { objectKey: string }) {
+    if (!this.completedObjectKeys.has(input.objectKey)) {
+      throw new Error("object missing");
+    }
     const upload = [...this.uploads.values()].find(
       (item) => item.objectKey === input.objectKey,
     );
@@ -339,6 +350,29 @@ describe("submission multipart upload API", () => {
     expect(response.body).toMatchObject({
       code: "UPLOAD_AUTHORIZATION_REQUIRED",
       error: "上传前必须确认数据授权、隐私规范和敏感内容处理要求",
+    });
+  });
+
+  it("returns an actionable validation error for videos above 2 GiB", async () => {
+    const cookie = await login("upload-collector");
+    const response = await request(app.getHttpServer())
+      .post("/api/v1/submissions/uploads")
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", cookie)
+      .send({
+        fileName: "oversized-task.mp4",
+        contentType: "video/mp4",
+        sizeBytes: 2 * 1024 ** 3 + 1,
+        checksumSha256: "e".repeat(64),
+        dataUsageAuthorized: true,
+        privacyConfirmed: true,
+        sensitiveContentConfirmed: true,
+      })
+      .expect(400);
+
+    expect(response.body).toMatchObject({
+      error: "Bad Request",
+      message: expect.arrayContaining(["单个视频不能超过 2 GiB"]),
     });
   });
 
@@ -1558,5 +1592,115 @@ describe("submission multipart upload API", () => {
         aggregateId: id,
       }),
     ).toBe(0);
+  });
+
+  it("recovers a multipart completion after the external object succeeds before database finalization", async () => {
+    const id = "SUB-UPLOAD-RECOVER-COMPLETE";
+    const objectKey = "uploads/recovery/original.mp4";
+    storage.uploads.set("UPLOAD-RECOVER", { objectKey, sizeBytes: "1024" });
+    await dataSource.getRepository(SubmissionEntity).save({
+      id,
+      ownerId: "U-UPLOAD-COLLECTOR",
+      teamId: "TEAM-UPLOAD-01",
+      originalFileName: "recover-complete.mp4",
+      contentType: "video/mp4",
+      expectedSizeBytes: "1024",
+      checksumSha256: "d".repeat(64),
+      objectKey,
+      multipartUploadId: "UPLOAD-RECOVER",
+      multipartCompletionParts: [{ partNumber: 1, etag: "etag-recover" }],
+      uploadStatus: "completing",
+      processingStatus: "uploading",
+    });
+
+    const service = app.get(SubmissionsService);
+    expect(await service.reconcileStorageOperations()).toMatchObject({
+      completedUploads: 1,
+      failures: 0,
+    });
+    const recovered = await dataSource
+      .getRepository(SubmissionEntity)
+      .findOneByOrFail({ id });
+    expect(recovered).toMatchObject({
+      uploadStatus: "uploaded",
+      processingStatus: "queued",
+      multipartUploadId: null,
+      multipartCompletionParts: null,
+    });
+    expect(
+      await dataSource.getRepository(JobOutboxEntity).countBy({
+        aggregateId: id,
+        eventType: "media.probe.v1",
+      }),
+    ).toBe(1);
+    await service.reconcileStorageOperations();
+    expect(
+      await dataSource.getRepository(JobOutboxEntity).countBy({
+        aggregateId: id,
+        eventType: "media.probe.v1",
+      }),
+    ).toBe(1);
+  });
+
+  it("persists object deletion intent and finishes it through reconciliation", async () => {
+    const id = "SUB-UPLOAD-RECOVER-DELETE";
+    const objectKey = "uploads/recovery/delete.mp4";
+    await dataSource.getRepository(SubmissionEntity).save({
+      id,
+      ownerId: "U-UPLOAD-COLLECTOR",
+      teamId: "TEAM-UPLOAD-01",
+      originalFileName: "recover-delete.mp4",
+      contentType: "video/mp4",
+      expectedSizeBytes: "1024",
+      checksumSha256: "e".repeat(64),
+      objectKey,
+      uploadStatus: "uploaded",
+      processingStatus: "completed",
+      storageRetainUntil: new Date("2026-08-01T00:00:00.000Z"),
+      uploadedAt: new Date(),
+    });
+    storage.deleteFailuresRemaining = 1;
+    const adminCookie = await login("upload-admin");
+    await request(app.getHttpServer())
+      .delete(`/api/v1/submissions/${id}/objects`)
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", adminCookie)
+      .send({ reason: "验证删除恢复", force: true })
+      .expect(500);
+
+    expect(
+      await dataSource.getRepository(SubmissionEntity).findOneByOrFail({ id }),
+    ).toMatchObject({
+      storageStatus: "delete_pending",
+      storageDeleteMode: "objects",
+      storageDeleteObjectKeys: [objectKey],
+    });
+    expect(
+      await dataSource.getRepository(AuditLogEntity).countBy({
+        action: "storage_object_delete",
+        targetAccountId: id,
+      }),
+    ).toBe(0);
+
+    const service = app.get(SubmissionsService);
+    expect(await service.reconcileStorageOperations()).toMatchObject({
+      completedDeletes: 1,
+      failures: 0,
+    });
+    expect(
+      await dataSource.getRepository(SubmissionEntity).findOneByOrFail({ id }),
+    ).toMatchObject({
+      storageStatus: "deleted",
+      uploadStatus: "aborted",
+      storageDeleteMode: null,
+      storageDeleteObjectKeys: [],
+    });
+    expect(storage.deleted).toContain(objectKey);
+    expect(
+      await dataSource.getRepository(AuditLogEntity).countBy({
+        action: "storage_object_delete",
+        targetAccountId: id,
+      }),
+    ).toBe(1);
   });
 });

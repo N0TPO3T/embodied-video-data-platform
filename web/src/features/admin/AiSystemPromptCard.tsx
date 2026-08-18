@@ -28,6 +28,7 @@ export function AiSystemPromptCard() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -48,7 +49,7 @@ export function AiSystemPromptCard() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [reloadKey]);
 
   async function save() {
     setSaving(true);
@@ -105,6 +106,23 @@ export function AiSystemPromptCard() {
           </div>
         </>
       ) : null}
+      {!loading && !prompt && (
+        <div className="empty-state compact-empty">
+          <strong>提示词加载失败</strong>
+          <span>{error || "请检查 AI 质检服务后重试"}</span>
+          <button
+            className="table-action"
+            type="button"
+            onClick={() => {
+              setLoading(true);
+              setError("");
+              setReloadKey((current) => current + 1);
+            }}
+          >
+            重新加载
+          </button>
+        </div>
+      )}
       {message && <p className="form-message success">{message}</p>}
       {error && <p className="form-message error">{error}</p>}
     </section>

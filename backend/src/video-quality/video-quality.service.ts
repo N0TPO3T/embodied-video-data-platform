@@ -53,8 +53,8 @@ function needsReview(
   normalized: NormalizedVideoQcResultV1,
 ): boolean {
   if (raw.evaluation_status === "review_pending") return true;
-  if (raw.review_required || raw.hard_veto.triggered) return true;
-  if (raw.detected_task.confidence < 0.75) return true;
+  if (raw.review.review_required || raw.hard_reject.triggered) return true;
+  if (raw.hard_reject.candidates.length > 0) return true;
   if (
     Object.values(raw.dimensions).some(
       (dimension) => dimension.confidence < 0.75,
@@ -63,7 +63,7 @@ function needsReview(
     return true;
   }
   if (normalized.validation.errors.length > 0) return true;
-  const similarity = raw.dimensions.task_value_uniqueness.similarity_total;
+  const similarity = raw.dimensions.D5.metrics.S_total ?? null;
   return typeof similarity === "number" && similarity >= 0.92;
 }
 
@@ -72,15 +72,16 @@ function reviewWindows(
   durationMs: number,
 ): ReviewWindow[] {
   const candidates: ReviewWindow[] = [];
-  for (const deduction of raw.deductions) {
-    candidates.push({ startMs: deduction.start_ms, endMs: deduction.end_ms });
-  }
-  for (const segment of raw.billing_observations.candidate_invalid_segments) {
-    candidates.push({ startMs: segment.start_ms, endMs: segment.end_ms });
-  }
   for (const dimension of Object.values(raw.dimensions)) {
     for (const issue of dimension.issues) {
-      candidates.push({ startMs: issue.start_ms, endMs: issue.end_ms });
+      if (issue.start_ms !== null && issue.end_ms !== null) {
+        candidates.push({ startMs: issue.start_ms, endMs: issue.end_ms });
+      }
+    }
+  }
+  for (const segment of raw.duration_result.invalid_segments) {
+    if (segment.start_ms !== null && segment.end_ms !== null) {
+      candidates.push({ startMs: segment.start_ms, endMs: segment.end_ms });
     }
   }
   if (candidates.length === 0) {
@@ -101,14 +102,32 @@ function reviewReasons(
   raw: RawVideoQcResultV1,
   normalized: NormalizedVideoQcResultV1,
 ): string[] {
-  const reasons = [...raw.review_reasons];
-  if (raw.hard_veto.triggered) reasons.push("初审模型检出硬性否决候选");
-  if (raw.detected_task.confidence < 0.75) reasons.push("任务分类置信度不足");
+  const reasons = [...raw.review.review_reasons];
+  if (raw.hard_reject.triggered) reasons.push("初审模型检出硬性否决候选");
   for (const [key, dimension] of Object.entries(raw.dimensions)) {
     if (dimension.confidence < 0.75) reasons.push(`${key} 置信度不足`);
   }
   reasons.push(...normalized.validation.errors);
   return [...new Set(reasons)];
+}
+
+function supplementReviewFrames(
+  reviewFrames: TimestampedFrame[],
+  fullVideoFrames: TimestampedFrame[],
+): TimestampedFrame[] {
+  const framesByTimestamp = new Map<number, TimestampedFrame>();
+  for (const frame of reviewFrames) {
+    framesByTimestamp.set(frame.timestampMs, frame);
+  }
+  for (const frame of fullVideoFrames) {
+    if (framesByTimestamp.size >= 4) break;
+    if (!framesByTimestamp.has(frame.timestampMs)) {
+      framesByTimestamp.set(frame.timestampMs, frame);
+    }
+  }
+  return [...framesByTimestamp.values()].sort(
+    (left, right) => left.timestampMs - right.timestampMs,
+  );
 }
 
 export class VideoQualityService {
@@ -163,11 +182,15 @@ export class VideoQualityService {
         initialRun.raw,
         evidence.metadata.duration_ms,
       );
-      const frames = await this.preprocessor.extractReviewFrames(
+      const extractedFrames = await this.preprocessor.extractReviewFrames(
         request.filePath,
         windows,
         request.workDirectory,
         signal,
+      );
+      const frames = supplementReviewFrames(
+        extractedFrames,
+        evidence.fullVideoFrames,
       );
       const reviewRun = await this.provider.review(
         {

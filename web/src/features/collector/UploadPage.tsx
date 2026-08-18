@@ -6,6 +6,7 @@ import { useDemoStore } from "../../data/DemoStoreContext";
 import { listActiveUploads } from "../../submissions/client/submissionApi";
 import type { ActiveUploadResult } from "../../submissions/contracts";
 import { resumeUploadVideo, uploadVideo } from "../../submissions/upload/multipartUploader";
+import { uploadSizeError } from "../../submissions/upload/uploadLimits";
 
 const isSupported = (file: File) => /\.(mov|mp4)$/i.test(file.name);
 
@@ -172,9 +173,16 @@ export function UploadPage() {
   }
 
   function acceptFiles(files: File[]) {
-    const valid = files.filter(isSupported);
-    if (valid.length !== files.length) setError("仅支持 MOV 和 MP4 视频");
-    else setError("");
+    const supported = files.filter(isSupported);
+    const valid = supported.filter((file) => !uploadSizeError(file));
+    if (supported.length !== files.length) {
+      setError("仅支持 MOV 和 MP4 视频");
+    } else {
+      const sizeError = supported
+        .map((file) => uploadSizeError(file))
+        .find((message): message is string => Boolean(message));
+      setError(sizeError ?? "");
+    }
     if (!valid.length) return;
     if (
       !authorization.dataUsageAuthorized ||
@@ -216,14 +224,22 @@ export function UploadPage() {
             <label><input type="checkbox" checked={authorization.privacyConfirmed} onChange={(event) => setAuthorization((current) => ({ ...current, privacyConfirmed: event.target.checked }))} />我已按隐私规范检查人脸、门牌、屏幕账号、定位等信息</label>
             <label><input type="checkbox" checked={authorization.sensitiveContentConfirmed} onChange={(event) => setAuthorization((current) => ({ ...current, sensitiveContentConfirmed: event.target.checked }))} />我确认发现敏感内容时已遮挡、重采或按要求处理</label>
           </div>
-          <button className="upload-dropzone" onClick={() => inputRef.current?.click()}>
+          <button
+            className="upload-dropzone"
+            onClick={() => inputRef.current?.click()}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => {
+              event.preventDefault();
+              acceptFiles(Array.from(event.dataTransfer.files));
+            }}
+          >
             <span><CloudUpload size={27} /></span>
             <strong>点击选择或拖拽视频到这里</strong>
-            <small>MOV、MP4 格式 · 单文件建议不超过 2GB · 支持批量上传</small>
+            <small>MOV、MP4 格式 · 单文件最大 2 GiB · 支持批量上传</small>
             <em>选择视频文件</em>
           </button>
           {error && <div className="inline-alert inline-alert-error"><XCircle size={16} />{error}</div>}
-          {activeUploads.length > 0 && <div className="upload-queue"><div className="card-heading"><div><h2>可恢复上传</h2><p>刷新前未完成的任务，可重新选择原文件继续上传</p></div></div>{activeUploads.map((item) => <div className="upload-item" key={item.submission.id}><span><FileVideo size={18} /></span><div><strong>{item.submission.fileName}</strong><small>{item.upload.partCount} 个分片 · 需要选择同名同大小文件</small><i><b style={{ width: "0%" }} /></i></div><button className="table-action" onClick={() => chooseResumeFile(item)}>继续上传</button></div>)}</div>}
+          {activeUploads.length > 0 && <div className="upload-queue"><div className="card-heading"><div><h2>可恢复上传</h2><p>刷新前未完成的任务，可重新选择原文件继续上传</p></div></div>{activeUploads.map((item) => <div className="upload-item" key={item.submission.id}><span><FileVideo size={18} /></span><div><strong>{item.submission.fileName}</strong><small>{item.upload.partCount} 个分片 · 需要选择同名同大小文件</small></div><button className="table-action" onClick={() => chooseResumeFile(item)}>继续上传</button></div>)}</div>}
           <div className="upload-queue">
             <div className="card-heading"><div><h2>本次上传</h2><p>{uploads.length ? `${uploads.length} 个视频上传任务` : "选择文件后在此查看上传进度"}</p></div></div>
             {uploads.length ? uploads.map((item) => (
@@ -246,7 +262,7 @@ export function UploadPage() {
                 </div>
                 {item.status === "uploading" ? <button className="table-action" onClick={() => pauseUpload(item.key)}>暂停</button> : null}
                 {item.status === "paused" && item.session ? <button className="table-action" onClick={() => continueUpload(item)}>继续</button> : null}
-                {item.status === "queued" ? <CheckCircle2 size={18} /> : item.status === "failed" ? <XCircle size={18} /> : item.status === "paused" ? <Info size={18} /> : <CloudUpload size={18} />}
+                {item.status === "queued" ? <CheckCircle2 className="upload-icon-ok" size={18} /> : item.status === "failed" ? <XCircle className="upload-icon-failed" size={18} /> : item.status === "paused" ? <Info className="upload-icon-paused" size={18} /> : <CloudUpload className="upload-icon-active" size={18} />}
               </div>
             )) : <div className="empty-inline">暂无待上传文件</div>}
           </div>

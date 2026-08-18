@@ -2,6 +2,7 @@ import type {
   PreparedVideoEvidence,
   VideoQcInputV1,
 } from "./video-quality.types.js";
+import { VIDEO_QC_RESULT_SCHEMA } from "./video-quality.types.js";
 
 export type BuildVideoQcInput = {
   videoId: string;
@@ -53,7 +54,7 @@ export function buildVideoQcInput(input: BuildVideoQcInput): VideoQcInputV1 {
       top_candidates: [],
     },
     previous_model_observations: input.previousModelObservations ?? [],
-    requested_output_schema: "video_qc_result_v1",
+    requested_output_schema: VIDEO_QC_RESULT_SCHEMA,
     missing_inputs: [...input.evidence.missingMetrics],
   };
 }

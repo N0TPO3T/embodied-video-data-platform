@@ -31,7 +31,7 @@ import { UserFormModal } from "./UserFormModal";
 const roleLabel: Record<Role, string> = {
   collector: "数采人员",
   leader: "团长",
-  admin: "管理员",
+  admin: "平台管理员",
 };
 
 function formatUpdatedAt(timestamp: number): string {
@@ -248,12 +248,19 @@ export function UsersTeamsPage() {
                         </button>
                         <button
                           className="table-action"
-                          disabled={team.status === "disabled" || members.length === 0}
+                          disabled={
+                            team.status === "disabled" ||
+                            !members.some(
+                              (account) => account.status === "active",
+                            )
+                          }
                           title={
                             team.status === "disabled"
                               ? "请先启用团队"
-                              : members.length === 0
-                                ? "请先为团队创建成员账号"
+                              : !members.some(
+                                    (account) => account.status === "active",
+                                  )
+                                ? "请先启用团队成员账号"
                                 : undefined
                           }
                           onClick={(event) => {

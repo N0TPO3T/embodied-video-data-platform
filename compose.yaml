@@ -79,24 +79,6 @@ services:
       retries: 20
     restart: unless-stopped
 
-  qdrant:
-    image: qdrant/qdrant:v1.15.5
-    ports:
-      - "127.0.0.1:6333:6333"
-      - "127.0.0.1:6334:6334"
-    volumes:
-      - qdrant_data:/qdrant/storage
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-    restart: unless-stopped
-
   api:
     build:
       context: ./backend
@@ -110,6 +92,9 @@ services:
       EVDP_AUTO_RECLAIM_WORKER_TIMEOUTS: "true"
     ports:
       - "127.0.0.1:4000:4000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=4294967296,mode=1777
     volumes:
       - ./docs/quality:/quality:ro
     depends_on:
@@ -120,8 +105,6 @@ services:
       rabbitmq:
         condition: service_healthy
       minio:
-        condition: service_healthy
-      qdrant:
         condition: service_healthy
     healthcheck:
       test:
@@ -142,6 +125,9 @@ services:
       - .env
     environment:
       NODE_ENV: production
+    read_only: true
+    tmpfs:
+      - /tmp:size=3221225472,mode=1777
     depends_on:
       api:
         condition: service_healthy
@@ -162,7 +148,10 @@ services:
       NODE_ENV: production
       AI_QUALITY_CONCURRENCY: 3
       AI_QUALITY_MODEL_TIMEOUT_MS: 600000
-      VIDEO_QUALITY_PROMPT_PATH: /quality/qwen-video-ai-quality-prompt-v1.md
+      VIDEO_QUALITY_PROMPT_PATH: /quality/prompts/qwen-video-ai-quality-prompt-v1/manifest.json
+    read_only: true
+    tmpfs:
+      - /tmp:size=3221225472,mode=1777
     depends_on:
       api:
         condition: service_healthy
@@ -186,11 +175,14 @@ services:
       NODE_ENV: production
       QUALITY_LAB_HOST: 0.0.0.0
       QUALITY_LAB_PORT: 4010
-      VIDEO_QUALITY_PROMPT_PATH: /quality/qwen-video-ai-quality-prompt-v1.md
+      VIDEO_QUALITY_PROMPT_PATH: /quality/prompts/qwen-video-ai-quality-prompt-v1/manifest.json
       QUALITY_LAB_HISTORY_PATH: /data/quality-lab/jobs.json
       QUALITY_LAB_HISTORY_RETENTION_DAYS: 30
     ports:
       - "127.0.0.1:4010:4010"
+    read_only: true
+    tmpfs:
+      - /tmp:size=3221225472,mode=1777
     volumes:
       - ./docs/quality:/quality:ro
       - ./Data:/samples:ro
@@ -211,5 +203,4 @@ volumes:
   redis_data:
   rabbitmq_data:
   minio_data:
-  qdrant_data:
   quality_lab_data:

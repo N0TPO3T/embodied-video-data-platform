@@ -65,9 +65,9 @@ class TestStorage implements ObjectStoragePort {
 
 function scored(videoId: string): NormalizedVideoQcResultV1 {
   return {
-    schemaVersion: "video_qc_result_v1",
+    schemaVersion: "video_qc_v1",
     ruleVersion: "video_qc_v1",
-    promptVersion: "qwen_video_qc_prompt_v1",
+    promptVersion: "qwen_video_qc_prompt_v2",
     videoId,
     evaluationStatus: "scored",
     dimensions: {} as NormalizedVideoQcResultV1["dimensions"],
@@ -78,14 +78,8 @@ function scored(videoId: string): NormalizedVideoQcResultV1 {
     invalidDurationMs: 1_000,
     billableDurationMs: 9_000,
     invalidSegments: [],
-    hardVeto: { triggered: false, reasons: [] },
-    detectedTask: {
-      scene_id: "scene",
-      task_id: "task",
-      variant_id: "variant",
-      task_summary: "完成桌面整理",
-      confidence: 0.95,
-    },
+    hardVeto: { triggered: false, reasons: [], candidates: [] },
+    detectedTask: { task_id: "task", task_summary: "完成桌面整理", confidence: null },
     deductions: [],
     recommendations: ["保持当前拍摄角度"],
     summary: "视频质量合格",
@@ -119,7 +113,7 @@ function privacyHardReject(videoId: string): NormalizedVideoQcResultV1 {
     evaluationStatus: "hard_reject",
     finalScore: 61,
     settlementRatio: 0,
-    hardVeto: { triggered: true, reasons: ["PRIVACY_OR_SAFETY"] },
+    hardVeto: { triggered: true, reasons: ["PRIVACY_OR_SAFETY"], candidates: [] },
     reviewReasons: ["明确包含隐私信息"],
     summary: "画面包含平台禁止收集的隐私内容",
   };

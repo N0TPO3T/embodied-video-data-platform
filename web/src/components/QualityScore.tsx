@@ -11,10 +11,11 @@ export function QualityScore({
 }) {
   const tone = score >= 80 ? "high" : passed === false ? "low" : "mid";
   const coefficient = ratio ?? qualityCoefficient(score);
+  const hasScore = score !== null && score !== undefined;
   return (
     <div className={`quality-score quality-score-${tone}`}>
-      <strong>{score || "—"}</strong>
-      <span>{score ? `系数 ${coefficient.toFixed(2)}` : "等待评分"}</span>
+      <strong>{hasScore ? score : "—"}</strong>
+      <span>{hasScore ? `系数 ${coefficient.toFixed(2)}` : "等待评分"}</span>
     </div>
   );
 }

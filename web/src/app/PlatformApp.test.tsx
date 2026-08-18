@@ -106,7 +106,7 @@ describe("platform routing", () => {
   it("routes an authenticated collector to the collector dashboard", () => {
     renderPlatform("/collector", "collector");
     expect(
-      screen.getByRole("heading", { name: "早上好，测试人员1" }),
+      screen.getByRole("heading", { name: /，测试人员1/ }),
     ).toBeVisible();
   });
 

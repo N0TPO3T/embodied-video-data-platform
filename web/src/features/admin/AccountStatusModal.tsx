@@ -24,7 +24,7 @@ export function AccountStatusModal({
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
-  const confirmRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
 
   function close() {
     if (submittingRef.current) return;
@@ -57,7 +57,7 @@ export function AccountStatusModal({
       title={`${action}账号`}
       onClose={close}
       returnFocusRef={returnFocusRef}
-      initialFocusRef={confirmRef}
+      initialFocusRef={cancelRef}
     >
       <div className="account-status-confirmation">
         <p>
@@ -75,6 +75,7 @@ export function AccountStatusModal({
         )}
         <div className="modal-actions">
           <button
+            ref={cancelRef}
             type="button"
             className="button button-secondary"
             onClick={close}
@@ -83,7 +84,6 @@ export function AccountStatusModal({
             取消
           </button>
           <button
-            ref={confirmRef}
             type="button"
             className="button button-primary"
             onClick={confirm}

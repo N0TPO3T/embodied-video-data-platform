@@ -58,7 +58,7 @@ TEST_DATABASE_URL=postgresql://evdp:evdp_local_postgres_password@127.0.0.1:55432
 本地轻量检查：
 
 ```bash
-docker compose up -d postgres redis rabbitmq minio qdrant
+docker compose up -d postgres redis rabbitmq minio
 cd backend
 pnpm migration:run
 pnpm exec vitest run test/operations.e2e-spec.ts test/submission-upload.e2e-spec.ts --reporter=dot

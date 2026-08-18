@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type {
   BackendSubmission,
@@ -263,5 +263,31 @@ describe("browser multipart uploader", () => {
     await expect(
       uploader(new File(["abc"], "task.mp4", { type: "video/mp4" })),
     ).rejects.toThrow("上传前请先确认数据授权、隐私规范和敏感内容处理要求");
+  });
+
+  it("rejects oversized files before hashing or creating an upload", async () => {
+    const createUpload = vi.fn<SubmissionUploadApi["createUpload"]>();
+    const api: SubmissionUploadApi = {
+      createUpload,
+      async presignParts() {
+        return [];
+      },
+      async verifyResumeUpload(): Promise<CreateUploadResult> {
+        throw new Error("not used");
+      },
+      async completeUpload() {
+        return queuedSubmission;
+      },
+      async abortUpload() {},
+    };
+    const oversized = new File(["video"], "oversized.mp4", {
+      type: "video/mp4",
+    });
+    Object.defineProperty(oversized, "size", { value: 2 * 1024 ** 3 + 1 });
+
+    await expect(
+      createMultipartUploader(api)(oversized, { authorization }),
+    ).rejects.toThrow("单个视频不能超过 2 GiB");
+    expect(createUpload).not.toHaveBeenCalled();
   });
 });

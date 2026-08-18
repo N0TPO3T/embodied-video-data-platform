@@ -58,3 +58,25 @@ export const demoPublicSiteSnapshot: PublicSiteSnapshot = {
     { label: "08-13", value: 104 },
   ],
 };
+
+export const unavailablePublicSiteSnapshot: PublicSiteSnapshot = {
+  ...demoPublicSiteSnapshot,
+  id: "PUBLIC-UNAVAILABLE",
+  revision: 0,
+  snapshotDate: "—",
+  generatedByName: "",
+  generatedAt: 0,
+  metrics: {
+    deliverableVideoCount: 0,
+    effectiveDurationSeconds: 0,
+    sceneCount: 0,
+    qualityPassRate: 0,
+  },
+  config: {
+    primarySceneName: "",
+    primarySceneDescription: "",
+    ctaCopy: "",
+  },
+  sceneBreakdown: [],
+  trend: [],
+};

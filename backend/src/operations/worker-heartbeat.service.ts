@@ -13,12 +13,22 @@ import {
 const STALE_AFTER_MS = 60_000;
 const DEFAULT_MEDIA_TASK_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_AI_TASK_TIMEOUT_MS = 10 * 60_000;
+const MAX_ACTIVE_WORKERS = 50;
+const MAX_INACTIVE_WORKERS = 20;
 
 type WorkerHeartbeatUpdate = {
   status: WorkerHeartbeatStatus;
   currentSubmissionId?: string | null;
   currentTaskStartedAt?: Date | null;
   lastError?: string | null;
+};
+
+export type PublicWorkerHeartbeat = ReturnType<typeof publicWorker>;
+
+export type WorkerHeartbeatList = {
+  active: PublicWorkerHeartbeat[];
+  inactive: PublicWorkerHeartbeat[];
+  inactiveCount: number;
 };
 
 function publicWorker(worker: WorkerHeartbeatEntity, now = Date.now()) {
@@ -137,12 +147,53 @@ export class WorkerHeartbeatService {
     await this.workers.save(worker);
   }
 
-  async list() {
+  /**
+   * 分组心跳：active 为当前存活且正常心跳的 Worker（默认只展示这些）；
+   * inactive 为已停止或心跳过期的历史记录，仅保留最近若干条用于折叠展示。
+   */
+  async list(): Promise<WorkerHeartbeatList> {
     const workers = await this.workers.find({
       order: { lastSeenAt: "DESC" },
-      take: 50,
+      take: 100,
+    });
+    const mapped = workers.map((worker) => publicWorker(worker));
+    const active = mapped.filter(
+      (worker) => worker.status !== "stopped" && !worker.stale,
+    );
+    const inactive = mapped.filter(
+      (worker) => worker.status === "stopped" || worker.stale,
+    );
+    return {
+      active: active.slice(0, MAX_ACTIVE_WORKERS),
+      inactive: inactive.slice(0, MAX_INACTIVE_WORKERS),
+      inactiveCount: inactive.length,
+    };
+  }
+
+  /**
+   * 全部心跳（含已停止/过期），供超时回收与告警计算使用。
+   */
+  async listAll(): Promise<PublicWorkerHeartbeat[]> {
+    const workers = await this.workers.find({
+      order: { lastSeenAt: "DESC" },
+      take: 100,
     });
     return workers.map((worker) => publicWorker(worker));
+  }
+
+  /**
+   * 删除所有已停止或心跳过期的历史心跳记录。
+   */
+  async pruneInactive(): Promise<number> {
+    const result = await this.workers
+      .createQueryBuilder()
+      .delete()
+      .where('status = :stopped OR "lastSeenAt" < :staleBefore', {
+        stopped: "stopped",
+        staleBefore: new Date(Date.now() - STALE_AFTER_MS),
+      })
+      .execute();
+    return result.affected ?? 0;
   }
 
   private defaultId(kind: WorkerKind): string {

@@ -16,12 +16,12 @@ const SENSITIVE_ACTION_WINDOW_MS = 60 * 1_000;
 export class SensitiveActionRateLimitGuard implements CanActivate {
   constructor(private readonly rateLimits: RateLimitService) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const http = context.switchToHttp();
     const request = http.getRequest<AuthenticatedRequest>();
     const response = http.getResponse<Response>();
     const actorId = request.user?.id ?? request.ip ?? "anonymous";
-    const result = this.rateLimits.consume({
+    const result = await this.rateLimits.consume({
       key: [
         "sensitive",
         actorId,

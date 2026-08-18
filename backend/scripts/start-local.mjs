@@ -16,7 +16,6 @@ pointServiceToLocalhost("DATABASE_URL", "postgres", 55432);
 pointServiceToLocalhost("REDIS_URL", "redis", 6379);
 pointServiceToLocalhost("RABBITMQ_URL", "rabbitmq", 5672);
 pointServiceToLocalhost("MINIO_ENDPOINT", "minio", 9000);
-pointServiceToLocalhost("QDRANT_URL", "qdrant", 6333);
 
 process.env.NODE_ENV = "production";
 process.env.PORT ??= "4000";

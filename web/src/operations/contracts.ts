@@ -45,6 +45,11 @@ export type BackendWorkerReclaimResult = {
     nextStatus: string;
     eventType: string;
   }>;
+  stuck: Array<{
+    submissionId: string;
+    previousStatus: string;
+    reason: string;
+  }>;
 };
 
 export type BackendQueueSnapshot = {
@@ -59,6 +64,8 @@ export type BackendQueueSnapshot = {
   };
   jobs: BackendQueueJob[];
   workers: BackendWorkerHeartbeat[];
+  inactive?: BackendWorkerHeartbeat[];
+  inactiveCount?: number;
 };
 
 export type BackendOperationsNotification = {

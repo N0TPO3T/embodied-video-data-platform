@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, LogOut, Menu, X } from "lucide-react";
+import { Bell, LogOut, Menu, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { navigationByRole } from "../app/navigation";
 import { BrandMark } from "../components/BrandMark";
@@ -27,6 +27,10 @@ export function DashboardShell({
   children: ReactNode;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("evdp-sidebar-collapsed") === "1";
+  });
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const loggingOutRef = useRef(false);
@@ -54,7 +58,38 @@ export function DashboardShell({
 
   function go(path: string) {
     setMobileOpen(false);
+    setNotificationsOpen(false);
     navigate(path);
+  }
+
+  useEffect(() => {
+    if (!notificationsOpen) return;
+    function closeOnOutside(event: MouseEvent) {
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        !target.closest(".notification-panel, .notification-button")
+      ) {
+        setNotificationsOpen(false);
+      }
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setNotificationsOpen(false);
+    }
+    document.addEventListener("mousedown", closeOnOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [notificationsOpen]);
+
+  function toggleCollapsed() {
+    setCollapsed((value) => {
+      const next = !value;
+      window.localStorage.setItem("evdp-sidebar-collapsed", next ? "1" : "0");
+      return next;
+    });
   }
 
   async function signOut() {
@@ -71,10 +106,10 @@ export function DashboardShell({
   }
 
   return (
-    <div className="dashboard-frame">
+    <div className={`dashboard-frame ${collapsed ? "sidebar-collapsed" : ""}`}>
       <aside className={`sidebar ${mobileOpen ? "sidebar-open" : ""}`}>
         <div className="sidebar-brand">
-          <BrandMark />
+          <BrandMark compact={collapsed} />
           <button
             className="icon-button sidebar-close"
             aria-label="关闭导航"
@@ -129,6 +164,14 @@ export function DashboardShell({
             onClick={() => setMobileOpen(true)}
           >
             <Menu size={21} />
+          </button>
+          <button
+            className="icon-button sidebar-collapse-btn"
+            aria-label={collapsed ? "展开导航" : "收起导航"}
+            title={collapsed ? "展开导航" : "收起导航"}
+            onClick={toggleCollapsed}
+          >
+            {collapsed ? <PanelLeftOpen size={20} /> : <PanelLeftClose size={20} />}
           </button>
           <div className="topbar-context">
             <span>{roleLabel[currentAccount.role]}</span>

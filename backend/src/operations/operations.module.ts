@@ -6,6 +6,7 @@ import { AuditModule } from "../audit/audit.module.js";
 import { AuditLogEntity } from "../database/entities/audit-log.entity.js";
 import { JobOutboxEntity } from "../database/entities/job-outbox.entity.js";
 import { SubmissionEntity } from "../database/entities/submission.entity.js";
+import { VideoQualityResultEntity } from "../database/entities/video-quality-result.entity.js";
 import { WorkerHeartbeatEntity } from "../database/entities/worker-heartbeat.entity.js";
 import { OperationsController } from "./operations.controller.js";
 import { AutomaticWorkerReclaimerService } from "./automatic-worker-reclaimer.service.js";
@@ -21,6 +22,7 @@ import { SecurityModule } from "../security/security.module.js";
       AuditLogEntity,
       JobOutboxEntity,
       SubmissionEntity,
+      VideoQualityResultEntity,
       WorkerHeartbeatEntity,
     ]),
     AuditModule,

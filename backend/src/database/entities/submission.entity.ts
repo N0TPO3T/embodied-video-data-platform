@@ -15,6 +15,7 @@ import { UserEntity } from "./user.entity.js";
 export type UploadStatus =
   | "created"
   | "uploading"
+  | "completing"
   | "uploaded"
   | "aborted";
 
@@ -25,10 +26,12 @@ export type SubmissionProcessingStatus =
   | "awaiting_ai"
   | "ai_processing"
   | "completed"
+  | "stuck"
   | "system_failed";
 
 export type SubmissionAssetStatus = "active" | "quarantined";
-export type SubmissionStorageStatus = "available" | "deleted";
+export type SubmissionStorageStatus = "available" | "delete_pending" | "deleted";
+export type SubmissionStorageDeleteMode = "objects" | "submission";
 
 @Entity({ name: "submissions" })
 @Index("idx_submissions_owner_created", ["ownerId", "createdAt"])
@@ -72,6 +75,9 @@ export class SubmissionEntity {
 
   @Column({ name: "multipart_upload_id", type: "text", nullable: true })
   multipartUploadId: string | null = null;
+
+  @Column({ name: "multipart_completion_parts", type: "jsonb", nullable: true })
+  multipartCompletionParts: Array<{ partNumber: number; etag: string }> | null = null;
 
   @Column({ name: "upload_status", type: "varchar", length: 16 })
   uploadStatus!: UploadStatus;
@@ -120,6 +126,15 @@ export class SubmissionEntity {
 
   @Column({ name: "storage_delete_reason", type: "text", nullable: true })
   storageDeleteReason: string | null = null;
+
+  @Column({ name: "storage_delete_mode", type: "varchar", length: 24, nullable: true })
+  storageDeleteMode: SubmissionStorageDeleteMode | null = null;
+
+  @Column({ name: "storage_delete_object_keys", type: "jsonb", default: () => "'[]'::jsonb" })
+  storageDeleteObjectKeys: string[] = [];
+
+  @Column({ name: "storage_delete_force", type: "boolean", default: false })
+  storageDeleteForce = false;
 
   @Column({ name: "data_usage_authorized", type: "boolean", default: false })
   dataUsageAuthorized = false;

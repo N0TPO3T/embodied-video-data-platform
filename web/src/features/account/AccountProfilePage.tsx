@@ -8,6 +8,7 @@ import {
   changeOwnPassword,
 } from "../../auth/client/accountApi";
 import { useIdentity } from "../../auth/client/IdentityContext";
+import { useInteractions } from "../../interactions/InteractionContext";
 
 const roleLabels = {
   collector: "数采人员",
@@ -22,6 +23,7 @@ const statusLabels = {
 
 export function AccountProfilePage() {
   const { currentAccount, teams } = useIdentity();
+  const { notify } = useInteractions();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
@@ -54,9 +56,11 @@ export function AccountProfilePage() {
     try {
       await changeOwnPassword(currentPassword, newPassword);
       clearPasswords();
-      window.location.assign("/login");
+      notify("success", "密码已修改，请使用新密码重新登录");
+      window.setTimeout(() => window.location.assign("/login"), 800);
     } catch (reason) {
-      clearPasswords();
+      setNewPassword("");
+      setConfirmation("");
       setError(
         reason instanceof AccountApiError
           ? reason.message

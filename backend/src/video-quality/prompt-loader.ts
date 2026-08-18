@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 
 import {
   VIDEO_QC_PROMPT_VERSION,
@@ -18,72 +19,77 @@ export type LoadedVideoQualityPrompt = {
   contentSha256: string;
 };
 
-function metadata(document: string, label: string): string {
-  const expression = new RegExp(`^${label}：\\s*\`([^\`]+)\`\\s*$`, "mu");
-  const matches = [...document.matchAll(new RegExp(expression.source, "gmu"))];
-  if (matches.length !== 1 || !matches[0]?.[1]) {
-    throw new Error(`质检提示词中的“${label}”必须且只能出现一次`);
-  }
-  return matches[0][1];
+type PromptManifest = {
+  promptVersion: string;
+  ruleVersion: string;
+  outputSchema: string;
+  initialModel: string;
+  reviewModel: string;
+  files: {
+    systemPrompt: string;
+    outputExample: string;
+  };
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function plainMetadata(document: string, label: string): string {
-  const expression = new RegExp(`^${label}：\\s*\`?([^\`\\r\\n]+)\`?\\s*$`, "mu");
-  const matches = [...document.matchAll(new RegExp(expression.source, "gmu"))];
-  if (matches.length !== 1 || !matches[0]?.[1]) {
-    throw new Error(`质检提示词中的“${label}”必须且只能出现一次`);
+function requiredString(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`质检提示词 manifest 缺少或无效：${label}`);
   }
-  return matches[0][1].trim();
+  return value;
 }
 
-function systemPrompt(document: string): string {
-  const match = document.match(
-    /^## 系统提示词\s*\r?\n\s*```(?:text)?\s*\r?\n(?<prompt>[\s\S]*?)\r?\n```/mu,
-  );
-  const prompt = match?.groups?.prompt?.trim();
-  if (!prompt) {
-    throw new Error("质检提示词缺少“系统提示词”代码块");
+function requiredFileReference(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`质检提示词 manifest 缺少文件引用：${label}`);
   }
-  return prompt;
+  return value;
 }
 
-function standardOutputExample(document: string): Record<string, unknown> {
-  const match = document.match(
-    /^## 标准输出结构\s*\r?\n\s*```json\s*\r?\n(?<example>[\s\S]*?)\r?\n```/mu,
-  );
-  const source = match?.groups?.example?.trim();
-  if (!source) {
-    throw new Error("质检提示词缺少“标准输出结构”JSON 代码块");
-  }
-
-  try {
-    const value = JSON.parse(source) as unknown;
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      throw new Error("标准输出结构必须是 JSON 对象");
-    }
-    return value as Record<string, unknown>;
-  } catch (error) {
-    throw new Error(
-      `质检提示词中的“标准输出结构”不是合法 JSON：${
-        error instanceof Error ? error.message : "unknown"
-      }`,
-    );
-  }
+async function manifestPath(path: string): Promise<string> {
+  const info = await stat(path);
+  if (info.isDirectory()) return join(path, "manifest.json");
+  return path;
 }
 
 export async function loadVideoQualityPrompt(
   path: string,
 ): Promise<LoadedVideoQualityPrompt> {
-  const document = await readFile(path, "utf8");
-  const promptVersion = metadata(document, "提示词版本");
-  const ruleVersion = metadata(document, "适配规则");
-  const initialModel = metadata(document, "推荐模型");
-  const reviewModel = metadata(document, "复核模型");
-  const outputSchemaMatch = document.match(
-    /"requested_output_schema"\s*:\s*"(?<schema>[^"]+)"/u,
+  const manifestFile = await manifestPath(path);
+  let document: unknown;
+  try {
+    document = JSON.parse(await readFile(manifestFile, "utf8"));
+  } catch (error) {
+    throw new Error(
+      `质检提示词 manifest 不是合法 JSON：${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+  }
+  if (!isRecord(document)) {
+    throw new Error("质检提示词 manifest 必须是 JSON 对象");
+  }
+  const files = document.files;
+  if (!isRecord(files)) {
+    throw new Error("质检提示词 manifest 缺少 files 对象");
+  }
+
+  const promptVersion = requiredString(document.promptVersion, "promptVersion");
+  const ruleVersion = requiredString(document.ruleVersion, "ruleVersion");
+  const outputSchema = requiredString(document.outputSchema, "outputSchema");
+  const initialModel = requiredString(document.initialModel, "initialModel");
+  const reviewModel = requiredString(document.reviewModel, "reviewModel");
+  const systemPromptFile = requiredFileReference(
+    files.systemPrompt,
+    "systemPrompt",
   );
-  const outputSchema = outputSchemaMatch?.groups?.schema ?? "";
-  const loadedSystemPrompt = systemPrompt(document);
+  const outputExampleFile = requiredFileReference(
+    files.outputExample,
+    "outputExample",
+  );
 
   if (
     promptVersion !== VIDEO_QC_PROMPT_VERSION ||
@@ -95,19 +101,62 @@ export async function loadVideoQualityPrompt(
     );
   }
 
-  const outputExample = standardOutputExample(document);
+  const baseDirectory = dirname(manifestFile);
+  let systemPrompt: string;
+  try {
+    systemPrompt = (await readFile(resolve(baseDirectory, systemPromptFile), "utf8")).trim();
+  } catch (error) {
+    throw new Error(
+      `系统提示词正文（system.txt）读取失败：${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+  }
+  if (!systemPrompt) {
+    throw new Error("系统提示词正文为空，请检查 system.txt");
+  }
+
+  let outputExample: Record<string, unknown>;
+  let outputExampleSource: string;
+  try {
+    outputExampleSource = await readFile(
+      resolve(baseDirectory, outputExampleFile),
+      "utf8",
+    );
+  } catch (error) {
+    throw new Error(
+      `质检提示词的标准输出结构读取失败：${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+  }
+  try {
+    const parsed = JSON.parse(outputExampleSource) as unknown;
+    if (!isRecord(parsed)) {
+      throw new Error("标准输出结构必须是 JSON 对象");
+    }
+    outputExample = parsed;
+  } catch (error) {
+    throw new Error(
+      `质检提示词的标准输出结构不是合法 JSON：${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+  }
   if (outputExample.schema_version !== VIDEO_QC_RESULT_SCHEMA) {
     throw new Error("质检提示词的标准输出结构与 requested_output_schema 不一致");
   }
 
   return {
-    systemPrompt: loadedSystemPrompt,
+    systemPrompt,
     outputExample,
     promptVersion,
     ruleVersion,
     outputSchema,
-    initialModel: plainMetadata(document, "推荐模型"),
-    reviewModel: plainMetadata(document, "复核模型"),
-    contentSha256: createHash("sha256").update(document).digest("hex"),
+    initialModel,
+    reviewModel,
+    contentSha256: createHash("sha256")
+      .update(systemPrompt, "utf8")
+      .digest("hex"),
   };
 }

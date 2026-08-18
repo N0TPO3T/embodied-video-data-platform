@@ -20,17 +20,20 @@ COPY package.json ./
 
 FROM runtime-base AS api
 EXPOSE 4000
+USER node
 CMD ["sh", "-c", "node dist/database/run-migrations.js && node dist/cli/bootstrap-local-identity.js && node dist/main.js"]
 
 FROM runtime-base AS media-worker
 RUN apk add --no-cache ffmpeg
+USER node
 CMD ["node", "dist/media/media-worker.js"]
 
 FROM runtime-base AS ai-quality-worker
 RUN apk add --no-cache ffmpeg
+USER node
 CMD ["node", "dist/ai-quality/ai-quality-worker.js"]
 
 FROM runtime-base AS ai-quality-lab
-RUN apk add --no-cache ffmpeg
+RUN apk add --no-cache ffmpeg su-exec
 EXPOSE 4010
-CMD ["node", "dist/quality-lab/main.js"]
+CMD ["sh", "-c", "mkdir -p /data/quality-lab && chown -R node:node /data/quality-lab && exec su-exec node node dist/quality-lab/main.js"]

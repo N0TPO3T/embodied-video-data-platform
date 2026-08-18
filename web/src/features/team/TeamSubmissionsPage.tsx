@@ -63,12 +63,7 @@ export function TeamSubmissionsPage() {
     });
 
   useEffect(() => {
-    setPage(1);
-  }, [query, status]);
-
-  useEffect(() => {
     let active = true;
-    setMode((current) => (current === "demo" ? current : "loading"));
     searchSubmissions({
       q: query,
       status,
@@ -128,16 +123,33 @@ export function TeamSubmissionsPage() {
           <h1>团队数据</h1>
           <span>仅展示 {currentTeam?.name ?? "本团队"} 的成员提交</span>
         </div>
-        <a className="button button-primary" href={exportUrl}>
-          导出团队数据
-        </a>
+        {mode === "live" ? (
+          <a className="button button-primary" href={exportUrl}>
+            导出团队数据
+          </a>
+        ) : (
+          <button
+            className="button button-primary"
+            type="button"
+            disabled
+            title="仅连接后端后可导出团队数据"
+          >
+            导出团队数据
+          </button>
+        )}
       </div>
       <section className="content-card table-card">
         <FilterBar
           value={query}
-          onChange={setQuery}
+          onChange={(value) => {
+            setQuery(value);
+            setPage(1);
+          }}
           status={status}
-          onStatusChange={setStatus}
+          onStatusChange={(value) => {
+            setStatus(value);
+            setPage(1);
+          }}
           placeholder="搜索成员、文件或场景"
         />
         <div className="table-summary">
@@ -150,7 +162,7 @@ export function TeamSubmissionsPage() {
           </span>
           <span>处理中 {processingCount(submissions)} 条</span>
         </div>
-        <SubmissionTable submissions={submissions} showOwner />
+        <SubmissionTable submissions={submissions} loading={mode === "loading"} showOwner />
         <div className="table-summary">
           <span>
             第 {pagination.page} / {pagination.totalPages} 页

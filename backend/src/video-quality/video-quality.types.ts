@@ -1,7 +1,7 @@
 export const VIDEO_QC_RULE_VERSION = "video_qc_v1" as const;
-export const VIDEO_QC_PROMPT_VERSION = "qwen_video_qc_prompt_v1" as const;
+export const VIDEO_QC_PROMPT_VERSION = "qwen_video_qc_prompt_v2" as const;
 export const VIDEO_QC_INPUT_SCHEMA = "video_qc_input_v1" as const;
-export const VIDEO_QC_RESULT_SCHEMA = "video_qc_result_v1" as const;
+export const VIDEO_QC_RESULT_SCHEMA = "video_qc_v1" as const;
 
 export type EvaluationStatus =
   | "scored"
@@ -112,73 +112,110 @@ export type DimensionKey =
 export type QualityIssue = {
   reason_code: string;
   description: string;
-  start_ms: number;
-  end_ms: number;
-  severity: "minor" | "moderate" | "major" | "critical";
+  start_ms: number | null;
+  end_ms: number | null;
+  severity: "info" | "minor" | "major" | "critical";
   confidence: number;
   evidence_timestamps_ms: number[];
 };
 
 export type QualityDimension = {
-  coefficient: number;
-  score: number;
+  coefficient: number | null;
+  score: number | null;
   confidence: number;
   calculation_trace: string;
   segments: Array<Record<string, unknown>>;
   issues: QualityIssue[];
-  hand_active_duration_ms?: number;
-  c_spec?: number;
-  c_visual?: number;
-  completion_coefficient?: number;
-  inventory_coefficient?: number;
-  unique_coefficient?: number;
-  similarity_total?: number;
+  metrics?: Record<string, number | null>;
+  hand_active_duration_ms?: number | null;
+  c_spec?: number | null;
+  c_visual?: number | null;
+  completion_coefficient?: number | null;
+  inventory_coefficient?: number | null;
+  unique_coefficient?: number | null;
+  similarity_total?: number | null;
 };
 
 export type RawVideoQcResultV1 = {
   schema_version: typeof VIDEO_QC_RESULT_SCHEMA;
-  rule_version: typeof VIDEO_QC_RULE_VERSION;
-  prompt_version: typeof VIDEO_QC_PROMPT_VERSION;
-  video_id: string;
-  evaluation_status: Exclude<EvaluationStatus, "system_failed">;
-  hard_veto: {
+  // v2 提示词的标准输出不再要求模型回填这两个字段；缺失时由服务端归一化填充。
+  rule_version?: typeof VIDEO_QC_RULE_VERSION;
+  prompt_version?: typeof VIDEO_QC_PROMPT_VERSION;
+  task_id: string;
+  evaluation_status: Exclude<EvaluationStatus, "system_failed" | "completed"> | "completed";
+  input_status: {
+    is_complete: boolean;
+    missing_required_inputs: string[];
+    conflicts: Array<string | Record<string, unknown>>;
+  };
+  task_summary: string;
+  overall_result: {
+    raw_total_score: number | null;
+    final_score: number | null;
+    summary: string;
+  };
+  hard_reject: {
     triggered: boolean;
     reasons: Array<string | Record<string, unknown>>;
+    candidates: Array<string | Record<string, unknown>>;
   };
-  detected_task: {
-    scene_id: string;
-    task_id: string;
-    variant_id: string;
-    task_summary: string;
-    confidence: number;
+  dimensions: Record<RawDimensionKey, RawQualityDimension>;
+  review: {
+    review_required: boolean;
+    review_reasons: string[];
   };
-  dimensions: Record<DimensionKey, QualityDimension>;
-  billing_observations: {
-    candidate_invalid_segments: Array<{
-      reason_code: string;
-      description: string;
-      start_ms: number;
-      end_ms: number;
-      confidence: number;
-      evidence_timestamps_ms: number[];
-    }>;
-    candidate_valid_waiting_segments: Array<{
-      waiting_type: string;
-      description: string;
-      start_ms: number;
-      end_ms: number;
-      confidence: number;
-      evidence_timestamps_ms: number[];
-    }>;
+  duration_result: {
+    analysis_duration_ms: number | null;
+    invalid_duration_ms: number | null;
+    effective_duration_ms: number | null;
+    effective_duration_ratio: number | null;
+    invalid_segments: Array<RawDurationSegment>;
+    necessary_wait_segments: Array<RawDurationSegment>;
   };
-  raw_total_score: number;
-  final_score: number;
-  summary: string;
-  deductions: Array<QualityIssue & { dimension?: string }>;
   recommendations: string[];
-  review_required: boolean;
-  review_reasons: string[];
-  missing_inputs: string[];
+};
+
+export type RawDimensionKey = "D1" | "D2" | "D3" | "D4" | "D5";
+
+export type RawDurationSegment = {
+  reason_code: string;
+  description: string;
+  start_ms: number | null;
+  end_ms: number | null;
+  confidence: number;
+  evidence_timestamps_ms: number[];
+  source?: string;
+};
+
+export type RawQualityIssue = {
+  reason_code: string;
+  start_ms: number | null;
+  end_ms: number | null;
+  severity: "info" | "minor" | "major" | "critical";
+  confidence: number;
+  evidence_timestamps_ms: number[];
+  description: string;
+  source:
+    | "visual_model"
+    | "technical_metrics"
+    | "deterministic_detector"
+    | "inventory_context"
+    | "similarity_context"
+    | "caller_input";
+};
+
+export type RawQualityDimension = {
+  score: number | null;
+  coefficient: number | null;
+  confidence: number;
+  metrics: Record<string, number | null>;
+  issues: RawQualityIssue[];
+};
+
+export type DetectedTaskSummary = {
+  task_id: string;
+  task_summary: string;
+  confidence: number | null;
 };
 
 export type ValidationReport = {
@@ -193,21 +230,21 @@ export type NormalizedVideoQcResultV1 = {
   videoId: string;
   evaluationStatus: EvaluationStatus;
   dimensions: Record<DimensionKey, QualityDimension>;
-  rawTotalScore: number;
-  finalScore: number;
+  rawTotalScore: number | null;
+  finalScore: number | null;
   settlementRatio: number | null;
-  analysisDurationMs: number;
-  invalidDurationMs: number;
-  billableDurationMs: number;
+  analysisDurationMs: number | null;
+  invalidDurationMs: number | null;
+  billableDurationMs: number | null;
   invalidSegments: Array<{
     reasonCode: string;
     startMs: number;
     endMs: number;
     source: "detector" | "model";
   }>;
-  hardVeto: RawVideoQcResultV1["hard_veto"];
-  detectedTask: RawVideoQcResultV1["detected_task"];
-  deductions: RawVideoQcResultV1["deductions"];
+  hardVeto: RawVideoQcResultV1["hard_reject"];
+  detectedTask: DetectedTaskSummary;
+  deductions: Array<QualityIssue & { dimension?: string }>;
   recommendations: string[];
   summary: string;
   reviewRequired: boolean;

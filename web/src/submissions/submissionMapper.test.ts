@@ -301,4 +301,86 @@ describe("backend submission mapping", () => {
       createdAt: "2026/08/11 11:00",
     });
   });
+
+  it("passes through model dimensions, hard veto and billing observations", () => {
+    const submission = backendSubmissionToDomain({
+      id: "SUB-DIM",
+      fileName: "dimensions.mp4",
+      ownerId: "U-01",
+      ownerName: "测试数采",
+      teamId: "TEAM-01",
+      teamName: "测试团队",
+      sizeBytes: "1048576",
+      uploadStatus: "uploaded",
+      processingStatus: "completed",
+      isTestData: false,
+      createdAt: Date.parse("2026-08-11T01:02:03.000Z"),
+      segments: [],
+      quality: {
+        status: "scored",
+        attempts: 1,
+        promptRevision: 1,
+        promptContentSha256: "a".repeat(64),
+        initialModel: "qwen3.7-plus",
+        reviewModel: "qwen3.7-flash",
+        modelRuns: [],
+        finalScore: 92,
+        rawTotalScore: 92,
+        settlementRatio: 1,
+        invalidDurationMs: 0,
+        billableDurationMs: 60_000,
+        summary: "通过",
+        recommendations: [],
+        deductions: [],
+        reviewRequired: false,
+        reviewReasons: [],
+        invalidSegments: [],
+        dimensions: {
+          first_person_and_composition: {
+            coefficient: 1,
+            score: 20,
+            confidence: 0.95,
+            issues: [],
+          },
+          task_value_uniqueness: {
+            coefficient: 0.6,
+            score: 12,
+            confidence: 0.8,
+            issues: [
+              {
+                reason_code: "LOW_UNIQUENESS",
+                description: "与库存样本高度相似",
+                start_ms: 0,
+                end_ms: 10_000,
+                severity: "moderate",
+                confidence: 0.8,
+                evidence_timestamps_ms: [1_000],
+              },
+            ],
+          },
+        },
+        hardVeto: { triggered: false, reasons: [] },
+        billingObservations: {
+          candidate_invalid_segments: [],
+          candidate_valid_waiting_segments: [],
+        },
+      },
+    });
+
+    expect(submission.qualityResult?.dimensions).toMatchObject({
+      first_person_and_composition: { score: 20, coefficient: 1 },
+      task_value_uniqueness: {
+        score: 12,
+        issues: [{ reason_code: "LOW_UNIQUENESS", start_ms: 0 }],
+      },
+    });
+    expect(submission.qualityResult?.hardVeto).toEqual({
+      triggered: false,
+      reasons: [],
+    });
+    expect(submission.qualityResult?.billingObservations).toEqual({
+      candidate_invalid_segments: [],
+      candidate_valid_waiting_segments: [],
+    });
+  });
 });

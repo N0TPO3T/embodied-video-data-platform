@@ -14,7 +14,7 @@ export { configureApplication } from "./http/configure-application.js";
 async function bootstrap(): Promise<void> {
   const environment = parseEnvironment(process.env as RawEnvironment);
   const app = await NestFactory.create(AppModule);
-  configureApplication(app, environment.webOrigin);
+  configureApplication(app, environment.webOrigin, environment.trustProxyHops);
   await app.listen(environment.port, "0.0.0.0");
 }
 

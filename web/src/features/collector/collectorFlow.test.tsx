@@ -269,6 +269,22 @@ describe("collector journey", () => {
     expect(screen.queryByText("notes.txt")).not.toBeInTheDocument();
   });
 
+  it("rejects videos above the 2 GiB upload limit with an actionable message", async () => {
+    const user = userEvent.setup();
+    renderCollector("/collector/upload");
+    const oversized = new File(["video"], "oversized.mp4", {
+      type: "video/mp4",
+    });
+    Object.defineProperty(oversized, "size", { value: 2 * 1024 ** 3 + 1 });
+
+    await confirmUploadAuthorization(user);
+    await user.upload(screen.getByLabelText("选择视频文件"), oversized);
+
+    expect(screen.getByText("单个视频不能超过 2 GiB")).toBeVisible();
+    expect(screen.queryByText("oversized.mp4")).not.toBeInTheDocument();
+    expect(uploadVideo).not.toHaveBeenCalled();
+  });
+
   it("uploads each supported file through the real multipart boundary", async () => {
     const user = userEvent.setup();
     renderCollector("/collector/upload");
@@ -449,6 +465,7 @@ describe("collector journey", () => {
   });
 
   it("loads a short-lived video preview on the submission detail page", async () => {
+    const user = userEvent.setup();
     renderCollector("/collector/submissions/SUB-001");
 
     const player = await screen.findByLabelText(
@@ -464,6 +481,9 @@ describe("collector journey", () => {
       "http://minio.local/preview.mp4",
     );
     expect(screen.getByText("HLS 720p")).toBeVisible();
+    await user.click(
+      await screen.findByRole("button", { name: /评分依据与扣分明细/ }),
+    );
     expect(await screen.findByAltText("短暂遮挡 证据帧")).toHaveAttribute(
       "src",
       "http://minio.local/evidence-occlusion.jpg",

@@ -40,6 +40,7 @@ export function DeliveryPackageModal({
   const assetCount = preview?.assetCount ?? demoAssetCount;
 
   function close() {
+    if (submittingRef.current) return;
     setName("");
     setError("");
     setSubmitting(false);
@@ -50,14 +51,19 @@ export function DeliveryPackageModal({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submittingRef.current || assetCount === 0) return;
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setError("请填写交付包名称");
+      return;
+    }
     submittingRef.current = true;
     setSubmitting(true);
     setError("");
     try {
       if (preview) {
-        onCreated?.(await createDeliveryPackage({ name }));
+        onCreated?.(await createDeliveryPackage({ name: trimmedName }));
       } else {
-        createDemoDeliveryPackage({ name });
+        createDemoDeliveryPackage({ name: trimmedName });
       }
       notify("success", "交付包已创建");
       close();
@@ -78,7 +84,7 @@ export function DeliveryPackageModal({
         <div className="delivery-count"><small>当前已结算且质检通过</small><strong>{assetCount} 条可交付资产</strong></div>
         <label>
           交付包名称
-          <input ref={nameRef} value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：八月家庭任务包" />
+          <input ref={nameRef} value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：八月家庭任务包" required />
         </label>
         {assetCount === 0 && <p className="modal-error">当前没有可交付资产</p>}
         {error && <p className="modal-error" role="alert">{error}</p>}

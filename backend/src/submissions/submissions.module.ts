@@ -11,6 +11,7 @@ import { AllowedOriginGuard } from "../http/allowed-origin.guard.js";
 import { SecurityModule } from "../security/security.module.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { SubmissionFailureFilter } from "./submission-failure.filter.js";
+import { SubmissionStorageReconciliationService } from "./submission-storage-reconciliation.service.js";
 import { SubmissionsController } from "./submissions.controller.js";
 import { SubmissionsPolicy } from "./submissions.policy.js";
 import { SubmissionsService } from "./submissions.service.js";
@@ -33,6 +34,7 @@ import { SubmissionsService } from "./submissions.service.js";
     SubmissionsService,
     SubmissionsPolicy,
     SubmissionFailureFilter,
+    SubmissionStorageReconciliationService,
     AllowedOriginGuard,
   ],
   exports: [SubmissionsService],

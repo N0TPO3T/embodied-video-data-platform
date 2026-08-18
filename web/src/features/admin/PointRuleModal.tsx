@@ -44,6 +44,7 @@ export function PointRuleModal({
   const firstInputRef = useRef<HTMLInputElement>(null);
 
   function close() {
+    if (submittingRef.current) return;
     setError("");
     setSubmitting(false);
     submittingRef.current = false;
@@ -53,13 +54,22 @@ export function PointRuleModal({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submittingRef.current) return;
+    if (!version.trim()) {
+      setError("请填写版本名称");
+      return;
+    }
+    const parsedPoints = Number(defaultPoints);
+    if (!Number.isFinite(parsedPoints) || parsedPoints < 0) {
+      setError("请输入有效的每分钟积分");
+      return;
+    }
     submittingRef.current = true;
     setSubmitting(true);
     setError("");
     try {
       const rule = await createPointRule({
-        version,
-        defaultPointsPerMinute: Number(defaultPoints),
+        version: version.trim(),
+        defaultPointsPerMinute: parsedPoints,
         coefficientBands: currentRule?.coefficientBands ?? DEFAULT_BANDS,
         description,
       });
@@ -89,6 +99,7 @@ export function PointRuleModal({
             value={version}
             onChange={(event) => setVersion(event.target.value)}
             placeholder="POINTS-2026-09"
+            required
           />
         </label>
         <label>
@@ -111,7 +122,10 @@ export function PointRuleModal({
         <div className="point-rule-band-preview">
           {(currentRule?.coefficientBands ?? DEFAULT_BANDS).map((band) => (
             <span key={`${band.minScore}-${band.maxScore}`}>
-              {band.minScore}-{band.maxScore} 分：{band.ratio.toFixed(2)}
+              {band.minScore === 0
+                ? `低于 ${band.maxScore + 1} 分`
+                : `${band.minScore}-${band.maxScore} 分`}
+              ：{band.ratio.toFixed(2)}
             </span>
           ))}
         </div>

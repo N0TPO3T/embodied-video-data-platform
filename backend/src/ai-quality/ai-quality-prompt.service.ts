@@ -8,7 +8,10 @@ import type { PublicUser } from "../auth/auth.types.js";
 import { UserEntity } from "../database/entities/user.entity.js";
 import { VideoQualityPromptVersionEntity } from "../database/entities/video-quality-prompt-version.entity.js";
 import { IdentityFailure } from "../identity/identity.policy.js";
-import { loadVideoQualityPrompt } from "../video-quality/prompt-loader.js";
+import {
+  loadVideoQualityPrompt,
+  type LoadedVideoQualityPrompt,
+} from "../video-quality/prompt-loader.js";
 import { videoQualityPromptPath } from "./ai-quality.config.js";
 
 const PROMPT_LOCK_KEY = 7_326_195_420;
@@ -44,16 +47,29 @@ export class AiQualityPromptService {
     private readonly audit: AuditService,
   ) {}
 
-  async ensureDefault(): Promise<VideoQualityPromptVersionEntity> {
-    const current = await this.prompts.findOneBy({ active: true });
-    if (current) return current;
+  private matchesCommitted(
+    entity: VideoQualityPromptVersionEntity,
+    loaded: LoadedVideoQualityPrompt,
+  ): boolean {
+    return (
+      entity.promptVersion === loaded.promptVersion &&
+      entity.ruleVersion === loaded.ruleVersion &&
+      entity.outputSchema === loaded.outputSchema &&
+      entity.initialModel === loaded.initialModel &&
+      entity.reviewModel === loaded.reviewModel
+    );
+  }
 
+  async ensureDefault(): Promise<VideoQualityPromptVersionEntity> {
     const loaded = await loadVideoQualityPrompt(videoQualityPromptPath());
+    const current = await this.prompts.findOneBy({ active: true });
+    if (current && this.matchesCommitted(current, loaded)) return current;
+
     return this.dataSource.transaction(async (manager) => {
       await manager.query("SELECT pg_advisory_xact_lock($1)", [PROMPT_LOCK_KEY]);
       const repository = manager.getRepository(VideoQualityPromptVersionEntity);
       const active = await repository.findOneBy({ active: true });
-      if (active) return active;
+      if (active && this.matchesCommitted(active, loaded)) return active;
       const creator = await manager.getRepository(UserEntity).findOne({
         where: { role: "admin", status: "active" },
         order: { createdAt: "ASC" },
@@ -61,9 +77,7 @@ export class AiQualityPromptService {
       if (!creator) {
         throw new Error("初始化 AI 质检提示词前必须存在启用的管理员账号");
       }
-      return repository.save({
-        id: `VQP-${randomUUID()}`,
-        revision: 1,
+      const base = {
         systemPrompt: loaded.systemPrompt,
         contentSha256: contentSha256(loaded.systemPrompt),
         promptVersion: loaded.promptVersion,
@@ -73,6 +87,23 @@ export class AiQualityPromptService {
         reviewModel: loaded.reviewModel,
         active: true,
         createdByAccountId: creator.id,
+      };
+      if (active) {
+        // 已激活版本与当前提示词文件不一致（提示词升级）：保留原版本记录，
+        // 用文件内容创建新版本并切换 active，使新任务立即使用新提示词。
+        active.active = false;
+        await repository.save(active);
+        return repository.save({
+          id: `VQP-${randomUUID()}`,
+          revision: active.revision + 1,
+          ...base,
+          createdByName: "系统自动升级",
+        });
+      }
+      return repository.save({
+        id: `VQP-${randomUUID()}`,
+        revision: 1,
+        ...base,
         createdByName: "系统初始化",
       });
     });

@@ -3,8 +3,20 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { PlatformApp } from "../../app/PlatformApp";
 import { IdentityProvider } from "../../auth/client/IdentityContext";
+import { searchAccountAudit } from "../../auth/client/accountApi";
 import { DemoStoreProvider } from "../../data/DemoStoreContext";
 import { accountForRole, demoAccounts } from "../../test/accountFixtures";
+
+vi.mock("../../auth/client/accountApi", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../auth/client/accountApi")>();
+  return {
+    ...actual,
+    searchAccountAudit: vi.fn(),
+  };
+});
+
+const searchAccountAuditMock = vi.mocked(searchAccountAudit);
 
 function renderPath(path: string, admin = false) {
   window.history.replaceState({}, "", path);
@@ -48,13 +60,11 @@ describe("lightweight feedback interactions", () => {
     );
   });
 
-  it("renders session operation logs and links audit export to CSV", async () => {
+  it("renders session operation logs and disables audit export without a backend", async () => {
+    searchAccountAuditMock.mockRejectedValue(new Error("offline"));
     renderPath("/admin/audit", true);
 
     expect(await screen.findByText("调整团队积分规则")).toBeVisible();
-    expect(screen.getByRole("link", { name: "导出日志" })).toHaveAttribute(
-      "href",
-      "http://localhost:4000/api/v1/audit-logs/export.csv",
-    );
+    expect(screen.getByRole("button", { name: "导出日志" })).toBeDisabled();
   });
 });

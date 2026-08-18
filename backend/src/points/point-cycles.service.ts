@@ -6,6 +6,7 @@ import { DataSource, In, Repository, type EntityManager } from "typeorm";
 
 import { AuditService } from "../audit/audit.service.js";
 import type { PublicUser } from "../auth/auth.types.js";
+import { csvDocument } from "../csv/csv.js";
 import { MediaMetadataEntity } from "../database/entities/media-metadata.entity.js";
 import { PointCycleAdjustmentEntity } from "../database/entities/point-cycle-adjustment.entity.js";
 import { PointCycleEntity } from "../database/entities/point-cycle.entity.js";
@@ -137,12 +138,6 @@ function publicCycle(
   };
 }
 
-function csvCell(value: string | number): string {
-  const raw = String(value);
-  if (!/[",\n\r]/u.test(raw)) return raw;
-  return `"${raw.replaceAll('"', '""')}"`;
-}
-
 @Injectable()
 export class PointCyclesService {
   constructor(
@@ -253,7 +248,7 @@ export class PointCyclesService {
           : "",
       ]),
     ];
-    return rows.map((row) => row.map(csvCell).join(",")).join("\n") + "\n";
+    return csvDocument(rows);
   }
 
   async create(actor: PublicUser, businessDate = todayIsoDate()) {

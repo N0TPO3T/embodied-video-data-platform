@@ -25,7 +25,16 @@ const TEST_DATABASE_URL =
 const WEB_ORIGIN = "http://localhost:3000";
 const PASSWORD = "Valid-test-password-2026";
 const PROMPT_PATH = fileURLToPath(
-  new URL("../../docs/quality/qwen-video-ai-quality-prompt-v1.md", import.meta.url),
+  new URL(
+    "../../docs/quality/prompts/qwen-video-ai-quality-prompt-v1/manifest.json",
+    import.meta.url,
+  ),
+);
+const SYSTEM_PROMPT_PATH = fileURLToPath(
+  new URL(
+    "../../docs/quality/prompts/qwen-video-ai-quality-prompt-v1/system.txt",
+    import.meta.url,
+  ),
 );
 
 function cookieFrom(response: request.Response): string {
@@ -117,9 +126,9 @@ describe("AI quality prompt API", () => {
     expect(response.headers["cache-control"]).toContain("no-store");
     expect(response.body.prompt).toMatchObject({
       revision: 1,
-      promptVersion: "qwen_video_qc_prompt_v1",
+      promptVersion: "qwen_video_qc_prompt_v2",
       ruleVersion: "video_qc_v1",
-      outputSchema: "video_qc_result_v1",
+      outputSchema: "video_qc_v1",
       initialModel: "qwen3.7-plus",
       reviewModel: "qwen3.7-flash",
       createdByName: "系统初始化",
@@ -134,7 +143,7 @@ describe("AI quality prompt API", () => {
   });
 
   it("creates a new active revision without writing the full prompt into audit", async () => {
-    const original = await readFile(PROMPT_PATH, "utf8");
+    const original = await readFile(SYSTEM_PROMPT_PATH, "utf8");
     const systemPrompt = `${original.slice(0, 2000)}\n管理员补充：优先检查手部与对象完整性。`;
     const response = await request(app.getHttpServer())
       .put("/api/v1/ai-quality/prompt")

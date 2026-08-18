@@ -2,13 +2,14 @@ import { randomUUID } from "node:crypto";
 import { extname } from "node:path";
 import { Readable } from "node:stream";
 
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, PayloadTooLargeException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Brackets, DataSource, EntityManager, Repository } from "typeorm";
 
 import { AuditService } from "../audit/audit.service.js";
 import type { PublicUser } from "../auth/auth.types.js";
 import { AuditLogEntity } from "../database/entities/audit-log.entity.js";
+import { csvDocument } from "../csv/csv.js";
 import { JobOutboxEntity } from "../database/entities/job-outbox.entity.js";
 import { DeliveryPackageItemEntity } from "../database/entities/delivery-package-item.entity.js";
 import { MediaMetadataEntity } from "../database/entities/media-metadata.entity.js";
@@ -47,6 +48,8 @@ import type {
 } from "./dto/upload.dto.js";
 import { SubmissionFailure } from "./submission-failure.js";
 import { SubmissionsPolicy } from "./submissions.policy.js";
+
+const MAX_SYNCHRONOUS_CSV_ROWS = 50_000;
 
 export const UPLOAD_PART_SIZE_BYTES = 16 * 1024 * 1024;
 export const UPLOAD_POLICY_VERSION = "DATA-AUTH-2026-08";
@@ -138,12 +141,6 @@ function decimal(value: number, digits: number): string {
 
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/gu, (match) => `\\${match}`);
-}
-
-function csvCell(value: string | number | boolean | null | undefined): string {
-  const raw = value === null || value === undefined ? "" : String(value);
-  if (!/[",\n\r]/u.test(raw)) return raw;
-  return `"${raw.replaceAll('"', '""')}"`;
 }
 
 function hlsDerivedObjectKeys(metadata?: MediaMetadataEntity | null): string[] {
@@ -451,6 +448,9 @@ function publicSubmission(submission: SubmissionEntity) {
               : undefined,
           manualIssues: quality.manualIssues ?? [],
           lastError: quality.lastError ?? undefined,
+          progressStage: quality.progressStage ?? undefined,
+          progressUpdatedAt: quality.progressUpdatedAt?.getTime(),
+          stuckReason: quality.stuckReason ?? undefined,
           detectedTask:
             quality.normalizedResult &&
             typeof quality.normalizedResult.detectedTask === "object"
@@ -461,6 +461,27 @@ function publicSubmission(submission: SubmissionEntity) {
             Array.isArray(quality.normalizedResult.invalidSegments)
               ? quality.normalizedResult.invalidSegments
               : [],
+          dimensions:
+            quality.normalizedResult &&
+            typeof quality.normalizedResult.dimensions === "object"
+              ? (quality.normalizedResult.dimensions as Record<
+                  string,
+                  unknown
+                >)
+              : undefined,
+          hardVeto:
+            quality.normalizedResult &&
+            typeof quality.normalizedResult.hardVeto === "object"
+              ? (quality.normalizedResult.hardVeto as {
+                  triggered: boolean;
+                  reasons: Array<string | Record<string, unknown>>;
+                })
+              : undefined,
+          billingObservations:
+            quality.rawModelResult &&
+            typeof quality.rawModelResult.billing_observations === "object"
+              ? quality.rawModelResult.billing_observations
+              : undefined,
           startedAt: quality.startedAt?.getTime(),
           completedAt: quality.completedAt?.getTime(),
         }
@@ -528,7 +549,7 @@ export class SubmissionsService {
             checksumSha256: input.checksumSha256,
           })
           .andWhere("submission.uploadStatus IN (:...uploadStatuses)", {
-            uploadStatuses: ["created", "uploading", "uploaded"],
+            uploadStatuses: ["created", "uploading", "completing", "uploaded"],
           })
           .andWhere("submission.storageStatus = :available", {
             available: "available",
@@ -670,6 +691,7 @@ export class SubmissionsService {
         ownerId: actor.id,
         uploadStatus: "uploading",
         processingStatus: "uploading",
+        storageStatus: "available",
       },
       order: { createdAt: "DESC" },
     });
@@ -693,88 +715,107 @@ export class SubmissionsService {
     id: string,
     input: CompleteUploadDto,
   ) {
-    const submission = await this.findEntity(id);
-    this.policy.requireUploadControl(actor, submission);
-    this.requireUploading(submission);
-    const uploadId = submission.multipartUploadId!;
-    const expectedPartCount = Math.ceil(
-      Number(submission.expectedSizeBytes) / UPLOAD_PART_SIZE_BYTES,
-    );
     const parts = [...input.parts].sort(
       (left, right) => left.partNumber - right.partNumber,
     );
-    if (
-      parts.length !== expectedPartCount ||
-      parts.some((part, index) => part.partNumber !== index + 1)
-    ) {
-      throw new SubmissionFailure(
-        "INVALID_PARTS",
-        "必须提交完整且连续的分片列表",
-        400,
+    const submission = await this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(SubmissionEntity);
+      const locked = await repository.findOne({
+        where: { id },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!locked) {
+        throw new SubmissionFailure("NOT_FOUND", "视频不存在", 404);
+      }
+      this.policy.requireUploadControl(actor, locked);
+      if (locked.uploadStatus === "uploaded") return locked;
+      if (locked.storageStatus !== "available") {
+        throw new SubmissionFailure(
+          "UPLOAD_NOT_ACTIVE",
+          "该视频正在执行对象删除，无法完成上传",
+          409,
+        );
+      }
+      if (
+        !["uploading", "completing"].includes(locked.uploadStatus) ||
+        !locked.multipartUploadId
+      ) {
+        throw new SubmissionFailure(
+          "UPLOAD_NOT_ACTIVE",
+          "当前上传任务不可完成",
+          409,
+        );
+      }
+      const expectedPartCount = Math.ceil(
+        Number(locked.expectedSizeBytes) / UPLOAD_PART_SIZE_BYTES,
       );
+      if (
+        parts.length !== expectedPartCount ||
+        parts.some((part, index) => part.partNumber !== index + 1)
+      ) {
+        throw new SubmissionFailure(
+          "INVALID_PARTS",
+          "必须提交完整且连续的分片列表",
+          400,
+        );
+      }
+      locked.uploadStatus = "completing";
+      locked.multipartCompletionParts = parts;
+      return await repository.save(locked);
+    });
+    if (submission.uploadStatus === "uploaded") {
+      return { submission: publicSubmission(await this.findEntity(id)) };
     }
-    await this.storage.completeMultipartUpload({
-      objectKey: submission.objectKey,
-      uploadId,
-      parts,
-    });
-    const object = await this.storage.headObject({
-      objectKey: submission.objectKey,
-    });
+
+    const object = await this.ensureMultipartObject(submission);
     if (object.sizeBytes !== submission.expectedSizeBytes) {
-      submission.uploadStatus = "uploaded";
-      submission.processingStatus = "system_failed";
-      submission.failureCode = "OBJECT_SIZE_MISMATCH";
-      submission.failureMessage = "上传对象大小与创建上传时声明的不一致";
-      submission.uploadedAt = new Date();
-      await this.submissions.save(submission);
+      await this.dataSource.transaction(async (manager) => {
+        const repository = manager.getRepository(SubmissionEntity);
+        const locked = await repository.findOne({
+          where: { id },
+          lock: { mode: "pessimistic_write" },
+        });
+        if (!locked) return;
+        locked.uploadStatus = "uploaded";
+        locked.processingStatus = "system_failed";
+        locked.failureCode = "OBJECT_SIZE_MISMATCH";
+        locked.failureMessage = "上传对象大小与创建上传时声明的不一致";
+        locked.uploadedAt = new Date();
+        locked.multipartUploadId = null;
+        locked.multipartCompletionParts = null;
+        await repository.save(locked);
+      });
       throw new SubmissionFailure(
         "OBJECT_SIZE_MISMATCH",
         "上传文件大小校验失败，请重新上传",
         422,
       );
     }
-
-    await this.dataSource.transaction(async (manager) => {
-      submission.uploadStatus = "uploaded";
-      submission.processingStatus = "queued";
-      submission.failureCode = null;
-      submission.failureMessage = null;
-      submission.uploadedAt = new Date();
-      await manager.getRepository(SubmissionEntity).save(submission);
-      await manager.getRepository(JobOutboxEntity).save({
-        id: `JOB-${randomUUID()}`,
-        aggregateType: "submission",
-        aggregateId: submission.id,
-        eventType: "media.probe.v1",
-        payload: {
-          submissionId: submission.id,
-          objectKey: submission.objectKey,
-          expectedSizeBytes: submission.expectedSizeBytes,
-          checksumSha256: submission.checksumSha256,
-        },
-        status: "pending",
-        attempts: 0,
-        availableAt: new Date(),
-      });
-    });
-    return { submission: publicSubmission(submission) };
+    return { submission: publicSubmission(await this.finalizeCompletedUpload(id)) };
   }
 
   async abortUpload(actor: PublicUser, id: string): Promise<void> {
-    const submission = await this.findEntity(id);
-    this.policy.requireUploadControl(actor, submission);
-    this.requireUploading(submission);
-    await this.storage.abortMultipartUpload({
-      objectKey: submission.objectKey,
-      uploadId: submission.multipartUploadId!,
+    await this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(SubmissionEntity);
+      const submission = await repository.findOne({
+        where: { id },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!submission) {
+        throw new SubmissionFailure("NOT_FOUND", "视频不存在", 404);
+      }
+      this.policy.requireUploadControl(actor, submission);
+      this.requireUploading(submission);
+      submission.storageStatus = "delete_pending";
+      submission.storageDeleteMode = "objects";
+      submission.storageDeleteObjectKeys = [submission.objectKey];
+      submission.storageDeleteForce = true;
+      submission.storageDeletedByAccountId = actor.id;
+      submission.storageDeletedByName = actor.displayName;
+      submission.storageDeleteReason = "上传已取消";
+      await repository.save(submission);
     });
-    submission.uploadStatus = "aborted";
-    submission.processingStatus = "system_failed";
-    submission.failureCode = "UPLOAD_ABORTED";
-    submission.failureMessage = "上传已取消";
-    submission.multipartUploadId = null;
-    await this.submissions.save(submission);
+    await this.processPendingStorageDelete(id);
   }
 
   async list(actor: PublicUser, input: SubmissionListQuery = {}) {
@@ -811,8 +852,16 @@ export class SubmissionsService {
   async exportCsv(actor: PublicUser, input: SubmissionListQuery = {}) {
     const status = listStatus(input.status);
     const q = input.q?.trim();
+    const idQuery = this.createListIdQuery(actor, status, q);
+    const total = await idQuery.getCount();
+    if (total > MAX_SYNCHRONOUS_CSV_ROWS) {
+      throw new PayloadTooLargeException({
+        code: "EXPORT_TOO_LARGE",
+        message: `导出结果超过 ${MAX_SYNCHRONOUS_CSV_ROWS} 条，请缩小筛选范围`,
+      });
+    }
     const ids = (
-      await this.createListIdQuery(actor, status, q).getRawMany<{ id: string }>()
+      await idQuery.take(MAX_SYNCHRONOUS_CSV_ROWS).getRawMany<{ id: string }>()
     ).map((row) => row.id);
     const submissions = await this.findDetailedByIds(ids);
     const ordered = new Map(
@@ -861,7 +910,7 @@ export class SubmissionsService {
         ];
       }),
     ];
-    return rows.map((row) => row.map(csvCell).join(",")).join("\n") + "\n";
+    return csvDocument(rows);
   }
 
   async get(actor: PublicUser, id: string) {
@@ -1334,7 +1383,7 @@ export class SubmissionsService {
         );
       }
       if (
-        !["awaiting_ai", "completed", "system_failed"].includes(
+        !["awaiting_ai", "completed", "system_failed", "stuck"].includes(
           submission.processingStatus,
         )
       ) {
@@ -1401,6 +1450,9 @@ export class SubmissionsService {
         quality.normalizedResult = null;
         quality.rawModelResult = null;
         quality.lastError = null;
+        quality.progressStage = null;
+        quality.progressUpdatedAt = null;
+        quality.stuckReason = null;
         quality.startedAt = null;
         quality.completedAt = null;
         await manager.getRepository(VideoQualityResultEntity).save(quality);
@@ -1476,7 +1528,7 @@ export class SubmissionsService {
     }
 
     const now = new Date();
-    return await this.dataSource.transaction(async (manager) => {
+    const pending = await this.dataSource.transaction(async (manager) => {
       const submission = await manager
         .getRepository(SubmissionEntity)
         .findOne({
@@ -1486,7 +1538,20 @@ export class SubmissionsService {
       if (!submission) {
         throw new SubmissionFailure("NOT_FOUND", "视频不存在", 404);
       }
-      if (ACTIVE_PROCESSING_STATUSES.has(submission.processingStatus)) {
+      if (submission.storageStatus === "delete_pending") {
+        if (submission.storageDeleteMode !== "submission") {
+          throw new SubmissionFailure(
+            "OBJECT_DELETE_IN_PROGRESS",
+            "视频对象删除正在进行，不能同时删除提交记录",
+            409,
+          );
+        }
+        return submission;
+      }
+      if (
+        ACTIVE_PROCESSING_STATUSES.has(submission.processingStatus) ||
+        submission.uploadStatus === "completing"
+      ) {
         throw new SubmissionFailure(
           "SUBMISSION_IN_PROCESSING",
           "视频正在处理，不能删除提交记录",
@@ -1498,16 +1563,6 @@ export class SubmissionsService {
         id,
         "删除",
       );
-
-      const before = {
-        fileName: submission.originalFileName,
-        uploadStatus: submission.uploadStatus,
-        processingStatus: submission.processingStatus,
-        storageStatus: submission.storageStatus,
-        storageRetainUntil: submission.storageRetainUntil?.getTime() ?? null,
-      };
-      const deletedObjectKeys: string[] = [];
-      let abortedUploadId: string | null = null;
 
       if (
         submission.uploadStatus === "uploaded" &&
@@ -1524,49 +1579,30 @@ export class SubmissionsService {
             409,
           );
         }
-        deletedObjectKeys.push(
-          ...(await this.collectSubmissionObjectKeys(manager, submission)),
-        );
-        for (const objectKey of deletedObjectKeys) {
-          await this.storage.deleteObject({ objectKey });
-        }
-      } else if (
-        submission.uploadStatus === "uploading" &&
-        submission.multipartUploadId
-      ) {
-        await this.storage.abortMultipartUpload({
-          objectKey: submission.objectKey,
-          uploadId: submission.multipartUploadId,
-        });
-        abortedUploadId = submission.multipartUploadId;
+        submission.storageDeleteObjectKeys =
+          await this.collectSubmissionObjectKeys(manager, submission);
+      } else {
+        submission.storageDeleteObjectKeys = [];
       }
-
-      await manager.getRepository(JobOutboxEntity).delete({
-        aggregateId: submission.id,
-      });
-      await this.audit.record(
-        manager,
-        actor,
-        "submission_delete",
-        { id: submission.id, name: submission.originalFileName },
-        reason,
-        before,
-        {
-          deletedAt: now.getTime(),
-          force: input.force === true,
-          deletedObjectKeys,
-          abortedUploadId,
-        },
-      );
-      await manager.getRepository(SubmissionEntity).delete({ id });
-
-      return {
-        deletedSubmissionId: id,
-        deletedFileName: before.fileName,
-        deletedObjectKeys,
-        abortedUploadId: abortedUploadId ?? undefined,
-      };
+      submission.storageStatus = "delete_pending";
+      submission.storageDeleteMode = "submission";
+      submission.storageDeleteForce = input.force === true;
+      submission.storageDeletedByAccountId = actor.id;
+      submission.storageDeletedByName = actor.displayName;
+      submission.storageDeleteReason = reason;
+      return await manager.getRepository(SubmissionEntity).save(submission);
     });
+    const result = {
+      deletedSubmissionId: id,
+      deletedFileName: pending.originalFileName,
+      deletedObjectKeys: pending.storageDeleteObjectKeys,
+      abortedUploadId:
+        pending.uploadStatus === "uploading"
+          ? pending.multipartUploadId ?? undefined
+          : undefined,
+    };
+    await this.processPendingStorageDelete(id);
+    return result;
   }
 
   async clearDuplicateCandidate(
@@ -1642,11 +1678,15 @@ export class SubmissionsService {
   async preview(actor: PublicUser, id: string) {
     const submission = await this.findEntity(id);
     this.policy.requireRead(actor, submission);
-    if (submission.storageStatus === "deleted") {
+    if (submission.storageStatus !== "available") {
       throw new SubmissionFailure(
-        "OBJECT_DELETED",
-        "视频对象已删除，不能预览",
-        410,
+        submission.storageStatus === "deleted"
+          ? "OBJECT_DELETED"
+          : "OBJECT_DELETE_IN_PROGRESS",
+        submission.storageStatus === "deleted"
+          ? "视频对象已删除，不能预览"
+          : "视频对象正在删除，暂不能预览",
+        submission.storageStatus === "deleted" ? 410 : 409,
       );
     }
     if (submission.uploadStatus !== "uploaded") {
@@ -1746,11 +1786,15 @@ export class SubmissionsService {
     }
     const submission = await this.findEntity(id);
     this.policy.requireRead(actor, submission);
-    if (submission.storageStatus === "deleted") {
+    if (submission.storageStatus !== "available") {
       throw new SubmissionFailure(
-        "OBJECT_DELETED",
-        "视频对象已删除，不能预览",
-        410,
+        submission.storageStatus === "deleted"
+          ? "OBJECT_DELETED"
+          : "OBJECT_DELETE_IN_PROGRESS",
+        submission.storageStatus === "deleted"
+          ? "视频对象已删除，不能预览"
+          : "视频对象正在删除，暂不能预览",
+        submission.storageStatus === "deleted" ? 410 : 409,
       );
     }
     const metadata = await this.dataSource
@@ -1791,7 +1835,7 @@ export class SubmissionsService {
     }
 
     const now = new Date();
-    const deletedKeys = await this.dataSource.transaction(async (manager) => {
+    const pending = await this.dataSource.transaction(async (manager) => {
       const submission = await manager
         .getRepository(SubmissionEntity)
         .findOne({
@@ -1800,6 +1844,16 @@ export class SubmissionsService {
         });
       if (!submission) {
         throw new SubmissionFailure("NOT_FOUND", "视频不存在", 404);
+      }
+      if (submission.storageStatus === "delete_pending") {
+        if (submission.storageDeleteMode !== "objects") {
+          throw new SubmissionFailure(
+            "SUBMISSION_DELETE_IN_PROGRESS",
+            "提交记录删除正在进行",
+            409,
+          );
+        }
+        return submission;
       }
       if (submission.storageStatus === "deleted") {
         throw new SubmissionFailure(
@@ -1838,51 +1892,19 @@ export class SubmissionsService {
         manager,
         submission,
       );
-
-      for (const objectKey of objectKeys) {
-        await this.storage.deleteObject({ objectKey });
-      }
-
-      submission.storageStatus = "deleted";
-      submission.storageDeletedAt = now;
+      submission.storageStatus = "delete_pending";
       submission.storageDeletedByAccountId = actor.id;
       submission.storageDeletedByName = actor.displayName;
       submission.storageDeleteReason = reason;
-      submission.uploadStatus = "aborted";
-      submission.assetStatus = "quarantined";
-      submission.quarantineReason = "对象已删除";
-      submission.quarantinedAt = now;
-      submission.quarantinedByAccountId = actor.id;
-      submission.quarantinedByName = actor.displayName;
-      submission.failureCode = "OBJECT_DELETED";
-      submission.failureMessage = "视频对象已删除";
-      await manager.getRepository(SubmissionEntity).save(submission);
-      await manager.getRepository(JobOutboxEntity).delete({
-        aggregateId: submission.id,
-      });
-      await this.audit.record(
-        manager,
-        actor,
-        "storage_object_delete",
-        { id: submission.id, name: submission.originalFileName },
-        reason,
-        {
-          storageStatus: "available",
-          storageRetainUntil: submission.storageRetainUntil?.getTime() ?? null,
-        },
-        {
-          storageStatus: "deleted",
-          force: input.force === true,
-          objectKeys,
-          deletedAt: now.getTime(),
-        },
-      );
-      return objectKeys;
+      submission.storageDeleteMode = "objects";
+      submission.storageDeleteObjectKeys = objectKeys;
+      submission.storageDeleteForce = input.force === true;
+      return await manager.getRepository(SubmissionEntity).save(submission);
     });
-
+    await this.processPendingStorageDelete(id);
     return {
       ...(await this.get(actor, id)),
-      deletedObjectKeys: deletedKeys,
+      deletedObjectKeys: pending.storageDeleteObjectKeys,
     };
   }
 
@@ -1891,15 +1913,15 @@ export class SubmissionsService {
     id: string,
     action: string,
   ): Promise<void> {
-    const [pointItems, pointAdjustments, deliveryItems] = await Promise.all([
-      manager.getRepository(PointCycleItemEntity).countBy({ submissionId: id }),
-      manager
-        .getRepository(PointCycleAdjustmentEntity)
-        .countBy({ submissionId: id }),
-      manager
-        .getRepository(DeliveryPackageItemEntity)
-        .countBy({ submissionId: id }),
-    ]);
+    const pointItems = await manager
+      .getRepository(PointCycleItemEntity)
+      .countBy({ submissionId: id });
+    const pointAdjustments = await manager
+      .getRepository(PointCycleAdjustmentEntity)
+      .countBy({ submissionId: id });
+    const deliveryItems = await manager
+      .getRepository(DeliveryPackageItemEntity)
+      .countBy({ submissionId: id });
     if (pointItems + pointAdjustments > 0) {
       throw new SubmissionFailure(
         "SUBMISSION_LOCKED",
@@ -2255,9 +2277,271 @@ export class SubmissionsService {
     };
   }
 
+  private async processPendingStorageDelete(id: string): Promise<void> {
+    const pending = await this.submissions.findOneBy({ id });
+    if (!pending || pending.storageStatus !== "delete_pending") return;
+
+    if (
+      ["uploading", "completing"].includes(pending.uploadStatus) &&
+      pending.multipartUploadId
+    ) {
+      try {
+        await this.storage.abortMultipartUpload({
+          objectKey: pending.objectKey,
+          uploadId: pending.multipartUploadId,
+        });
+      } catch (abortError) {
+        try {
+          await this.storage.deleteObject({ objectKey: pending.objectKey });
+        } catch {
+          throw abortError;
+        }
+      }
+    }
+    for (const objectKey of pending.storageDeleteObjectKeys) {
+      await this.storage.deleteObject({ objectKey });
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(SubmissionEntity);
+      const submission = await repository.findOne({
+        where: { id },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!submission || submission.storageStatus !== "delete_pending") return;
+      if (
+        !submission.storageDeleteMode ||
+        !submission.storageDeletedByAccountId ||
+        !submission.storageDeletedByName ||
+        !submission.storageDeleteReason
+      ) {
+        throw new Error("对象删除恢复信息不完整");
+      }
+      const now = new Date();
+      const actor: PublicUser = {
+        id: submission.storageDeletedByAccountId,
+        displayName: submission.storageDeletedByName,
+        username: "storage-reconciliation-worker",
+        role: "admin",
+        status: "active",
+        updatedAt: 0,
+      };
+      const objectKeys = [...submission.storageDeleteObjectKeys];
+      const force = submission.storageDeleteForce;
+      const reason = submission.storageDeleteReason;
+      if (submission.storageDeleteMode === "submission") {
+        const abortedUploadId =
+          submission.uploadStatus === "uploading"
+            ? submission.multipartUploadId
+            : null;
+        await manager.getRepository(JobOutboxEntity).delete({
+          aggregateId: submission.id,
+        });
+        await this.audit.record(
+          manager,
+          actor,
+          "submission_delete",
+          { id: submission.id, name: submission.originalFileName },
+          reason,
+          {
+            fileName: submission.originalFileName,
+            uploadStatus: submission.uploadStatus,
+            processingStatus: submission.processingStatus,
+            storageStatus: "available",
+            storageRetainUntil:
+              submission.storageRetainUntil?.getTime() ?? null,
+          },
+          {
+            deletedAt: now.getTime(),
+            force,
+            deletedObjectKeys: objectKeys,
+            abortedUploadId,
+          },
+        );
+        await repository.delete({ id });
+        return;
+      }
+
+      const uploadWasActive = ["uploading", "completing"].includes(
+        submission.uploadStatus,
+      );
+      submission.storageStatus = "deleted";
+      submission.storageDeletedAt = now;
+      submission.uploadStatus = "aborted";
+      submission.multipartUploadId = null;
+      submission.multipartCompletionParts = null;
+      submission.assetStatus = "quarantined";
+      submission.quarantineReason = "对象已删除";
+      submission.quarantinedAt = now;
+      submission.quarantinedByAccountId = actor.id;
+      submission.quarantinedByName = actor.displayName;
+      submission.failureCode = uploadWasActive
+        ? "UPLOAD_ABORTED"
+        : "OBJECT_DELETED";
+      submission.failureMessage = uploadWasActive
+        ? "上传已取消"
+        : "视频对象已删除";
+      submission.storageDeleteMode = null;
+      submission.storageDeleteObjectKeys = [];
+      submission.storageDeleteForce = false;
+      await repository.save(submission);
+      await manager.getRepository(JobOutboxEntity).delete({
+        aggregateId: submission.id,
+      });
+      await this.audit.record(
+        manager,
+        actor,
+        "storage_object_delete",
+        { id: submission.id, name: submission.originalFileName },
+        reason,
+        {
+          storageStatus: "available",
+          storageRetainUntil:
+            submission.storageRetainUntil?.getTime() ?? null,
+        },
+        {
+          storageStatus: "deleted",
+          force,
+          objectKeys,
+          deletedAt: now.getTime(),
+        },
+      );
+    });
+  }
+
+  async reconcileStorageOperations(limit = 25): Promise<{
+    completedUploads: number;
+    completedDeletes: number;
+    failures: number;
+  }> {
+    const completing = await this.submissions.find({
+      where: { uploadStatus: "completing" },
+      order: { updatedAt: "ASC" },
+      take: limit,
+    });
+    let completedUploads = 0;
+    let failures = 0;
+    for (const submission of completing) {
+      try {
+        const object = await this.ensureMultipartObject(submission);
+        if (object.sizeBytes !== submission.expectedSizeBytes) {
+          await this.markUploadSizeMismatch(submission.id);
+        } else {
+          await this.finalizeCompletedUpload(submission.id);
+          completedUploads += 1;
+        }
+      } catch {
+        failures += 1;
+      }
+    }
+
+    const pendingDeletes = await this.submissions.find({
+      where: { storageStatus: "delete_pending" },
+      order: { updatedAt: "ASC" },
+      take: Math.max(0, limit - completing.length),
+    });
+    let completedDeletes = 0;
+    for (const submission of pendingDeletes) {
+      try {
+        await this.processPendingStorageDelete(submission.id);
+        completedDeletes += 1;
+      } catch {
+        failures += 1;
+      }
+    }
+    return { completedUploads, completedDeletes, failures };
+  }
+
+  private async ensureMultipartObject(
+    submission: SubmissionEntity,
+  ): Promise<Awaited<ReturnType<ObjectStoragePort["headObject"]>>> {
+    if (!submission.multipartUploadId || !submission.multipartCompletionParts) {
+      throw new Error("上传完成恢复信息不完整");
+    }
+    try {
+      await this.storage.completeMultipartUpload({
+        objectKey: submission.objectKey,
+        uploadId: submission.multipartUploadId,
+        parts: submission.multipartCompletionParts,
+      });
+    } catch (completionError) {
+      try {
+        return await this.storage.headObject({ objectKey: submission.objectKey });
+      } catch {
+        throw completionError;
+      }
+    }
+    return await this.storage.headObject({ objectKey: submission.objectKey });
+  }
+
+  private async finalizeCompletedUpload(id: string): Promise<SubmissionEntity> {
+    return await this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(SubmissionEntity);
+      const submission = await repository.findOne({
+        where: { id },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!submission) {
+        throw new SubmissionFailure("NOT_FOUND", "视频不存在", 404);
+      }
+      if (submission.uploadStatus === "uploaded") return submission;
+      if (submission.uploadStatus !== "completing") {
+        throw new SubmissionFailure(
+          "UPLOAD_NOT_ACTIVE",
+          "当前上传任务不可完成",
+          409,
+        );
+      }
+      submission.uploadStatus = "uploaded";
+      submission.processingStatus = "queued";
+      submission.failureCode = null;
+      submission.failureMessage = null;
+      submission.uploadedAt = new Date();
+      submission.multipartUploadId = null;
+      submission.multipartCompletionParts = null;
+      await repository.save(submission);
+      await manager.getRepository(JobOutboxEntity).save({
+        id: `JOB-${randomUUID()}`,
+        aggregateType: "submission",
+        aggregateId: submission.id,
+        eventType: "media.probe.v1",
+        payload: {
+          submissionId: submission.id,
+          objectKey: submission.objectKey,
+          expectedSizeBytes: submission.expectedSizeBytes,
+          checksumSha256: submission.checksumSha256,
+        },
+        status: "pending",
+        attempts: 0,
+        availableAt: new Date(),
+      });
+      return submission;
+    });
+  }
+
+  private async markUploadSizeMismatch(id: string): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(SubmissionEntity);
+      const submission = await repository.findOne({
+        where: { id },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!submission || submission.uploadStatus !== "completing") return;
+      submission.uploadStatus = "uploaded";
+      submission.processingStatus = "system_failed";
+      submission.failureCode = "OBJECT_SIZE_MISMATCH";
+      submission.failureMessage = "上传对象大小与创建上传时声明的不一致";
+      submission.uploadedAt = new Date();
+      submission.multipartUploadId = null;
+      submission.multipartCompletionParts = null;
+      await repository.save(submission);
+    });
+  }
+
   private requireUploading(submission: SubmissionEntity): void {
     if (
       submission.uploadStatus !== "uploading" ||
+      submission.storageStatus !== "available" ||
       !submission.multipartUploadId
     ) {
       throw new SubmissionFailure(

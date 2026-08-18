@@ -89,6 +89,9 @@ jobs:
       - name: Typecheck web
         working-directory: web
         run: pnpm typecheck
+      - name: Lint web
+        working-directory: web
+        run: pnpm lint
       - name: Run web tests
         working-directory: web
         run: pnpm test -- --reporter=dot

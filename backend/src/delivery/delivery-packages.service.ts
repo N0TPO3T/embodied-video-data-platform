@@ -12,6 +12,7 @@ import { DataSource, MoreThan, Repository, type EntityManager } from "typeorm";
 
 import { AuditService } from "../audit/audit.service.js";
 import type { PublicUser } from "../auth/auth.types.js";
+import { csvDocument } from "../csv/csv.js";
 import {
   DeliveryArchiveTaskEntity,
   type DeliveryArchiveFormat,
@@ -179,12 +180,6 @@ function archiveTaskActor(task: DeliveryArchiveTaskEntity): PublicUser {
   };
 }
 
-function csvCell(value: string | number): string {
-  const raw = String(value);
-  if (!/[",\n\r]/u.test(raw)) return raw;
-  return `"${raw.replaceAll('"', '""')}"`;
-}
-
 function manifestCsvFor(deliveryPackage: DeliveryPackageEntity): string {
   const rows = [
     [
@@ -212,7 +207,7 @@ function manifestCsvFor(deliveryPackage: DeliveryPackageEntity): string {
       item.sizeBytes,
     ]),
   ];
-  return rows.map((row) => row.map(csvCell).join(",")).join("\n") + "\n";
+  return csvDocument(rows);
 }
 
 function tarNumber(value: number | bigint, length: number): string {

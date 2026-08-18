@@ -8,6 +8,7 @@ import type {
   PresignedPart,
   SubmissionUploadApi,
 } from "../contracts";
+import { requireSupportedUploadSize } from "./uploadLimits";
 
 const DEFAULT_HASH_CHUNK_BYTES = 4 * 1024 * 1024;
 const MAX_CONCURRENT_PARTS = 3;
@@ -136,6 +137,7 @@ export function createMultipartUploader(
     options: UploadOptions = {},
   ): Promise<BackendSubmission> {
     const authorization = requireAuthorization(options);
+    requireSupportedUploadSize(file);
     const checksumSha256 = await sha256File(file);
     const created = await api.createUpload({
       fileName: file.name,
@@ -159,6 +161,7 @@ export function createMultipartUploader(
     created: ActiveUploadResult,
     options: UploadOptions = {},
   ): Promise<BackendSubmission> {
+    requireSupportedUploadSize(file);
     if (file.name !== created.submission.fileName) {
       throw new Error("请选择与未完成任务同名的视频文件");
     }

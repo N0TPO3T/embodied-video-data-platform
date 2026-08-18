@@ -1,6 +1,7 @@
 export type BackendUploadStatus =
   | "created"
   | "uploading"
+  | "completing"
   | "uploaded"
   | "aborted";
 
@@ -11,6 +12,7 @@ export type BackendProcessingStatus =
   | "awaiting_ai"
   | "ai_processing"
   | "completed"
+  | "stuck"
   | "system_failed";
 
 export type BackendQualityStatus =
@@ -19,7 +21,56 @@ export type BackendQualityStatus =
   | "scored"
   | "hard_reject"
   | "review_pending"
+  | "stuck"
   | "system_failed";
+
+export type BackendQualityDimension = {
+  coefficient: number;
+  score: number;
+  confidence: number;
+  calculation_trace?: string;
+  segments?: Array<Record<string, unknown>>;
+  issues: Array<{
+    reason_code: string;
+    description: string;
+    start_ms: number;
+    end_ms: number;
+    severity: "minor" | "moderate" | "major" | "critical";
+    confidence: number;
+    evidence_timestamps_ms: number[];
+  }>;
+  hand_active_duration_ms?: number;
+  c_spec?: number;
+  c_visual?: number;
+  completion_coefficient?: number;
+  inventory_coefficient?: number;
+  unique_coefficient?: number;
+  similarity_total?: number;
+};
+
+export type BackendQualityHardVeto = {
+  triggered: boolean;
+  reasons: Array<string | Record<string, unknown>>;
+};
+
+export type BackendQualityBillingObservations = {
+  candidate_invalid_segments: Array<{
+    reason_code: string;
+    description: string;
+    start_ms: number;
+    end_ms: number;
+    confidence: number;
+    evidence_timestamps_ms: number[];
+  }>;
+  candidate_valid_waiting_segments: Array<{
+    waiting_type: string;
+    description: string;
+    start_ms: number;
+    end_ms: number;
+    confidence: number;
+    evidence_timestamps_ms: number[];
+  }>;
+};
 
 export type BackendQualityResult = {
   status: BackendQualityStatus;
@@ -53,12 +104,15 @@ export type BackendQualityResult = {
   };
   manualIssues?: Array<{ label: string; start: number; end: number }>;
   lastError?: string;
+  progressStage?: string;
+  progressUpdatedAt?: number;
+  stuckReason?: string;
   detectedTask?: {
     scene_id?: string;
     task_id?: string;
     variant_id?: string;
     task_summary?: string;
-    confidence?: number;
+    confidence?: number | null;
   };
   invalidSegments: Array<{
     reasonCode: string;
@@ -66,6 +120,9 @@ export type BackendQualityResult = {
     endMs: number;
     source: string;
   }>;
+  dimensions?: Record<string, BackendQualityDimension>;
+  hardVeto?: BackendQualityHardVeto;
+  billingObservations?: BackendQualityBillingObservations;
   startedAt?: number;
   completedAt?: number;
 };
@@ -103,9 +160,9 @@ export type BackendSubmission = {
   failureMessage?: string;
   isTestData: boolean;
   assetStatus?: "active" | "quarantined";
-  storageStatus?: "available" | "deleted";
+  storageStatus?: "available" | "delete_pending" | "deleted";
   storage?: {
-    status: "available" | "deleted";
+    status: "available" | "delete_pending" | "deleted";
     retainUntil?: number;
     deletedAt?: number;
     deletedByAccountId?: string;

@@ -13,6 +13,7 @@ import { QualityRuleVersionEntity } from "../database/entities/quality-rule-vers
 import { SubmissionEntity } from "../database/entities/submission.entity.js";
 import {
   VideoQualityResultEntity,
+  type VideoQualityProgressStage,
   type VideoQualityResultStatus,
 } from "../database/entities/video-quality-result.entity.js";
 import type { VideoQualityPromptVersionEntity } from "../database/entities/video-quality-prompt-version.entity.js";
@@ -22,7 +23,10 @@ import {
 } from "../storage/object-storage.port.js";
 import { BailianRequestError } from "../video-quality/qwen-video-quality.provider.js";
 import { loadVideoQualityPrompt } from "../video-quality/prompt-loader.js";
-import type { NormalizedVideoQcResultV1 } from "../video-quality/video-quality.types.js";
+import type {
+  NormalizedVideoQcResultV1,
+  QualityStage,
+} from "../video-quality/video-quality.types.js";
 import {
   labelSetSnapshot,
   passesQualityRule,
@@ -188,6 +192,17 @@ function containsSensitiveRisk(result: NormalizedVideoQcResultV1): boolean {
   );
 }
 
+function qualityProgressFromStage(
+  stage: QualityStage,
+): VideoQualityProgressStage | null {
+  if (stage === "media_analysis") return "media_analysis";
+  if (stage === "initial_review") return "initial_review";
+  if (stage === "secondary_review") return "secondary_review";
+  if (stage === "completed" || stage === "review_pending") return "completed";
+  if (stage === "system_failed" || stage === "cancelled") return "failed";
+  return null;
+}
+
 function enforceExactDuplicate(
   result: NormalizedVideoQcResultV1,
 ): NormalizedVideoQcResultV1 {
@@ -198,6 +213,7 @@ function enforceExactDuplicate(
     hardVeto: {
       triggered: true,
       reasons: [...result.hardVeto.reasons, "EXACT_DUPLICATE"],
+      candidates: result.hardVeto.candidates,
     },
     summary: `服务端 SHA-256 精确重复校验未通过。${result.summary}`,
     reviewRequired: false,
@@ -279,6 +295,7 @@ export class AiQualityAnalysisService {
         `original${extname(task.submission.originalFileName).toLowerCase()}`,
       );
       try {
+        await this.updateProgress(task.submission.id, "downloading");
         await abortable(
           this.storage.downloadObject({
             objectKey: task.submission.objectKey,
@@ -315,7 +332,12 @@ export class AiQualityAnalysisService {
                 return exactDuplicate;
               },
             },
-            undefined,
+            (stage) => {
+              const progress = qualityProgressFromStage(stage);
+              if (progress) {
+                void this.updateProgress(task.submission.id, progress);
+              }
+            },
             input.signal,
           ),
           input.signal,
@@ -358,6 +380,8 @@ export class AiQualityAnalysisService {
         { submissionId },
         {
           status: "system_failed",
+          progressStage: "failed",
+          progressUpdatedAt: new Date(),
           lastError: message,
           completedAt: new Date(),
         },
@@ -371,6 +395,43 @@ export class AiQualityAnalysisService {
         },
       );
     });
+  }
+
+  /**
+   * 把卡住的任务（运行超时或 Worker 心跳过期）标记为 stuck。
+   * stuck 不是终态：管理员可在 AI 任务页重新排队恢复。
+   */
+  async markStuck(submissionId: string, reason: string): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      await manager.getRepository(VideoQualityResultEntity).update(
+        { submissionId },
+        {
+          status: "stuck",
+          progressStage: "stuck",
+          progressUpdatedAt: new Date(),
+          stuckReason: reason,
+          lastError: reason,
+        },
+      );
+      await manager.getRepository(SubmissionEntity).update(
+        { id: submissionId },
+        {
+          processingStatus: "stuck",
+          failureCode: "WORKER_STUCK",
+          failureMessage: reason,
+        },
+      );
+    });
+  }
+
+  private async updateProgress(
+    submissionId: string,
+    stage: VideoQualityProgressStage,
+  ): Promise<void> {
+    await this.results.update(
+      { submissionId },
+      { progressStage: stage, progressUpdatedAt: new Date() },
+    );
   }
 
   private async begin(
@@ -440,6 +501,9 @@ export class AiQualityAnalysisService {
         });
       }
       result.status = "running";
+      result.progressStage = "queued";
+      result.progressUpdatedAt = new Date();
+      result.stuckReason = null;
       result.attempts += 1;
       result.startedAt = new Date();
       result.completedAt = null;
@@ -488,16 +552,17 @@ export class AiQualityAnalysisService {
       if (!result) throw new Error("AI 质检运行记录不存在");
       const status = resultStatus(normalized);
       const qualityRule = await this.qualityRuleForResult(manager, result);
+      const finalScore = normalized.finalScore ?? 0;
       const passed =
         status === "scored"
-          ? passesQualityRule(normalized.finalScore, qualityRule.passThreshold)
+          ? passesQualityRule(finalScore, qualityRule.passThreshold)
           : status === "hard_reject"
             ? false
             : null;
       const settlementRatio =
         status === "scored"
           ? settlementRatioForScore({
-              score: normalized.finalScore,
+              score: finalScore,
               passThreshold: qualityRule.passThreshold,
             })
           : status === "hard_reject"
@@ -505,6 +570,9 @@ export class AiQualityAnalysisService {
             : null;
       const persistedNormalized = { ...normalized, settlementRatio };
       result.status = status;
+      result.progressStage = "completed";
+      result.progressUpdatedAt = new Date();
+      result.stuckReason = null;
       result.modelRuns = normalized.modelRuns as unknown as Array<
         Record<string, unknown>
       >;

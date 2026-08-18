@@ -1,7 +1,7 @@
 "use client";
 
 import { Archive, Boxes, Database, Download, HardDrive, Link2, PackageCheck } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MetricCard } from "../../components/MetricCard";
 import { SubmissionTable } from "../../components/SubmissionTable";
 import { useDemoStore } from "../../data/DemoStoreContext";
@@ -133,6 +133,18 @@ export function AssetsPage() {
     () => sumDeliveryBytes(packages, preview),
     [packages, preview],
   );
+  const loadArchiveTasks = useCallback(
+    async (nextPackages: BackendDeliveryPackage[]) => {
+      const entries = await Promise.all(
+        nextPackages.map(async (deliveryPackage) => [
+          deliveryPackage.id,
+          await listDeliveryArchiveTasks(deliveryPackage.id),
+        ] as const),
+      );
+      setArchiveTasks(Object.fromEntries(entries));
+    },
+    [],
+  );
 
   useEffect(() => {
     let active = true;
@@ -153,7 +165,7 @@ export function AssetsPage() {
     return () => {
       active = false;
     };
-  }, [state.deliveryPackages]);
+  }, [loadArchiveTasks, state.deliveryPackages]);
 
   useEffect(() => {
     let active = true;
@@ -193,16 +205,6 @@ export function AssetsPage() {
     } finally {
       setLoadingLinksFor(null);
     }
-  }
-
-  async function loadArchiveTasks(nextPackages = packages) {
-    const entries = await Promise.all(
-      nextPackages.map(async (deliveryPackage) => [
-        deliveryPackage.id,
-        await listDeliveryArchiveTasks(deliveryPackage.id),
-      ] as const),
-    );
-    setArchiveTasks(Object.fromEntries(entries));
   }
 
   async function handlePrepareArchive(
@@ -264,7 +266,14 @@ export function AssetsPage() {
       <div className="metric-grid"><MetricCard label="待交付资产" value={String(preview?.assetCount ?? assets.length)} detail="已锁定且未入包" icon={Archive}/><MetricCard label="已入包资产" value={String(totalPackageAssets)} detail={`${packages.length} 个交付包`} icon={Database} tone="green"/><MetricCard label="本月交付包" value={String(monthlyPackageCount)} detail="可导出清单" icon={Boxes} tone="violet"/><MetricCard label="存储占用" value={formatBytes(totalDeliveryBytes)} detail="待交付与已入包合计" icon={HardDrive} tone="amber"/></div>
       <div className="audit-summary"><Boxes size={18}/><span><strong>{backendMode === "live" ? "交付包已连接后端持久化" : backendMode === "loading" ? "正在读取交付包" : "当前显示本地演示交付包"}</strong><small>{backendMode === "live" ? "创建后会保存交付包、资产条目和审计记录，并可下载 CSV 清单、短期资产链接和可追踪归档任务。" : backendMode === "loading" ? "页面会在接口返回后切换为真实数据。" : "后端不可用时保留可操作演示，真实部署会自动使用接口。"}</small></span></div>
       <section className="content-card table-card"><div className="card-heading"><div><h2>交付包</h2><p>已持久化的资产包、下载清单、短期资产链接和归档准备状态</p></div></div><div className="table-scroll"><table className="data-table"><thead><tr><th>交付包</th><th>资产数</th><th>创建人</th><th>状态</th><th>归档任务</th><th/></tr></thead><tbody>{packages.map((deliveryPackage) => {
-        const latestTask = archiveTasks[deliveryPackage.id]?.[0];
+        const tasks = archiveTasks[deliveryPackage.id] ?? [];
+        const latestTask = tasks[0];
+        const zipTask = tasks.find((task) => task.format === "zip");
+        const tarTask = tasks.find((task) => task.format === "tar");
+        const zipReady = zipTask?.status === "completed";
+        const tarReady = tarTask?.status === "completed";
+        const zipBusy = Boolean(zipTask && (zipTask.status === "queued" || zipTask.status === "processing"));
+        const tarBusy = Boolean(tarTask && (tarTask.status === "queued" || tarTask.status === "processing"));
         const preparingZip = preparingArchiveFor === `${deliveryPackage.id}:zip`;
         const preparingTar = preparingArchiveFor === `${deliveryPackage.id}:tar`;
         return (
@@ -274,10 +283,10 @@ export function AssetsPage() {
             <td>{deliveryPackage.createdByName}</td>
             <td>已就绪</td>
             <td>{latestTask ? <span className="archive-progress"><strong>{latestTask.format.toUpperCase()} · {archiveStatusLabel(latestTask.status)}</strong><small>{latestTask.processedAssetCount}/{latestTask.assetCount} 条 · {latestTask.progressPercent}%</small><i><b style={{ width: `${latestTask.progressPercent}%` }} /></i>{latestTask.status === "failed" && latestTask.failureMessage ? <em>{latestTask.failureMessage}</em> : null}{latestTask.status === "completed" ? <button className="table-action" type="button" onClick={() => void handleLoadArchiveLink(latestTask)} disabled={loadingArchiveLinkFor === latestTask.id}><Download size={14}/>{loadingArchiveLinkFor === latestTask.id ? "生成中" : "归档链接"}</button> : null}</span> : "暂无归档任务"}</td>
-            <td><div className="row-actions"><a className="table-action" href={deliveryManifestUrl(deliveryPackage.id)}><Download size={14}/>下载清单</a><a className="table-action" href={deliveryZipArchiveUrl(deliveryPackage.id)}><Archive size={14}/>下载 ZIP</a><a className="table-action" href={deliveryArchiveUrl(deliveryPackage.id)}><Archive size={14}/>下载 TAR</a><button className="table-action" type="button" onClick={() => void handlePrepareArchive(deliveryPackage.id, "zip")} disabled={preparingZip}><PackageCheck size={14}/>{preparingZip ? "准备中" : "准备 ZIP"}</button><button className="table-action" type="button" onClick={() => void handlePrepareArchive(deliveryPackage.id, "tar")} disabled={preparingTar}><PackageCheck size={14}/>{preparingTar ? "准备中" : "准备 TAR"}</button><button className="table-action" type="button" onClick={() => void handleLoadLinks(deliveryPackage.id)} disabled={loadingLinksFor === deliveryPackage.id}><Link2 size={14}/>{loadingLinksFor === deliveryPackage.id ? "生成中" : "下载链接"}</button></div></td>
+            <td><div className="row-actions"><a className="table-action" href={deliveryManifestUrl(deliveryPackage.id)}><Download size={14}/>下载清单</a>{zipReady ? <a className="table-action" href={deliveryZipArchiveUrl(deliveryPackage.id)}><Archive size={14}/>下载 ZIP</a> : <button className="table-action" type="button" onClick={() => void handlePrepareArchive(deliveryPackage.id, "zip")} disabled={preparingZip || zipBusy} title={zipBusy ? "ZIP 归档正在准备中" : undefined}><PackageCheck size={14}/>{preparingZip || zipBusy ? "准备中" : "准备 ZIP"}</button>}{tarReady ? <a className="table-action" href={deliveryArchiveUrl(deliveryPackage.id)}><Archive size={14}/>下载 TAR</a> : <button className="table-action" type="button" onClick={() => void handlePrepareArchive(deliveryPackage.id, "tar")} disabled={preparingTar || tarBusy} title={tarBusy ? "TAR 归档正在准备中" : undefined}><PackageCheck size={14}/>{preparingTar || tarBusy ? "准备中" : "准备 TAR"}</button>}<button className="table-action" type="button" onClick={() => void handleLoadLinks(deliveryPackage.id)} disabled={loadingLinksFor === deliveryPackage.id}><Link2 size={14}/>{loadingLinksFor === deliveryPackage.id ? "生成中" : "下载链接"}</button></div></td>
           </tr>
         );
-      })}</tbody></table></div></section>
+      })}</tbody></table>{packages.length === 0 && <div className="empty-state"><Archive size={26} /><strong>暂无交付包</strong><span>创建交付包后，已锁定资产会在这里汇总</span></div>}</div></section>
       {archiveDownloadLink ? (
         <section className="content-card table-card">
           <div className="card-heading"><div><h2>归档下载链接</h2><p>{archiveDownloadLink.task.fileName} · {new Date(archiveDownloadLink.expiresAt).toLocaleString("zh-CN", { hour12: false })} 前有效</p></div></div>
@@ -286,8 +295,8 @@ export function AssetsPage() {
       ) : null}
       {downloadLinks ? (
         <section className="content-card table-card">
-          <div className="card-heading"><div><h2>资产下载链接</h2><p>{downloadLinks.package.name} · {downloadLinks.links.length} 条 · {new Date(downloadLinks.links[0]?.expiresAt ?? Date.now()).toLocaleString("zh-CN", { hour12: false })} 前有效</p></div></div>
-          <div className="table-scroll"><table className="data-table"><thead><tr><th>文件</th><th>提交编号</th><th>大小</th><th/></tr></thead><tbody>{downloadLinks.links.map((link) => <tr key={link.packageItemId}><td><strong>{link.fileName}</strong><br/><small>{link.objectKey}</small></td><td>{link.submissionId}</td><td>{Math.round(Number(link.sizeBytes) / 1024)} KB</td><td><a className="table-action" href={link.url} target="_blank" rel="noreferrer"><Download size={14}/>下载视频</a></td></tr>)}</tbody></table></div>
+          <div className="card-heading"><div><h2>资产下载链接</h2><p>{downloadLinks.package.name} · {downloadLinks.links.length} 条{downloadLinks.links[0]?.expiresAt ? ` · ${new Date(downloadLinks.links[0].expiresAt).toLocaleString("zh-CN", { hour12: false })} 前有效` : ""}</p></div></div>
+          <div className="table-scroll"><table className="data-table"><thead><tr><th>文件</th><th>提交编号</th><th>大小</th><th/></tr></thead><tbody>{downloadLinks.links.map((link) => <tr key={link.packageItemId}><td><strong>{link.fileName}</strong><br/><small>{link.objectKey}</small></td><td>{link.submissionId}</td><td>{formatBytes(link.sizeBytes)}</td><td><a className="table-action" href={link.url} target="_blank" rel="noreferrer"><Download size={14}/>下载视频</a></td></tr>)}</tbody></table></div>
         </section>
       ) : null}
       <section className="content-card table-card"><div className="card-heading"><div><h2>最近入库资产</h2><p>展示后端已锁定资产条件</p></div></div><SubmissionTable submissions={assets} showOwner /></section>

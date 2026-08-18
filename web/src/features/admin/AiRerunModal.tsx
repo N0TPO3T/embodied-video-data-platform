@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type RefObject } from "react";
+import { useRef, useState, type FormEvent, type RefObject } from "react";
 
 import { Modal } from "../../components/Modal";
 import type { Submission } from "../../domain/types";
@@ -27,7 +27,8 @@ export function AiRerunModal({
   const reasonRef = useRef<HTMLTextAreaElement>(null);
   const { notify } = useInteractions();
 
-  async function submit() {
+  async function submit(event: FormEvent) {
+    event.preventDefault();
     if (!submission || saving) return;
     const trimmed = reason.trim();
     if (!trimmed) {
@@ -57,7 +58,7 @@ export function AiRerunModal({
       returnFocusRef={returnFocusRef}
       initialFocusRef={reasonRef}
     >
-      <div className="modal-form">
+      <form className="modal-form" onSubmit={submit}>
         <label>
           提交编号
           <input value={submission?.id ?? ""} disabled />
@@ -72,9 +73,10 @@ export function AiRerunModal({
               setError("");
             }}
             placeholder="例如：模型服务恢复，重新排队质检"
+            required
           />
         </label>
-        {error && <p className="modal-error">{error}</p>}
+        {error && <p className="modal-error" role="alert">{error}</p>}
         <div className="modal-actions">
           <button
             type="button"
@@ -85,15 +87,14 @@ export function AiRerunModal({
             取消
           </button>
           <button
-            type="button"
+            type="submit"
             className="button button-primary"
-            onClick={() => void submit()}
             disabled={saving}
           >
             {saving ? "提交中" : "确认重跑"}
           </button>
         </div>
-      </div>
+      </form>
     </Modal>
   );
 }

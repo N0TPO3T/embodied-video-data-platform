@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AccountPublic, TeamPublic } from "../../auth/contracts";
 import { AccountApiError } from "../../auth/client/accountApi";
 import { IdentityProvider } from "../../auth/client/IdentityContext";
+import { InteractionProvider } from "../../interactions/InteractionContext";
 import { AccountProfilePage } from "./AccountProfilePage";
 
 const { changeOwnPassword } = vi.hoisted(() => ({
@@ -42,13 +43,15 @@ function account(role: AccountPublic["role"]): AccountPublic {
 function renderProfile(role: AccountPublic["role"] = "collector") {
   const currentAccount = account(role);
   return render(
-    <IdentityProvider
-      currentAccount={currentAccount}
-      accounts={[currentAccount]}
-      teams={[team]}
-    >
-      <AccountProfilePage />
-    </IdentityProvider>,
+    <InteractionProvider>
+      <IdentityProvider
+        currentAccount={currentAccount}
+        accounts={[currentAccount]}
+        teams={[team]}
+      >
+        <AccountProfilePage />
+      </IdentityProvider>
+    </InteractionProvider>,
   );
 }
 
@@ -139,10 +142,14 @@ describe("account profile", () => {
 
     expect(changeOwnPassword).toHaveBeenCalledTimes(1);
     expect(changeOwnPassword).toHaveBeenCalledWith("current-password", "new-password");
+    expect(
+      await screen.findByText("密码已修改，请使用新密码重新登录"),
+    ).toBeVisible();
+    await new Promise((resolve) => window.setTimeout(resolve, 900));
     expect(assign).toHaveBeenCalledWith("/login");
   });
 
-  it("clears secret fields and shows a safe server error when the password change fails", async () => {
+  it("clears the new secret fields and shows a safe server error when the password change fails", async () => {
     const user = userEvent.setup();
     changeOwnPassword.mockRejectedValue(
       new AccountApiError(400, "当前密码不正确", "INVALID_CURRENT_PASSWORD"),
@@ -153,10 +160,11 @@ describe("account profile", () => {
     await user.click(screen.getByRole("button", { name: "修改密码" }));
 
     expect(screen.getByRole("alert")).toHaveTextContent("当前密码不正确");
-    for (const label of ["当前密码", "新密码", "确认新密码"]) {
+    // 失败时保留当前密码，只清空新密码与确认密码，方便用户直接重试
+    expect(screen.getByLabelText("当前密码")).toHaveValue("current-password");
+    for (const label of ["新密码", "确认新密码"]) {
       expect(screen.getByLabelText(label)).toHaveValue("");
     }
-    expect(screen.queryByText("current-password")).not.toBeInTheDocument();
     expect(screen.queryByText("new-password")).not.toBeInTheDocument();
   });
 });

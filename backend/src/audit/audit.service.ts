@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 
-import { Injectable } from "@nestjs/common";
+import { Injectable, PayloadTooLargeException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import type { EntityManager } from "typeorm";
 import { Brackets, Repository } from "typeorm";
 
 import type { PublicUser } from "../auth/auth.types.js";
+import { csvDocument } from "../csv/csv.js";
 import { AuditLogEntity } from "../database/entities/audit-log.entity.js";
 import type { ListAuditLogsQueryDto } from "./dto/audit-log-query.dto.js";
 
@@ -37,14 +38,10 @@ export type AuditLogListResult = {
   };
 };
 
+const MAX_SYNCHRONOUS_CSV_ROWS = 50_000;
+
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/gu, (character) => `\\${character}`);
-}
-
-function csvCell(value: string | number | null | undefined): string {
-  const raw = value === null || value === undefined ? "" : String(value);
-  if (!/[",\n\r]/u.test(raw)) return raw;
-  return `"${raw.replaceAll('"', '""')}"`;
 }
 
 function auditBoundaryDate(value: string, boundary: "start" | "end"): Date {
@@ -125,7 +122,15 @@ export class AuditService {
   }
 
   async exportCsv(input: ListAuditLogsQueryDto = {}): Promise<string> {
-    const logs = await this.createListQuery(input).getMany();
+    const query = this.createListQuery(input);
+    const total = await query.getCount();
+    if (total > MAX_SYNCHRONOUS_CSV_ROWS) {
+      throw new PayloadTooLargeException({
+        code: "EXPORT_TOO_LARGE",
+        message: `导出结果超过 ${MAX_SYNCHRONOUS_CSV_ROWS} 条，请缩小日期或筛选范围`,
+      });
+    }
+    const logs = await query.take(MAX_SYNCHRONOUS_CSV_ROWS).getMany();
     const rows = [
       [
         "audit_id",
@@ -152,7 +157,7 @@ export class AuditService {
         log.afterValue ? JSON.stringify(log.afterValue) : "",
       ]),
     ];
-    return rows.map((row) => row.map(csvCell).join(",")).join("\n") + "\n";
+    return csvDocument(rows);
   }
 
   private createListQuery(input: ListAuditLogsQueryDto = {}) {

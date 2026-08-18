@@ -11,7 +11,6 @@ import type {
   AccountAuditPagination,
   KnownAccountAuditAction,
 } from "../../auth/contracts";
-import { StatusBadge } from "../../components/StatusBadge";
 import { useDemoStore } from "../../data/DemoStoreContext";
 
 const PAGE_SIZE = 20;
@@ -139,10 +138,6 @@ export function AuditLogPage() {
     totalPages: 1,
   });
 
-  useEffect(() => {
-    setPage(1);
-  }, [action, actor, from, query, to]);
-
   const demoRows = useMemo<AuditRow[]>(
     () => [
       ...state.operationLogs.map((log) => ({
@@ -163,8 +158,6 @@ export function AuditLogPage() {
   useEffect(() => {
     if (currentUser.role !== "admin") return;
     let active = true;
-    setMode((current) => (current === "demo" ? current : "loading"));
-
     searchAccountAudit({
       q: query,
       actor,
@@ -227,12 +220,20 @@ export function AuditLogPage() {
           <h1>操作日志</h1>
           <span>记录质量调整、积分规则、周期锁定和用户管理动作</span>
         </div>
-        <a
-          className="button button-primary"
-          href={exportUrl}
-        >
-          导出日志
-        </a>
+        {mode === "live" ? (
+          <a className="button button-primary" href={exportUrl}>
+            导出日志
+          </a>
+        ) : (
+          <button
+            className="button button-primary"
+            type="button"
+            disabled
+            title="仅连接后端后可导出日志"
+          >
+            导出日志
+          </button>
+        )}
       </div>
       <div className="audit-summary">
         <ShieldCheck size={18} />
@@ -261,7 +262,10 @@ export function AuditLogPage() {
               aria-label="搜索"
               value={query}
               placeholder="搜索编号、动作、对象或说明"
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setPage(1);
+              }}
             />
           </label>
           <label className="search-field">
@@ -270,13 +274,19 @@ export function AuditLogPage() {
               aria-label="操作人"
               value={actor}
               placeholder="操作人"
-              onChange={(event) => setActor(event.target.value)}
+              onChange={(event) => {
+                setActor(event.target.value);
+                setPage(1);
+              }}
             />
           </label>
           <select
             aria-label="动作筛选"
             value={action}
-            onChange={(event) => setAction(event.target.value)}
+            onChange={(event) => {
+              setAction(event.target.value);
+              setPage(1);
+            }}
           >
             <option value="all">全部动作</option>
             {Object.entries(accountActionLabels).map(([value, label]) => (
@@ -291,7 +301,10 @@ export function AuditLogPage() {
               aria-label="开始日期"
               type="date"
               value={from}
-              onChange={(event) => setFrom(event.target.value)}
+              onChange={(event) => {
+                setFrom(event.target.value);
+                setPage(1);
+              }}
             />
           </label>
           <label className="search-field audit-date-field">
@@ -300,7 +313,10 @@ export function AuditLogPage() {
               aria-label="结束日期"
               type="date"
               value={to}
-              onChange={(event) => setTo(event.target.value)}
+              onChange={(event) => {
+                setTo(event.target.value);
+                setPage(1);
+              }}
             />
           </label>
         </div>
@@ -325,7 +341,6 @@ export function AuditLogPage() {
                 <th>动作</th>
                 <th>对象</th>
                 <th>原因 / 说明</th>
-                <th>结果</th>
               </tr>
             </thead>
             <tbody>
@@ -344,14 +359,11 @@ export function AuditLogPage() {
                     </td>
                     <td>{log.target}</td>
                     <td>{log.reason}</td>
-                    <td>
-                      <StatusBadge label="成功" tone="success" />
-                    </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={6}>暂无匹配日志</td>
+                  <td colSpan={5}>暂无匹配日志</td>
                 </tr>
               )}
             </tbody>

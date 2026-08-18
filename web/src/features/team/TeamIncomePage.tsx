@@ -265,7 +265,6 @@ export function TeamIncomePage() {
 
   useEffect(() => {
     let active = true;
-    setMode((current) => (current === "demo" ? current : "loading"));
     Promise.all([
       listPointCycles(),
       loadAllSubmissions({ status: "unsettled" }),
@@ -363,7 +362,7 @@ export function TeamIncomePage() {
                 <th>成员</th>
                 <th>质检完成</th>
                 <th>积分有效时长</th>
-                <th>预估积分</th>
+                <th>累计积分</th>
                 <th>平均分</th>
                 <th>通过率</th>
               </tr>

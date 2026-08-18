@@ -21,44 +21,45 @@ const keys: DimensionKey[] = [
 
 function rawResult(): RawVideoQcResultV1 {
   return {
-    schema_version: "video_qc_result_v1",
+    schema_version: "video_qc_v1",
     rule_version: "video_qc_v1",
-    prompt_version: "qwen_video_qc_prompt_v1",
-    video_id: "LAB-1",
-    evaluation_status: "scored",
-    hard_veto: { triggered: false, reasons: [] },
-    detected_task: {
-      scene_id: "kitchen",
-      task_id: "clean",
-      variant_id: "",
-      task_summary: "清洁物体",
-      confidence: 0.9,
+    prompt_version: "qwen_video_qc_prompt_v2",
+    task_id: "LAB-1",
+    evaluation_status: "completed",
+    input_status: {
+      is_complete: true,
+      missing_required_inputs: [],
+      conflicts: [],
     },
+    task_summary: "清洁物体",
+    overall_result: {
+      raw_total_score: 80,
+      final_score: 80,
+      summary: "质量稳定",
+    },
+    hard_reject: { triggered: false, reasons: [], candidates: [] },
     dimensions: Object.fromEntries(
-      keys.map((key) => [
+      (["D1", "D2", "D3", "D4", "D5"] as const).map((key) => [
         key,
         {
           coefficient: 0.8,
           score: 16,
           confidence: 0.9,
-          calculation_trace: "按维度系数计算：20 × 0.8",
-          segments: [],
+          metrics: {},
           issues: [],
         },
       ]),
     ) as unknown as RawVideoQcResultV1["dimensions"],
-    billing_observations: {
-      candidate_invalid_segments: [],
-      candidate_valid_waiting_segments: [],
+    review: { review_required: false, review_reasons: [] },
+    duration_result: {
+      analysis_duration_ms: 60_000,
+      invalid_duration_ms: 0,
+      effective_duration_ms: 60_000,
+      effective_duration_ratio: 1,
+      invalid_segments: [],
+      necessary_wait_segments: [],
     },
-    raw_total_score: 80,
-    final_score: 80,
-    summary: "质量稳定",
-    deductions: [],
     recommendations: [],
-    review_required: false,
-    review_reasons: [],
-    missing_inputs: [],
   };
 }
 
@@ -87,9 +88,9 @@ function response(
 const prompt: LoadedVideoQualityPrompt = {
   systemPrompt: "system prompt",
   outputExample: rawResult() as unknown as Record<string, unknown>,
-  promptVersion: "qwen_video_qc_prompt_v1",
+  promptVersion: "qwen_video_qc_prompt_v2",
   ruleVersion: "video_qc_v1",
-  outputSchema: "video_qc_result_v1",
+  outputSchema: "video_qc_v1",
   initialModel: "qwen3.7-plus",
   reviewModel: "qwen3.7-flash",
   contentSha256: "c".repeat(64),
@@ -99,6 +100,15 @@ const input = {
   schema_version: "video_qc_input_v1",
   video_id: "LAB-1",
 } as VideoQcInputV1;
+
+function frames() {
+  return [
+    { timestampMs: 0, dataUrl: "data:image/jpeg;base64,AA==" },
+    { timestampMs: 5_000, dataUrl: "data:image/jpeg;base64,AQ==" },
+    { timestampMs: 10_000, dataUrl: "data:image/jpeg;base64,Ag==" },
+    { timestampMs: 15_000, dataUrl: "data:image/jpeg;base64,Aw==" },
+  ];
+}
 
 function provider(fetcher: typeof fetch) {
   const diagnostics: import("../src/video-quality/video-quality.types.js").BailianCallDiagnostic[] = [];
@@ -143,10 +153,7 @@ describe("Qwen video quality provider", () => {
 
     const result = await provider(fetcher).analyze({
       input,
-      frames: [
-        { timestampMs: 0, dataUrl: "data:image/jpeg;base64,AA==" },
-        { timestampMs: 5_000, dataUrl: "data:image/jpeg;base64,AQ==" },
-      ],
+      frames: frames(),
     });
 
     const [url, init] = fetcher.mock.calls[0] ?? [];
@@ -165,16 +172,18 @@ describe("Qwen video quality provider", () => {
       video: [
         "data:image/jpeg;base64,AA==",
         "data:image/jpeg;base64,AQ==",
+        "data:image/jpeg;base64,Ag==",
+        "data:image/jpeg;base64,Aw==",
       ],
     });
     const textInput = JSON.parse(body.messages[1].content[1].text) as Record<
       string,
       any
     >;
-    expect(textInput.output_contract.hard_veto.triggered).toBe(false);
+    expect(textInput.output_contract.hard_reject.triggered).toBe(false);
     expect(textInput.output_requirements.join(" ")).toContain("不得改名或遗漏字段");
     expect(textInput.output_requirements.join(" ")).not.toContain("简体中文");
-    expect(result.raw.final_score).toBe(80);
+    expect(result.raw.overall_result.final_score).toBe(80);
     expect(result.metadata.requestId).toBe("req-123");
     expect(result.metadata.stage).toBe("initial");
     expect(JSON.stringify(result)).not.toContain("secret-test-key");
@@ -186,15 +195,15 @@ describe("Qwen video quality provider", () => {
       .mockResolvedValueOnce(response('{"code":"Throttled"}', 429))
       .mockResolvedValueOnce(response(JSON.stringify(rawResult())));
 
-    await provider(retryingFetch).analyze({ input, frames: [] });
+    await provider(retryingFetch).analyze({ input, frames: frames() });
     expect(retryingFetch).toHaveBeenCalledTimes(2);
 
     const authFetch = vi
       .fn<typeof fetch>()
-      .mockResolvedValue(response('{"message":"bad secret-test-key"}', 401));
+      .mockResolvedValue(response('{"message":"bad sk-test-secret"}', 401));
     let caught: unknown;
     try {
-      await provider(authFetch).analyze({ input, frames: [] });
+      await provider(authFetch).analyze({ input, frames: frames() });
     } catch (error) {
       caught = error;
     }
@@ -203,65 +212,131 @@ describe("Qwen video quality provider", () => {
     expect(authFetch).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects an invalid video frame count before calling Bailian", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+
+    await expect(
+      provider(fetcher).analyze({ input, frames: frames().slice(0, 3) }),
+    ).rejects.toThrow("需要 4–8000 帧，实际 3 帧");
+
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a redacted provider error code and actionable message", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      response(
+        JSON.stringify({
+          error: {
+            code: "invalid_parameter_error",
+            message:
+              "The video modality input does not meet the requirements because: the range of sequence images should be (4, 8000).",
+          },
+        }),
+        400,
+        "req-invalid-video",
+      ),
+    );
+    const { instance, diagnostics } = providerWithDiagnostics(fetcher);
+
+    await expect(
+      instance.analyze({ input, frames: frames() }),
+    ).rejects.toThrow("视频序列帧数量不符合要求，需要 4–8000 帧");
+    expect(diagnostics).toMatchObject([
+      {
+        outcome: "http_error",
+        httpStatus: 400,
+        requestId: "req-invalid-video",
+        errorCode: "invalid_parameter_error",
+        errorMessage: expect.stringContaining(
+          "视频序列帧数量不符合要求，需要 4–8000 帧",
+        ),
+      },
+    ]);
+  });
+
   it("extracts fenced JSON and repairs one invalid schema response", async () => {
     const fencedFetch = vi.fn<typeof fetch>().mockResolvedValue(
       response(`\`\`\`json\n${JSON.stringify(rawResult())}\n\`\`\``),
     );
     expect(
-      (await provider(fencedFetch).analyze({ input, frames: [] })).raw
+      (await provider(fencedFetch).analyze({ input, frames: frames() })).raw
         .schema_version,
-    ).toBe("video_qc_result_v1");
+    ).toBe("video_qc_v1");
 
     const repairFetch = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response("{}"))
       .mockResolvedValueOnce(response(JSON.stringify(rawResult())));
-    const repaired = await provider(repairFetch).analyze({ input, frames: [] });
-    expect(repaired.raw.final_score).toBe(80);
+    const repaired = await provider(repairFetch).analyze({
+      input,
+      frames: frames(),
+    });
+    expect(repaired.raw.overall_result.final_score).toBe(80);
     expect(repairFetch).toHaveBeenCalledTimes(2);
     const repairBody = JSON.parse(
       String(repairFetch.mock.calls[1]?.[1]?.body),
     ) as Record<string, any>;
     expect(repairBody.model).toBe("qwen3.7-plus");
     expect(repairBody.messages.at(-1).content[0].text).toContain(
-      "video_qc_result_v1",
+      "video_qc_v1",
     );
     expect(repairBody.messages.at(-1).content[0].text).toContain(
-      '"hard_veto"',
+      '"hard_reject"',
     );
   });
 
   it("accepts structurally valid English content without a repair call", async () => {
     const english = rawResult();
-    english.detected_task.task_summary = "Clean an object";
-    english.summary = "The video quality is stable";
+    english.task_summary = "Clean an object";
+    english.overall_result.summary = "The video quality is stable";
     english.recommendations = ["Keep the camera steady"];
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       response(JSON.stringify(english), 200, "req-en"),
     );
 
-    const result = await provider(fetcher).analyze({ input, frames: [] });
+    const result = await provider(fetcher).analyze({
+      input,
+      frames: frames(),
+    });
 
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(result.raw.summary).toBe("The video quality is stable");
+    expect(result.raw.overall_result.summary).toBe("The video quality is stable");
   });
 
-  it("preserves model-provided calculation traces", async () => {
-    const resultWithEnglishTraces = rawResult();
-    for (const dimension of Object.values(resultWithEnglishTraces.dimensions)) {
-      dimension.calculation_trace = "Dimension score = 20 * coefficient";
-    }
+  it("accepts a v2 result that does not echo rule and prompt versions", async () => {
+    const minimal = rawResult() as Record<string, unknown>;
+    delete minimal.rule_version;
+    delete minimal.prompt_version;
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
-      response(JSON.stringify(resultWithEnglishTraces), 200, "req-trace"),
+      response(JSON.stringify(minimal), 200, "req-no-versions"),
     );
 
-    const result = await provider(fetcher).analyze({ input, frames: [] });
+    const result = await provider(fetcher).analyze({
+      input,
+      frames: frames(),
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(result.raw.schema_version).toBe("video_qc_v1");
+  });
+
+  it("preserves model-provided dimension metrics", async () => {
+    const resultWithMetrics = rawResult();
+    for (const dimension of Object.values(resultWithMetrics.dimensions)) {
+      dimension.metrics = { C_view: 0.9 };
+    }
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      response(JSON.stringify(resultWithMetrics), 200, "req-trace"),
+    );
+
+    const result = await provider(fetcher).analyze({
+      input,
+      frames: frames(),
+    });
 
     expect(fetcher).toHaveBeenCalledTimes(1);
     for (const dimension of Object.values(result.raw.dimensions)) {
-      expect(dimension.calculation_trace).toBe(
-        "Dimension score = 20 * coefficient",
-      );
+      expect(dimension.metrics.C_view).toBe(0.9);
     }
   });
 
@@ -273,7 +348,7 @@ describe("Qwen video quality provider", () => {
     const result = await provider(fetcher).review({
       input,
       initialResult: rawResult(),
-      frames: [{ timestampMs: 2_000, dataUrl: "data:image/jpeg;base64,Ag==" }],
+      frames: frames(),
       reviewReasons: ["low confidence"],
     });
 
@@ -295,7 +370,7 @@ describe("Qwen video quality provider", () => {
       .mockResolvedValueOnce(response(JSON.stringify(rawResult()), 200, "req-ok"));
     const { instance, diagnostics } = providerWithDiagnostics(fetcher);
 
-    await instance.analyze({ input, frames: [] });
+    await instance.analyze({ input, frames: frames() });
 
     expect(diagnostics).toMatchObject([
       {
@@ -329,7 +404,9 @@ describe("Qwen video quality provider", () => {
     const fetcher = vi.fn<typeof fetch>().mockRejectedValue(networkError);
     const { instance, diagnostics } = providerWithDiagnostics(fetcher);
 
-    await expect(instance.analyze({ input, frames: [] })).rejects.toThrow(
+    await expect(
+      instance.analyze({ input, frames: frames() }),
+    ).rejects.toThrow(
       "TypeError",
     );
     expect(diagnostics).toHaveLength(3);

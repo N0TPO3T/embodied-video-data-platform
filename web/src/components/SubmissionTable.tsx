@@ -9,6 +9,7 @@ const processingLabel = {
   queued: ["AI 排队", "warning"],
   processing: ["分析中", "info"],
   completed: ["处理完成", "success"],
+  stuck: ["任务卡住", "danger"],
   failed: ["处理失败", "danger"],
 } as const;
 
@@ -17,12 +18,18 @@ function processingBadge(item: Submission) {
   if (item.pipelineStage === "probing") return ["媒体分析中", "info"] as const;
   if (item.pipelineStage === "awaiting_ai") return ["等待 AI 质检", "warning"] as const;
   if (item.pipelineStage === "ai_processing") return ["AI 质检中", "info"] as const;
+  if (item.pipelineStage === "stuck") return ["任务卡住", "danger"] as const;
   if (item.pipelineStage === "system_failed") return ["处理失败", "danger"] as const;
   return processingLabel[item.processingStatus];
 }
 
-function formatDuration(seconds: number) {
-  if (!seconds) return "解析中";
+function formatDuration(seconds: number, item: Submission) {
+  if (!seconds) {
+    if (item.pipelineStage === "system_failed" || item.pipelineStage === "stuck") {
+      return "—";
+    }
+    return "解析中";
+  }
   return `${Math.floor(seconds / 60)}分${seconds % 60}秒`;
 }
 
@@ -32,13 +39,32 @@ export function SubmissionTable({
   actionLabel = "详情",
   onAction,
   renderActions,
+  loading = false,
 }: {
   submissions: Submission[];
   showOwner?: boolean;
   actionLabel?: string;
   onAction?(submission: Submission): void;
   renderActions?(submission: Submission): ReactNode;
+  loading?: boolean;
 }) {
+  if (loading) {
+    return (
+      <div className="table-scroll" aria-label="正在加载数据">
+        <table className="data-table">
+          <tbody>
+            {Array.from({ length: 5 }, (_, index) => (
+              <tr key={`skeleton-${index}`}>
+                <td colSpan={showOwner ? 7 : 6}>
+                  <span className="skeleton-row" />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
   if (!submissions.length) {
     return <div className="empty-state"><FileVideo size={26} /><strong>没有找到数据</strong><span>请调整筛选条件后再试</span></div>;
   }
@@ -55,7 +81,7 @@ export function SubmissionTable({
                 <td><div className="file-cell"><span><FileVideo size={17} /></span><div><strong>{item.fileName}</strong><small>{item.id} · {item.createdAt}</small>{item.assetStatus === "quarantined" && <em><ShieldAlert size={12} />敏感隔离</em>}{item.duplicateCandidates?.some((candidate) => candidate.status === "candidate") && <em className="warning-tag"><CopyCheck size={12} />疑似重复</em>}</div></div></td>
                 {showOwner && <td><div className="stack-cell"><strong>{item.ownerName}</strong><small>{item.teamName}</small></div></td>}
                 <td><div className="stack-cell"><strong>{item.scene}</strong><small>{item.action}</small></div></td>
-                <td>{formatDuration(item.durationSeconds)}</td>
+                <td>{formatDuration(item.durationSeconds, item)}</td>
                 <td><StatusBadge label={label} tone={tone} /></td>
                 <td><QualityScore score={item.finalScore} ratio={item.qualityResult?.settlementRatio} passed={item.qualityResult?.passed} /></td>
                 <td>{renderActions ? renderActions(item) : onAction && <button className="table-action" aria-label={actionLabel} onClick={() => onAction(item)}><Eye size={15} />{actionLabel}</button>}</td>

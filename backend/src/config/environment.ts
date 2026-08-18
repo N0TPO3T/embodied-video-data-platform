@@ -3,15 +3,14 @@ export type RawEnvironment = {
   PORT?: string;
   DATABASE_URL?: string;
   WEB_ORIGIN?: string;
-  SESSION_SECRET?: string;
   REDIS_URL?: string;
   RABBITMQ_URL?: string;
   MINIO_ENDPOINT?: string;
   MINIO_ACCESS_KEY?: string;
   MINIO_SECRET_KEY?: string;
-  QDRANT_URL?: string;
   QWEN_API_KEY?: string;
   EVDP_ALLOW_LOCAL_DEFAULT_PASSWORDS?: string;
+  TRUST_PROXY_HOPS?: string;
 };
 
 export type Environment = {
@@ -19,19 +18,17 @@ export type Environment = {
   port: number;
   databaseUrl: string;
   webOrigin: string;
-  sessionSecret: string;
   redisUrl: string;
   rabbitmqUrl: string;
   minioEndpoint: string;
   minioAccessKey: string;
   minioSecretKey: string;
-  qdrantUrl: string;
   qwenApiKey?: string;
   modelStatus: "configured" | "not_configured";
+  trustProxyHops: number;
 };
 
 const LOCAL_DEFAULT_ENV_VALUES: Partial<Record<keyof RawEnvironment, string>> = {
-  SESSION_SECRET: "evdp-local-session-secret-change-before-production",
   MINIO_ACCESS_KEY: "evdp_local_minio",
   MINIO_SECRET_KEY: "evdp_local_minio_password",
 };
@@ -82,10 +79,6 @@ export function parseEnvironment(source: RawEnvironment): Environment {
     throw new Error("PORT must be an integer from 1 to 65535");
   }
 
-  const sessionSecret = required(source, "SESSION_SECRET");
-  if (sessionSecret.length < 32) {
-    throw new Error("SESSION_SECRET must contain at least 32 characters");
-  }
   const allowLocalDefaults =
     source.EVDP_ALLOW_LOCAL_DEFAULT_PASSWORDS === "true";
   if (rawNodeEnv === "production" && !allowLocalDefaults) {
@@ -107,6 +100,10 @@ export function parseEnvironment(source: RawEnvironment): Environment {
   }
 
   const qwenApiKey = source.QWEN_API_KEY?.trim() || undefined;
+  const trustProxyHops = Number(source.TRUST_PROXY_HOPS ?? "0");
+  if (!Number.isInteger(trustProxyHops) || trustProxyHops < 0 || trustProxyHops > 10) {
+    throw new Error("TRUST_PROXY_HOPS must be an integer from 0 to 10");
+  }
 
   return {
     nodeEnv: rawNodeEnv as Environment["nodeEnv"],
@@ -116,14 +113,13 @@ export function parseEnvironment(source: RawEnvironment): Environment {
       "postgresql:",
     ]),
     webOrigin: serviceUrl(source, "WEB_ORIGIN", ["http:", "https:"]),
-    sessionSecret,
     redisUrl: serviceUrl(source, "REDIS_URL", ["redis:", "rediss:"]),
     rabbitmqUrl: serviceUrl(source, "RABBITMQ_URL", ["amqp:", "amqps:"]),
     minioEndpoint: serviceUrl(source, "MINIO_ENDPOINT", ["http:", "https:"]),
     minioAccessKey: required(source, "MINIO_ACCESS_KEY"),
     minioSecretKey: required(source, "MINIO_SECRET_KEY"),
-    qdrantUrl: serviceUrl(source, "QDRANT_URL", ["http:", "https:"]),
     qwenApiKey,
     modelStatus: qwenApiKey ? "configured" : "not_configured",
+    trustProxyHops,
   };
 }

@@ -362,12 +362,13 @@ describe("delivery package actions", () => {
     expect(
       screen.getAllByRole("link", { name: /下载清单/ })[0],
     ).toHaveAttribute("href", expect.stringContaining("manifest.csv"));
+    // 未准备归档时只提供“准备”入口，归档完成后才出现“下载 ZIP/TAR”链接
     expect(
-      screen.getAllByRole("link", { name: /下载 ZIP/ })[0],
-    ).toHaveAttribute("href", expect.stringContaining("archive.zip"));
+      screen.getAllByRole("button", { name: "准备 ZIP" })[0],
+    ).toBeVisible();
     expect(
-      screen.getAllByRole("link", { name: /下载 TAR/ })[0],
-    ).toHaveAttribute("href", expect.stringContaining("archive.tar"));
+      screen.getAllByRole("button", { name: "准备 TAR" })[0],
+    ).toBeVisible();
     expect(deliveryArchiveUrl("PKG-20260813")).toContain("archive.tar");
     expect(deliveryZipArchiveUrl("PKG-20260813")).toContain("archive.zip");
   });
@@ -405,6 +406,10 @@ describe("delivery package actions", () => {
     );
     expect(await screen.findByText("ZIP 归档已准备好")).toBeVisible();
     expect(screen.getByText("ZIP · 已完成")).toBeVisible();
+    // 归档完成后，“准备 ZIP”切换为“下载 ZIP”直链
+    expect(
+      screen.getByRole("link", { name: /下载 ZIP/ }),
+    ).toHaveAttribute("href", expect.stringContaining("archive.zip"));
     await user.click(screen.getByRole("button", { name: "归档链接" }));
 
     expect(getDeliveryArchiveDownloadLinkMock).toHaveBeenCalledWith(

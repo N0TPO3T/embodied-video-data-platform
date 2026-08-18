@@ -64,7 +64,6 @@ export function TeamAnalyticsPage() {
 
   useEffect(() => {
     let active = true;
-    setMode((current) => (current === "demo" ? current : "loading"));
     loadAllSubmissions({ status: "all" })
       .then((result) => {
         if (!active) return;
@@ -99,7 +98,9 @@ export function TeamAnalyticsPage() {
     ...contributions.map((item) => item.metrics.effectiveSeconds),
   );
   const averageEffectiveSeconds =
-    members.length === 0 ? 0 : metrics.effectiveSeconds / members.length;
+    contributions.length === 0
+      ? null
+      : metrics.effectiveSeconds / contributions.length;
   const pendingCount = monthSubmissions.filter(
     (submission) => submission.qualityStatus === "pending",
   ).length;
@@ -123,7 +124,7 @@ export function TeamAnalyticsPage() {
       </div>
       <div className="metric-grid">
         <MetricCard label="团队通过率" value={formatRate(metrics.passRate)} detail={`${metrics.reviewed} 条终态结果`} icon={BadgeCheck} tone="green" />
-        <MetricCard label="人均有效时长" value={formatDuration(averageEffectiveSeconds)} detail="近 30 日累计" icon={ChartNoAxesCombined} />
+        <MetricCard label="人均有效时长" value={averageEffectiveSeconds === null ? "—" : formatDuration(averageEffectiveSeconds)} detail="按有上传的成员平均 · 近 30 日累计" icon={ChartNoAxesCombined} />
         <MetricCard label="不通过率" value={metrics.passRate === null ? "—" : formatRate(100 - metrics.passRate)} detail={`${metrics.failed} 条未通过`} icon={RotateCcw} tone="amber" />
         <MetricCard label="待质检数据" value={`${pendingCount} 条`} detail={`共上传 ${metrics.uploads} 条`} icon={Target} tone="violet" />
       </div>

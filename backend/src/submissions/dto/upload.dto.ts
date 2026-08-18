@@ -16,17 +16,19 @@ import {
 } from "class-validator";
 import { Type } from "class-transformer";
 
+export const MAX_UPLOAD_SIZE_BYTES = 2 * 1024 * 1024 * 1024;
+
 export class CreateUploadDto {
   @IsString()
-  @MaxLength(255)
+  @MaxLength(255, { message: "文件名不能超过 255 个字符" })
   fileName!: string;
 
   @IsIn(["video/mp4", "video/quicktime"])
   contentType!: "video/mp4" | "video/quicktime";
 
   @IsInt()
-  @Min(1)
-  @Max(2_147_483_648)
+  @Min(1, { message: "视频文件不能为空" })
+  @Max(MAX_UPLOAD_SIZE_BYTES, { message: "单个视频不能超过 2 GiB" })
   sizeBytes!: number;
 
   @IsString()
@@ -54,12 +56,12 @@ export class PresignPartsDto {
 
 export class VerifyResumeUploadDto {
   @IsString()
-  @MaxLength(255)
+  @MaxLength(255, { message: "文件名不能超过 255 个字符" })
   fileName!: string;
 
   @IsInt()
-  @Min(1)
-  @Max(2_147_483_648)
+  @Min(1, { message: "视频文件不能为空" })
+  @Max(MAX_UPLOAD_SIZE_BYTES, { message: "单个视频不能超过 2 GiB" })
   sizeBytes!: number;
 
   @IsString()

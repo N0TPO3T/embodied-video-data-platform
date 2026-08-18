@@ -79,12 +79,7 @@ export function SubmissionsPage({
     });
 
   useEffect(() => {
-    setPage(1);
-  }, [qualityOnly, query, status]);
-
-  useEffect(() => {
     let active = true;
-    setMode((current) => (current === "demo" ? current : "loading"));
     searchSubmissions({
       q: query,
       status: backendStatus(status, qualityOnly),
@@ -161,9 +156,15 @@ export function SubmissionsPage({
       <section className="content-card table-card">
         <FilterBar
           value={query}
-          onChange={setQuery}
+          onChange={(value) => {
+            setQuery(value);
+            setPage(1);
+          }}
           status={status}
-          onStatusChange={setStatus}
+          onStatusChange={(value) => {
+            setStatus(value);
+            setPage(1);
+          }}
         />
         <div className="table-summary">
           <span>
@@ -175,7 +176,7 @@ export function SubmissionsPage({
           </span>
           <span>数据范围：仅本人</span>
         </div>
-        <SubmissionTable submissions={submissions} onAction={view} />
+        <SubmissionTable submissions={submissions} loading={mode === "loading"} onAction={view} />
         <div className="table-summary">
           <span>
             第 {pagination.page} / {pagination.totalPages} 页

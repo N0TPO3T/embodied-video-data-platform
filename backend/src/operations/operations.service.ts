@@ -13,6 +13,8 @@ import { VideoQualityResultEntity } from "../database/entities/video-quality-res
 import { OperationsFailure } from "./operations-failure.js";
 import { WorkerHeartbeatService } from "./worker-heartbeat.service.js";
 
+const MAX_AUTO_RETRY_ATTEMPTS = 3;
+
 const QUALITY_PASSED_SQL = `
   (
     quality.passed = true
@@ -134,6 +136,8 @@ export class OperationsService {
     private readonly jobs: Repository<JobOutboxEntity>,
     @InjectRepository(SubmissionEntity)
     private readonly submissions: Repository<SubmissionEntity>,
+    @InjectRepository(VideoQualityResultEntity)
+    private readonly qualityResults: Repository<VideoQualityResultEntity>,
     @InjectRepository(AuditLogEntity)
     private readonly auditLogs: Repository<AuditLogEntity>,
     private readonly workerHeartbeats: WorkerHeartbeatService,
@@ -142,7 +146,7 @@ export class OperationsService {
 
   async queue(actor: PublicUser) {
     assertAdmin(actor);
-    const [jobs, rawSummary, workers] = await Promise.all([
+    const [jobs, rawSummary, workerList] = await Promise.all([
       this.jobs.find({
         order: { createdAt: "DESC" },
         take: 100,
@@ -212,7 +216,9 @@ export class OperationsService {
         ),
       },
       jobs: jobs.map(publicJob),
-      workers,
+      workers: workerList.active,
+      inactive: workerList.inactive,
+      inactiveCount: workerList.inactiveCount,
     };
   }
 
@@ -313,7 +319,7 @@ export class OperationsService {
     ]);
 
     const workers =
-      actor.role === "admin" ? await this.workerHeartbeats.list() : [];
+      actor.role === "admin" ? await this.workerHeartbeats.listAll() : [];
     const workerAlerts = workers.filter(
       (worker) => worker.stale || worker.runningTooLong,
     ).length;
@@ -453,14 +459,33 @@ export class OperationsService {
 
   async reclaimTimedOutTasks(actor: PublicUser) {
     assertAdmin(actor);
-    const workers = await this.workerHeartbeats.list();
-    const timedOutIds = new Set(
+    const workers = await this.workerHeartbeats.listAll();
+    // 正在被活跃 Worker 正常处理的任务（心跳正常且未超时）不作为回收候选，
+    // 避免僵尸心跳/旧 Worker 记录导致正在处理的任务被误标为卡住。
+    const activeProcessorIds = new Set(
       workers
-        .filter((worker) => worker.runningTooLong && worker.currentSubmissionId)
+        .filter(
+          (worker) =>
+            worker.currentSubmissionId &&
+            worker.status === "running" &&
+            !worker.stale &&
+            !worker.runningTooLong,
+        )
         .map((worker) => worker.currentSubmissionId as string),
     );
-    if (timedOutIds.size === 0) {
-      return { reclaimed: [] };
+    const stuckCandidateIds = new Set(
+      workers
+        .filter(
+          (worker) =>
+            worker.currentSubmissionId &&
+            (worker.runningTooLong ||
+              (worker.stale && worker.status !== "stopped")),
+        )
+        .map((worker) => worker.currentSubmissionId as string)
+        .filter((submissionId) => !activeProcessorIds.has(submissionId)),
+    );
+    if (stuckCandidateIds.size === 0) {
+      return { reclaimed: [], stuck: [] };
     }
 
     return await this.submissions.manager.transaction(async (manager) => {
@@ -468,9 +493,9 @@ export class OperationsService {
         .getRepository(SubmissionEntity)
         .createQueryBuilder("submission")
         .setLock("pessimistic_write")
-        .where("submission.id IN (:...ids)", { ids: [...timedOutIds] })
+        .where("submission.id IN (:...ids)", { ids: [...stuckCandidateIds] })
         .andWhere("submission.processingStatus IN (:...statuses)", {
-          statuses: ["probing", "ai_processing"],
+          statuses: ["probing", "ai_processing", "stuck"],
         })
         .getMany();
       const reclaimed: Array<{
@@ -479,15 +504,62 @@ export class OperationsService {
         nextStatus: string;
         eventType: string;
       }> = [];
+      const stuck: Array<{
+        submissionId: string;
+        previousStatus: string;
+        reason: string;
+      }> = [];
       for (const submission of submissions) {
         const previousStatus = submission.processingStatus;
-        const eventType =
-          previousStatus === "probing" ? "media.probe.v1" : "ai.quality.v1";
-        const nextStatus =
-          previousStatus === "probing" ? "queued" : "awaiting_ai";
+        const isMedia = previousStatus === "probing";
+        const eventType = isMedia ? "media.probe.v1" : "ai.quality.v1";
+        const stuckReason = "后台任务运行超时或 Worker 心跳过期，已标记为卡住";
+
+        const alreadyStuck = previousStatus === "stuck";
+        if (!alreadyStuck) {
+          await manager.getRepository(VideoQualityResultEntity).update(
+            { submissionId: submission.id },
+            {
+              status: "stuck",
+              progressStage: "stuck",
+              progressUpdatedAt: new Date(),
+              stuckReason,
+              lastError: stuckReason,
+            },
+          );
+          submission.processingStatus = "stuck";
+          submission.failureCode = "WORKER_STUCK";
+          submission.failureMessage = stuckReason;
+          await manager.getRepository(SubmissionEntity).save(submission);
+          await this.audit.record(
+            manager,
+            actor,
+            "worker_task_stuck",
+            { id: submission.id, name: submission.originalFileName },
+            stuckReason,
+            { processingStatus: previousStatus },
+            { processingStatus: "stuck" },
+          );
+          stuck.push({
+            submissionId: submission.id,
+            previousStatus,
+            reason: stuckReason,
+          });
+        }
+
+        // AI 任务重试超过上限后停在 stuck，等管理员手动重新排队；
+        // 媒体任务没有 attempts 计数，按现有重试语义自动重投。
+        if (!isMedia && !alreadyStuck) {
+          const quality = await manager
+            .getRepository(VideoQualityResultEntity)
+            .findOneBy({ submissionId: submission.id });
+          if ((quality?.attempts ?? 0) >= MAX_AUTO_RETRY_ATTEMPTS) continue;
+        }
+
+        const nextStatus = isMedia ? "queued" : "awaiting_ai";
         submission.processingStatus = nextStatus;
-        submission.failureCode = "WORKER_TIMEOUT_RECLAIMED";
-        submission.failureMessage = "后台任务运行超时，已重新排队";
+        submission.failureCode = "WORKER_STUCK_REQUEUED";
+        submission.failureMessage = "卡住任务已自动重新排队";
         await manager.getRepository(SubmissionEntity).save(submission);
         await this.upsertOutbox(manager, submission.id, eventType);
         await this.audit.record(
@@ -495,8 +567,8 @@ export class OperationsService {
           actor,
           "worker_task_reclaim",
           { id: submission.id, name: submission.originalFileName },
-          "后台任务运行超时，重新排队处理",
-          { processingStatus: previousStatus },
+          "卡住任务自动重新排队处理",
+          { processingStatus: "stuck" },
           { processingStatus: nextStatus, eventType },
         );
         reclaimed.push({
@@ -506,8 +578,25 @@ export class OperationsService {
           eventType,
         });
       }
-      return { reclaimed };
+      return { reclaimed, stuck };
     });
+  }
+
+  async pruneInactiveWorkers(actor: PublicUser) {
+    assertAdmin(actor);
+    const removed = await this.workerHeartbeats.pruneInactive();
+    if (removed > 0) {
+      await this.audit.record(
+        this.submissions.manager,
+        actor,
+        "worker_heartbeat_prune",
+        { id: "worker-heartbeats", name: "Worker 心跳" },
+        `清理 ${removed} 条已停止或心跳过期的历史记录`,
+        { removed },
+        null,
+      );
+    }
+    return { removed };
   }
 
   private countSubmissions(

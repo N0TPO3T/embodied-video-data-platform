@@ -82,15 +82,15 @@ export function MembersPage() {
   const createTriggerRef = useRef<HTMLButtonElement>(null);
   const actionTriggerRef = useRef<HTMLButtonElement>(null);
   const currentTeam = teams.find((team) => team.id === currentAccount.teamId);
-  const members = accounts
+  const teamMembers = accounts
     .filter((account) => account.teamId === currentTeam?.id)
     .sort((left, right) =>
       Number(right.role === "leader") - Number(left.role === "leader"),
     )
-    .map(accountToMember)
-    .filter((user) =>
-      `${user.name}${user.account}`.toLowerCase().includes(query.toLowerCase()),
-    );
+    .map(accountToMember);
+  const members = teamMembers.filter((user) =>
+    `${user.name}${user.account}`.toLowerCase().includes(query.toLowerCase()),
+  );
   const fallbackSubmissions = useMemo(
     () =>
       state.submissions.filter(
@@ -103,7 +103,6 @@ export function MembersPage() {
 
   useEffect(() => {
     let active = true;
-    setMetricsMode((current) => (current === "demo" ? current : "loading"));
     loadAllSubmissions({ status: "all" })
       .then((result) => {
         if (!active) return;
@@ -143,7 +142,7 @@ export function MembersPage() {
   }
 
   function exportMetrics() {
-    const rows = members.map((member) => {
+    const rows = teamMembers.map((member) => {
       const metrics = contributionMetrics(
         scopedSubmissions.filter(
           (submission) => submission.ownerId === member.id,
@@ -259,7 +258,7 @@ export function MembersPage() {
             <option value="today">今日</option>
             <option value="7d">近 7 日</option>
             <option value="30d">近 30 日</option>
-            <option value="all">全部时间</option>
+            <option value="all">累计</option>
           </select>
           <button className="table-action" type="button" onClick={exportMetrics}>
             导出统计
@@ -380,6 +379,16 @@ export function MembersPage() {
                   </tr>
                 );
               })}
+              {members.length === 0 && (
+                <tr>
+                  <td colSpan={8}>
+                    <div className="empty-state compact-empty">
+                      <strong>暂无可显示成员</strong>
+                      <span>调整搜索条件，或点击“新增数采账号”添加成员</span>
+                    </div>
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

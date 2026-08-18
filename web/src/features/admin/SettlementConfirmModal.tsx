@@ -41,7 +41,7 @@ export function SettlementConfirmModal({
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
-  const confirmRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
   const demoPreview = useMemo<PointCyclePreview>(() => {
     const submissions = state.submissions.filter(
       (item) =>
@@ -107,7 +107,7 @@ export function SettlementConfirmModal({
       title="确认生成积分周期"
       onClose={close}
       returnFocusRef={returnFocusRef}
-      initialFocusRef={confirmRef}
+      initialFocusRef={cancelRef}
     >
       <div className="settlement-preview">
         <p>将锁定当前所有处理完成、质检通过且未进入周期的视频。</p>
@@ -119,8 +119,8 @@ export function SettlementConfirmModal({
         {preview.submissionCount === 0 && <p className="modal-error">当前没有可锁定积分数据</p>}
         {error && <p className="modal-error" role="alert">{error}</p>}
         <div className="modal-actions">
-          <button type="button" className="button button-secondary" onClick={close}>取消</button>
-          <button ref={confirmRef} type="button" className="button button-primary" disabled={preview.submissionCount === 0 || submitting} onClick={confirm}>
+          <button ref={cancelRef} type="button" className="button button-secondary" onClick={close}>取消</button>
+          <button type="button" className="button button-primary" disabled={preview.submissionCount === 0 || submitting} onClick={confirm}>
             {submitting ? "生成中…" : "确认生成"}
           </button>
         </div>

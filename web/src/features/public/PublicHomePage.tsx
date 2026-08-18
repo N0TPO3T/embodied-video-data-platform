@@ -4,8 +4,12 @@ import { ArrowRight, Bot, CheckCircle2, Database, Fingerprint, Layers3, PlayCirc
 import { useEffect, useMemo, useState } from "react";
 
 import { BrandMark } from "../../components/BrandMark";
+import { demoFallbackEnabled } from "../../config/demoFallback";
 import { getPublicSiteSnapshot } from "../../public-site/client/publicSiteApi";
-import { demoPublicSiteSnapshot } from "../../public-site/demoPublicSite";
+import {
+  demoPublicSiteSnapshot,
+  unavailablePublicSiteSnapshot,
+} from "../../public-site/demoPublicSite";
 import type { PublicSiteSnapshot } from "../../public-site/contracts";
 
 function formatNumber(value: number): string {
@@ -14,23 +18,27 @@ function formatNumber(value: number): string {
 
 function formatHours(seconds: number): string {
   if (seconds > 0 && seconds < 3_600) {
-    return `${Math.round(seconds / 60).toLocaleString("zh-CN")}m`;
+    return `${Math.round(seconds / 60).toLocaleString("zh-CN")} 分钟`;
   }
   const hours = Math.round(seconds / 3_600);
-  return `${hours.toLocaleString("zh-CN")}h`;
+  return `${hours.toLocaleString("zh-CN")} 小时`;
 }
 
 function trendHeights(snapshot: PublicSiteSnapshot): number[] {
-  if (snapshot.trend.length === 0) return demoPublicSiteSnapshot.trend.map((item) => item.value);
+  if (snapshot.trend.length === 0) return [];
   const max = Math.max(...snapshot.trend.map((item) => item.value), 1);
   return snapshot.trend.map((item) => Math.max(18, Math.round((item.value / max) * 104)));
 }
 
 export function PublicHomePage({ navigate }: { navigate(path: string): void }) {
   const [snapshot, setSnapshot] = useState<PublicSiteSnapshot>(
-    demoPublicSiteSnapshot,
+    demoFallbackEnabled
+      ? demoPublicSiteSnapshot
+      : unavailablePublicSiteSnapshot,
   );
-  const [mode, setMode] = useState<"loading" | "live" | "demo">("loading");
+  const [mode, setMode] = useState<
+    "loading" | "live" | "demo" | "unavailable"
+  >("loading");
 
   useEffect(() => {
     let active = true;
@@ -42,8 +50,12 @@ export function PublicHomePage({ navigate }: { navigate(path: string): void }) {
       })
       .catch(() => {
         if (!active) return;
-        setSnapshot(demoPublicSiteSnapshot);
-        setMode("demo");
+        setSnapshot(
+          demoFallbackEnabled
+            ? demoPublicSiteSnapshot
+            : unavailablePublicSiteSnapshot,
+        );
+        setMode(demoFallbackEnabled ? "demo" : "unavailable");
       });
     return () => {
       active = false;
@@ -54,7 +66,9 @@ export function PublicHomePage({ navigate }: { navigate(path: string): void }) {
   const scenes =
     snapshot.sceneBreakdown.length > 0
       ? snapshot.sceneBreakdown
-      : demoPublicSiteSnapshot.sceneBreakdown;
+      : demoFallbackEnabled
+        ? demoPublicSiteSnapshot.sceneBreakdown
+        : [{ name: "暂无数据", description: "公开快照暂不可用", videoCount: 0, share: 0 }];
   const trend = useMemo(() => trendHeights(snapshot), [snapshot]);
   const primaryScene = scenes[0] ?? demoPublicSiteSnapshot.sceneBreakdown[0]!;
 
@@ -96,7 +110,7 @@ export function PublicHomePage({ navigate }: { navigate(path: string): void }) {
           <div className="hero-visual" aria-label="数据生产概览">
             <div className="visual-glow" />
             <div className="hero-dashboard-card">
-              <div className="mini-card-head"><span>数据生产公开概览</span><em>{mode === "live" ? "脱敏快照" : mode === "loading" ? "读取中" : "演示"}</em></div>
+              <div className="mini-card-head"><span>数据生产公开概览</span><em>{mode === "live" ? "脱敏快照" : mode === "loading" ? "读取中" : mode === "demo" ? "演示" : "暂不可用"}</em></div>
               <div className="mini-metrics">
                 <div><small>已验收视频</small><strong>{formatNumber(metrics.deliverableVideoCount)}</strong><span>V{snapshot.revision}</span></div>
                 <div><small>有效时长</small><strong>{formatHours(metrics.effectiveDurationSeconds)}</strong><span>{snapshot.snapshotDate}</span></div>

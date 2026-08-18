@@ -1,0 +1,71 @@
+{
+  "schema_version": "video_qc_v1",
+  "task_id": "<task_id>",
+  "evaluation_status": "completed",
+  "input_status": {
+    "is_complete": true,
+    "missing_required_inputs": [],
+    "conflicts": []
+  },
+  "task_summary": "<中文任务摘要>",
+  "overall_result": {
+    "raw_total_score": 86.47,
+    "final_score": 86.5,
+    "summary": "<中文整体质量总结>"
+  },
+  "hard_reject": {
+    "triggered": false,
+    "reasons": [],
+    "candidates": []
+  },
+  "dimensions": {
+    "D1": {
+      "score": 18.2,
+      "coefficient": 0.912,
+      "confidence": 0.95,
+      "metrics": { "C_view": 0.912 },
+      "issues": []
+    },
+    "D2": {
+      "score": 16.8,
+      "coefficient": 0.84,
+      "confidence": 0.91,
+      "metrics": { "hand_active_duration_ms": 48320, "C_hand": 0.84 },
+      "issues": []
+    },
+    "D3": {
+      "score": 17.0,
+      "coefficient": 0.85,
+      "confidence": 0.98,
+      "metrics": { "c_resolution": 1.0, "c_fps": 0.9, "C_spec": 0.9, "C_visual": 0.85, "C_frame": 0.85 },
+      "issues": []
+    },
+    "D4": {
+      "score": 17.0,
+      "coefficient": 0.85,
+      "confidence": 0.89,
+      "metrics": { "C_segment": 0.88, "C_completion": 0.85, "C_task": 0.85 },
+      "issues": []
+    },
+    "D5": {
+      "score": 17.5,
+      "coefficient": 0.875,
+      "confidence": 1.0,
+      "metrics": { "C_inventory": 1.0, "C_unique": 0.875, "S_total": null },
+      "issues": []
+    }
+  },
+  "review": {
+    "review_required": false,
+    "review_reasons": []
+  },
+  "duration_result": {
+    "analysis_duration_ms": 60000,
+    "invalid_duration_ms": 8000,
+    "effective_duration_ms": 52000,
+    "effective_duration_ratio": 0.8667,
+    "invalid_segments": [],
+    "necessary_wait_segments": []
+  },
+  "recommendations": []
+}

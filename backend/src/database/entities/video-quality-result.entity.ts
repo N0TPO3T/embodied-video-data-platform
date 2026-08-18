@@ -24,7 +24,18 @@ export type VideoQualityResultStatus =
   | "scored"
   | "hard_reject"
   | "review_pending"
+  | "stuck"
   | "system_failed";
+
+export type VideoQualityProgressStage =
+  | "queued"
+  | "downloading"
+  | "media_analysis"
+  | "initial_review"
+  | "secondary_review"
+  | "completed"
+  | "failed"
+  | "stuck";
 
 @Entity({ name: "video_quality_results" })
 export class VideoQualityResultEntity {
@@ -163,6 +174,15 @@ export class VideoQualityResultEntity {
 
   @Column({ name: "last_error", type: "text", nullable: true })
   lastError: string | null = null;
+
+  @Column({ name: "progress_stage", type: "varchar", length: 32, nullable: true })
+  progressStage: VideoQualityProgressStage | null = null;
+
+  @Column({ name: "progress_updated_at", type: "timestamptz", nullable: true })
+  progressUpdatedAt: Date | null = null;
+
+  @Column({ name: "stuck_reason", type: "text", nullable: true })
+  stuckReason: string | null = null;
 
   @Column({ name: "started_at", type: "timestamptz", nullable: true })
   startedAt: Date | null = null;

@@ -42,7 +42,7 @@ function renderQueuePage() {
 describe("AiQueuePage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    reclaimWorkerTimeoutsMock.mockResolvedValue({ reclaimed: [] });
+    reclaimWorkerTimeoutsMock.mockResolvedValue({ reclaimed: [], stuck: [] });
     rerunAiQualityMock.mockResolvedValue({
       id: "SUB-019",
       fileName: "pantry_sorting_0803.mp4",
@@ -151,7 +151,7 @@ describe("AiQueuePage", () => {
 
     expect(await screen.findByText("队列快照已连接后端")).toBeVisible();
     expect(screen.getByText("平均发布 1m")).toBeVisible();
-    expect(screen.getByText("Worker 心跳")).toBeVisible();
+    expect(screen.getByText("当前 Worker")).toBeVisible();
     expect(screen.getByText("AI 质检 Worker")).toBeVisible();
     expect(screen.getByText("运行中")).toBeVisible();
     expect(screen.getByText("1m 10s")).toBeVisible();
@@ -159,7 +159,7 @@ describe("AiQueuePage", () => {
     expect(screen.getByText("平均 30s")).toBeVisible();
     expect(screen.getAllByText("SUB-OPS-02")[0]).toBeVisible();
     expect(screen.getByText("最近 100 条后台队列发布记录")).toBeVisible();
-    expect(screen.getByText("质检事件")).toBeVisible();
+    expect(screen.getByText("AI 质检事件")).toBeVisible();
     const mediaRow = screen.getByText("JOB-OPS-01").closest("tr");
     expect(mediaRow).not.toBeNull();
     expect(within(mediaRow as HTMLTableRowElement).getByText("媒体分析")).toBeVisible();
@@ -231,12 +231,13 @@ describe("AiQueuePage", () => {
           eventType: "ai.quality.v1",
         },
       ],
+      stuck: [],
     });
 
     renderQueuePage();
 
     const button = await screen.findByRole("button", {
-      name: "处理超时任务",
+      name: "处理卡住/超时任务",
     });
     expect(button).toBeEnabled();
     expect(screen.getByText("运行过久")).toBeVisible();
@@ -244,7 +245,7 @@ describe("AiQueuePage", () => {
 
     await waitFor(() => expect(reclaimWorkerTimeoutsMock).toHaveBeenCalledOnce());
     expect(getQueueSnapshotMock).toHaveBeenCalledTimes(2);
-    expect(await screen.findByText("已重新排队 1 个超时任务")).toBeVisible();
+    expect(await screen.findByText("已标记 0 个卡住任务，重新排队 1 个")).toBeVisible();
     expect(await screen.findByText("空闲")).toBeVisible();
   });
 

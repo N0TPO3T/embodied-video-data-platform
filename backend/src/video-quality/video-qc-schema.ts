@@ -1,116 +1,118 @@
 import { z } from "zod";
 
-import type { RawVideoQcResultV1 } from "./video-quality.types.js";
+import {
+  VIDEO_QC_PROMPT_VERSION,
+  VIDEO_QC_RESULT_SCHEMA,
+  VIDEO_QC_RULE_VERSION,
+  type RawVideoQcResultV1,
+} from "./video-quality.types.js";
 
-const boundedCoefficient = z.number().finite().min(0).max(1);
 const nonNegativeTime = z.number().finite().nonnegative();
+const boundedCoefficient = z.number().finite().min(0).max(1);
+const nullableNumber = z.number().finite().nullable();
 
-const issueSchema = z
-  .object({
-    dimension: z.string().optional(),
-    reason_code: z.string().min(1),
-    description: z.string(),
-    start_ms: nonNegativeTime,
-    end_ms: nonNegativeTime,
-    severity: z.enum(["minor", "moderate", "major", "critical"]),
-    confidence: boundedCoefficient,
-    evidence_timestamps_ms: z.array(nonNegativeTime),
-  })
-  .strict();
-
-const dimensionSchema = z
-  .object({
-    coefficient: boundedCoefficient,
-    score: z.number().finite().min(0).max(20),
-    confidence: boundedCoefficient,
-    calculation_trace: z.string(),
-    // V1 文档的 D5 示例没有 segments；内部仍归一化为空数组。
-    segments: z.array(z.record(z.string(), z.unknown())).default([]),
-    issues: z.array(issueSchema.omit({ dimension: true })),
-    hand_active_duration_ms: nonNegativeTime.optional(),
-    c_spec: boundedCoefficient.optional(),
-    c_visual: boundedCoefficient.optional(),
-    completion_coefficient: boundedCoefficient.optional(),
-    inventory_coefficient: boundedCoefficient.optional(),
-    unique_coefficient: boundedCoefficient.optional(),
-    similarity_total: boundedCoefficient.optional(),
-  })
-  .strict();
-
-const invalidSegmentSchema = z
+const rawIssueSchema = z
   .object({
     reason_code: z.string().min(1),
-    description: z.string(),
-    start_ms: nonNegativeTime,
-    end_ms: nonNegativeTime,
+    start_ms: nonNegativeTime.nullable(),
+    end_ms: nonNegativeTime.nullable(),
+    severity: z.enum(["info", "minor", "major", "critical"]),
     confidence: boundedCoefficient,
     evidence_timestamps_ms: z.array(nonNegativeTime),
+    description: z.string(),
+    source: z.enum([
+      "visual_model",
+      "technical_metrics",
+      "deterministic_detector",
+      "inventory_context",
+      "similarity_context",
+      "caller_input",
+    ]),
   })
   .strict();
 
-const waitingSegmentSchema = z
+const rawDimensionSchema = z
   .object({
-    waiting_type: z.string().min(1),
+    score: z.number().finite().min(0).max(20).nullable(),
+    coefficient: boundedCoefficient.nullable(),
+    confidence: boundedCoefficient,
+    metrics: z.record(z.string(), nullableNumber),
+    issues: z.array(rawIssueSchema),
+  })
+  .strict();
+
+const durationSegmentSchema = z
+  .object({
+    reason_code: z.string().min(1),
     description: z.string(),
-    start_ms: nonNegativeTime,
-    end_ms: nonNegativeTime,
+    start_ms: nonNegativeTime.nullable(),
+    end_ms: nonNegativeTime.nullable(),
     confidence: boundedCoefficient,
     evidence_timestamps_ms: z.array(nonNegativeTime),
+    source: z.string().optional(),
   })
   .strict();
 
 export const rawVideoQcResultSchema = z
   .object({
-    schema_version: z.literal("video_qc_result_v1"),
-    rule_version: z.literal("video_qc_v1"),
-    prompt_version: z.literal("qwen_video_qc_prompt_v1"),
-    video_id: z.string().min(1),
+    schema_version: z.literal(VIDEO_QC_RESULT_SCHEMA),
+    rule_version: z.literal(VIDEO_QC_RULE_VERSION).optional(),
+    prompt_version: z.literal(VIDEO_QC_PROMPT_VERSION).optional(),
+    task_id: z.string().min(1),
     evaluation_status: z.enum([
-      "scored",
+      "completed",
       "hard_reject",
-      "incomplete_input",
       "review_pending",
+      "incomplete_input",
     ]),
-    hard_veto: z
+    input_status: z
       .object({
-        triggered: z.boolean(),
-        reasons: z.array(
-          z.union([z.string(), z.record(z.string(), z.unknown())]),
-        ),
+        is_complete: z.boolean(),
+        missing_required_inputs: z.array(z.string()),
+        conflicts: z.array(z.union([z.string(), z.record(z.string(), z.unknown())])),
       })
       .strict(),
-    detected_task: z
+    task_summary: z.string(),
+    overall_result: z
       .object({
-        scene_id: z.string(),
-        task_id: z.string(),
-        variant_id: z.string(),
-        task_summary: z.string(),
-        confidence: boundedCoefficient,
+        raw_total_score: z.number().finite().min(0).max(100).nullable(),
+        final_score: z.number().finite().min(0).max(100).nullable(),
+        summary: z.string(),
+      })
+      .strict(),
+    hard_reject: z
+      .object({
+        triggered: z.boolean(),
+        reasons: z.array(z.union([z.string(), z.record(z.string(), z.unknown())])),
+        candidates: z.array(z.union([z.string(), z.record(z.string(), z.unknown())])),
       })
       .strict(),
     dimensions: z
       .object({
-        first_person_and_composition: dimensionSchema,
-        hand_forearm_object_integrity: dimensionSchema,
-        frame_and_video_quality: dimensionSchema,
-        task_authenticity_completeness: dimensionSchema,
-        task_value_uniqueness: dimensionSchema,
+        D1: rawDimensionSchema,
+        D2: rawDimensionSchema,
+        D3: rawDimensionSchema,
+        D4: rawDimensionSchema,
+        D5: rawDimensionSchema,
       })
       .strict(),
-    billing_observations: z
+    review: z
       .object({
-        candidate_invalid_segments: z.array(invalidSegmentSchema),
-        candidate_valid_waiting_segments: z.array(waitingSegmentSchema),
+        review_required: z.boolean(),
+        review_reasons: z.array(z.string()),
       })
       .strict(),
-    raw_total_score: z.number().finite().min(0).max(100),
-    final_score: z.number().finite().min(0).max(100),
-    summary: z.string(),
-    deductions: z.array(issueSchema),
+    duration_result: z
+      .object({
+        analysis_duration_ms: nonNegativeTime.nullable(),
+        invalid_duration_ms: nonNegativeTime.nullable(),
+        effective_duration_ms: nonNegativeTime.nullable(),
+        effective_duration_ratio: z.number().finite().min(0).max(1).nullable(),
+        invalid_segments: z.array(durationSegmentSchema),
+        necessary_wait_segments: z.array(durationSegmentSchema),
+      })
+      .strict(),
     recommendations: z.array(z.string()),
-    review_required: z.boolean(),
-    review_reasons: z.array(z.string()),
-    missing_inputs: z.array(z.string()),
   })
   .strict();
 
@@ -129,7 +131,7 @@ export function parseRawVideoQcResult(value: unknown): RawVideoQcResultV1 {
     const issues = parsed.error.issues.map(
       (issue) => `${issue.path.join(".") || "result"}: ${issue.message}`,
     );
-    throw new VideoQcSchemaError("模型结果不符合 video_qc_result_v1", issues);
+    throw new VideoQcSchemaError("模型结果不符合 video_qc_v1", issues);
   }
   return parsed.data as RawVideoQcResultV1;
 }

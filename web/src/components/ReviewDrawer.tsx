@@ -2,6 +2,7 @@
 
 import {
   AlertTriangle,
+  ArrowLeft,
   CheckCircle2,
   Clock3,
   Coins,
@@ -15,6 +16,9 @@ import {
 import { type FormEvent, useEffect, useState } from "react";
 
 import { useDemoStore } from "../data/DemoStoreContext";
+import { demoFallbackEnabled } from "../config/demoFallback";
+import { dimensionLabel, hardVetoReasonLabel } from "../ai-quality/dimensionLabels";
+import { formatDuration } from "../features/team/teamMetrics";
 import {
   effectiveDuration,
   estimatePoints,
@@ -26,8 +30,10 @@ import { getPointRule } from "../points/client/pointCycleApi";
 import type { BackendPointRule } from "../points/contracts";
 import {
   clearDuplicateCandidate,
+  getSubmissionPreview,
   reviewSubmissionQuality,
 } from "../submissions/client/submissionApi";
+import type { BackendSubmissionPreview } from "../submissions/contracts";
 import { useInteractions } from "../interactions/InteractionContext";
 import { StatusBadge } from "./StatusBadge";
 
@@ -80,10 +86,12 @@ export function ReviewDrawer({
   submission,
   onClose,
   readOnly = false,
+  variant = "drawer",
 }: {
   submission: Submission;
   onClose(): void;
   readOnly?: boolean;
+  variant?: "drawer" | "page";
 }) {
   const { adjustQuality, state, upsertSubmission } = useDemoStore();
   const { notify } = useInteractions();
@@ -100,6 +108,10 @@ export function ReviewDrawer({
   const [saving, setSaving] = useState(false);
   const [pointRule, setPointRule] = useState<BackendPointRule | null>(null);
   const [pointRuleState, setPointRuleState] = useState<
+    "loading" | "ready" | "unavailable"
+  >("loading");
+  const [preview, setPreview] = useState<BackendSubmissionPreview | null>(null);
+  const [previewState, setPreviewState] = useState<
     "loading" | "ready" | "unavailable"
   >("loading");
   const team = state.teams.find((item) => item.id === submission.teamId);
@@ -166,6 +178,22 @@ export function ReviewDrawer({
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    getSubmissionPreview(submission.id)
+      .then((next) => {
+        if (!active) return;
+        setPreview(next);
+        setPreviewState("ready");
+      })
+      .catch(() => {
+        if (active) setPreviewState("unavailable");
+      });
+    return () => {
+      active = false;
+    };
+  }, [submission.id]);
+
   function updateIssue(id: string, values: Partial<IssueDraft>) {
     setIssues((current) =>
       current.map((issue) =>
@@ -200,6 +228,9 @@ export function ReviewDrawer({
         upsertSubmission(updated);
         notify("success", "复核结果已保存");
       } else {
+        if (!demoFallbackEnabled) {
+          throw new Error("质检结果尚未就绪，当前不能人工复核");
+        }
         adjustQuality(submission.id, finalScore, trimmedReason);
       }
       onClose();
@@ -234,89 +265,156 @@ export function ReviewDrawer({
     }
   }
 
+  const videoPreview = (
+    <section className="video-preview">
+      {preview ? (
+        <>
+          <video controls preload="metadata" poster={preview.thumbnail?.url} aria-label={`${submission.fileName} 预览`}>
+            {preview.hls ? <source src={preview.hls.url} type={preview.hls.contentType} /> : null}
+            <source src={preview.url} type={preview.contentType} />
+          </video>
+          <span>{preview.hls ? `HLS ${preview.hls.qualities.map((quality) => quality.quality).join(" / ")}` : `${Math.floor(submission.durationSeconds / 60)}:${String(submission.durationSeconds % 60).padStart(2, "0")}`}</span>
+        </>
+      ) : (
+        <div>
+          <FileVideo size={42} />
+          <strong>{previewState === "loading" ? "正在生成预览地址" : "已保存原始视频"}</strong>
+          <small>{previewState === "unavailable" ? "当前无法取得短期预览地址" : "视频证据存储于本地对象存储"}</small>
+        </div>
+      )}
+      {!preview ? <span>{Math.floor(submission.durationSeconds / 60)}:{String(submission.durationSeconds % 60).padStart(2, "0")}</span> : null}
+    </section>
+  );
+
+  const bodyContent = (
+    <>
+      <section className="ai-conclusion">
+        <div className="ai-conclusion-head">
+          <span className={`report-conclusion ${aiStatusTone}`}>{aiStatusLabel}</span>
+          <strong className={`report-total ${aiStatusTone}`}>{submission.aiScore}<small>/100</small></strong>
+        </div>
+        <p className="report-summary">{submission.qualityResult?.summary || "AI 原始分保持不变，人工复核只写入最终评分和审计记录。"}</p>
+        {submission.qualityResult?.hardVeto?.triggered && (
+          <div className="veto-banner"><AlertTriangle size={15} /><div><strong>硬性否决：</strong><ul>{submission.qualityResult.hardVeto.reasons.map((reason, index) => <li key={`veto-${index}`}>{hardVetoReasonLabel(reason)}</li>)}</ul></div></div>
+        )}
+        {submission.qualityResult?.dimensions ? (
+          <div className="report-dimensions">
+            {Object.entries(submission.qualityResult.dimensions).map(([key, dimension]) => (
+              <div className="report-dimension" key={key}>
+                <span>{dimensionLabel(key)}</span>
+                <i><b style={{ width: `${Math.min(100, Math.max(0, (dimension.score ?? 0) * 5))}%` }} /></i>
+                <strong>{dimension.score ?? "—"}</strong>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {submission.qualityResult?.reviewReasons?.length ? <div className="review-reasons"><strong>AI 建议人工复核：</strong><ul>{submission.qualityResult.reviewReasons.map((reason, index) => <li key={`reason-${index}`}>{reason}</li>)}</ul></div> : null}
+        {submission.qualityResult && <p className="field-hint">{submission.qualityResult.initialModel} · 条件复核 {submission.qualityResult.reviewModel} · 提示词 V{submission.qualityResult.promptRevision}</p>}
+      </section>
+      {duplicateCandidate && (
+        <section className="ai-conclusion duplicate-review">
+          <div><span>近似重复候选</span><StatusBadge label="待确认" tone="warning" /></div>
+          <strong>{Math.round(duplicateCandidate.similarity * 100)}<small>%</small></strong>
+          <p>疑似与 {duplicateCandidate.candidateFileName ?? duplicateCandidate.candidateSubmissionId} 重复，解除前不会进入积分锁定。</p>
+          {!readOnly && <button className="table-action" disabled={duplicateSaving} type="button" onClick={clearDuplicate}><CopyCheck size={15} />{duplicateSaving ? "处理中" : "解除重复标记"}</button>}
+        </section>
+      )}
+      {readOnly ? (
+        <section className="review-form" aria-label="最终质检结果">
+          <div className="review-derived">
+            <div><span>最终评分</span><strong>{submission.finalScore}/100</strong></div>
+            <div><span>最终结论</span><strong className={submission.qualityStatus === "passed" ? "success-text" : "danger-text"}>{submission.qualityStatus === "passed" ? "通过" : submission.qualityStatus === "failed" ? "未通过" : "待质检"}</strong></div>
+            <div><span><Clock3 size={13} />有效时长</span><strong>{formatDuration(effectiveDuration(submission.durationSeconds, submission.invalidSeconds))}</strong></div>
+            <div><span><Coins size={13} />预估积分</span><strong>{submission.qualityStatus === "pending" ? "—" : points === null ? unavailableEstimateLabel : `${points.toFixed(2)} 分`}</strong></div>
+          </div>
+          {submission.qualityResult?.manualReview ? (
+            <p className="form-message success">
+              {submission.qualityResult.manualReview.reviewedByName} 已复核：{submission.qualityResult.manualReview.reason}
+            </p>
+          ) : (
+            <p className="form-message">团长仅可查看结果。如需人工修正，请联系平台管理员处理。</p>
+          )}
+        </section>
+      ) : <form className="review-form" onSubmit={save}>
+        <div className="review-guide">
+          <strong>本次复核可以调整什么</strong>
+          <ul>
+            <li><b>最终评分</b>：修改 AI 给出的分数，保存后按新分数判定是否通过并计算积分。</li>
+            <li><b>问题区间</b>：仅标记真正没有任务内容的片段（黑屏、冻结、与任务无关的空镜）。分辨率、模糊、遮挡等质量扣分请通过最终评分体现，不要标记为无效。</li>
+            <li><b>敏感隔离</b>：勾选后该视频不进入普通资产、交付包和公开统计。</li>
+            <li><b>解除重复标记</b>：近似重复若是误报，可在上方解除，解除后进入正常流程。</li>
+          </ul>
+        </div>
+        <label><span>最终评分</span><input aria-label="最终评分" min="0" max="100" type="number" value={score} onChange={(event) => setScore(event.target.value)} /><small className="field-hint">AI 原始分 {submission.aiScore}，可调整为 0–100 的整数或一位小数</small></label>
+        <div className="review-derived">
+          <div><span>最终结论</span><strong className={qualityStatus(finalScore, passThreshold) === "passed" ? "success-text" : "danger-text"}>{qualityStatus(finalScore, passThreshold) === "passed" ? "通过" : "未通过"}</strong></div>
+          <div><span>质量系数</span><strong>{coefficient === null ? unavailableEstimateLabel : coefficient.toFixed(2)}</strong></div>
+          <div><span><Clock3 size={13} />有效时长</span><strong>{formatDuration(effectiveDuration(submission.durationSeconds, finalInvalidSeconds))}</strong></div>
+          <div><span><Coins size={13} />预计积分</span><strong>{points === null ? unavailableEstimateLabel : `${points.toFixed(2)} 分`}</strong></div>
+        </div>
+        <div className="issue-editor" aria-label="问题区间">
+          <div className="issue-editor-heading">
+            <span>问题区间</span>
+            <button
+              aria-label="新增问题区间"
+              className="icon-button"
+              type="button"
+              onClick={() =>
+                setIssues((current) => [
+                  ...current,
+                  {
+                    id: `${submission.id}-${Date.now()}`,
+                    label: "人工标记问题",
+                    start: "0",
+                    end: "1",
+                  },
+                ])
+              }
+            >
+              <Plus size={15} />
+            </button>
+          </div>
+          <small className="field-hint">仅标记没有任务内容的片段（黑屏、冻结、与任务无关的空镜）；区间会从有效时长中扣除，请勿把分辨率、模糊等质量扣分标成无效</small>
+          {issues.length ? issues.map((issue) => (
+            <div className="issue-editor-row" key={issue.id}>
+              <input aria-label="问题类型" value={issue.label} onChange={(event) => updateIssue(issue.id, { label: event.target.value })} />
+              <input aria-label="开始秒" min="0" step="0.1" type="number" value={issue.start} onChange={(event) => updateIssue(issue.id, { start: event.target.value })} />
+              <input aria-label="结束秒" min="0" step="0.1" type="number" value={issue.end} onChange={(event) => updateIssue(issue.id, { end: event.target.value })} />
+              <button aria-label="删除问题区间" className="icon-button" type="button" onClick={() => setIssues((current) => current.filter((item) => item.id !== issue.id))}><Trash2 size={15} /></button>
+            </div>
+          )) : <p className="form-message">未标记无效区间，系统会按全片有效计算。</p>}
+        </div>
+        <label><span>调整原因</span><textarea aria-label="调整原因" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="请说明人工复核依据，必填" rows={3} /><small className="field-hint">必填，将写入审计记录留痕</small></label>
+        <label className="checkbox-line"><input type="checkbox" checked={quarantine} onChange={(event) => setQuarantine(event.target.checked)} />敏感内容隔离，不进入普通资产和交付候选</label>
+        {submission.issues.length > 0 && <div className="review-issues"><AlertTriangle size={15} /><span>AI 标记 {submission.issues.length} 个问题区间，人工确认无效时长 {finalInvalidSeconds} 秒</span></div>}
+        {error && <p className="form-message error">{error}</p>}
+        <button className="button button-primary" disabled={saving} type="submit"><CheckCircle2 size={16} />{saving ? "保存中" : "保存调整"}</button>
+      </form>}
+      <section className="audit-timeline"><div className="card-heading"><div><h2>审计记录</h2><p>保留原始结果和每次人工调整</p></div><History size={17} /></div>{submission.audit.length ? submission.audit.map((record) => <div key={record.id}><i /><span><strong>{record.action}</strong><small>{record.actor} · {record.createdAt}</small><em>{record.reason}</em></span></div>) : <p className="form-message">暂无人工调整记录。</p>}</section>
+    </>
+  );
+
+  if (variant === "page") {
+    return (
+      <div className="page-stack review-page">
+        <button className="back-page" onClick={onClose}><ArrowLeft size={16} />返回质量复核</button>
+        <div className="page-heading"><div><p className="page-kicker">{submission.id}</p><h1>{submission.fileName}</h1><span>{submission.ownerName} · {submission.teamName} · {submission.resolution} · {submission.durationSeconds} 秒</span></div>{readOnly ? <StatusBadge label="质检结果" tone="info" /> : <StatusBadge label="待人工复核" tone="warning" />}</div>
+        <div className="detail-grid report-layout review-page-layout">
+          {videoPreview}
+          <div className="review-page-side">{bodyContent}</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       <button className="drawer-backdrop" aria-label="关闭复核" onClick={onClose} />
       <aside className="review-drawer" aria-label="质量复核面板">
         <header><div><span>{readOnly ? "质检结果查看" : "结算前复核"}</span><h2>{submission.fileName}</h2><p>{submission.id} · {submission.ownerName} · {submission.teamName}</p></div><button className="icon-button" aria-label="关闭复核" onClick={onClose}><X size={18} /></button></header>
         <div className="drawer-body">
-          <section className="review-video"><FileVideo size={34} /><strong>视频证据预览</strong><span>{submission.resolution} · {submission.durationSeconds} 秒</span></section>
-          <section className="ai-conclusion">
-            <div><span>AI 原始结论</span><StatusBadge label={aiStatusLabel} tone={aiStatusTone} /></div>
-            <strong>{submission.aiScore}<small>/100</small></strong>
-            <p>{submission.qualityResult?.summary || "AI 原始分保持不变，人工复核只写入最终评分和审计记录。"}</p>
-            {submission.qualityResult && <p>{submission.qualityResult.initialModel} · 条件复核 {submission.qualityResult.reviewModel} · 提示词 V{submission.qualityResult.promptRevision}</p>}
-          </section>
-          {duplicateCandidate && (
-            <section className="ai-conclusion duplicate-review">
-              <div><span>近似重复候选</span><StatusBadge label="待确认" tone="warning" /></div>
-              <strong>{Math.round(duplicateCandidate.similarity * 100)}<small>%</small></strong>
-              <p>疑似与 {duplicateCandidate.candidateFileName ?? duplicateCandidate.candidateSubmissionId} 重复，解除前不会进入积分锁定。</p>
-              {!readOnly && <button className="table-action" disabled={duplicateSaving} type="button" onClick={clearDuplicate}><CopyCheck size={15} />{duplicateSaving ? "处理中" : "解除重复标记"}</button>}
-            </section>
-          )}
-          {readOnly ? (
-            <section className="review-form" aria-label="最终质检结果">
-              <div className="review-derived">
-                <div><span>最终评分</span><strong>{submission.finalScore}/100</strong></div>
-                <div><span>最终结论</span><strong className={submission.qualityStatus === "passed" ? "success-text" : "danger-text"}>{submission.qualityStatus === "passed" ? "通过" : submission.qualityStatus === "failed" ? "未通过" : "待质检"}</strong></div>
-                <div><span><Clock3 size={13} />有效时长</span><strong>{effectiveDuration(submission.durationSeconds, submission.invalidSeconds)} 秒</strong></div>
-                <div><span><Coins size={13} />预估积分</span><strong>{submission.qualityStatus === "pending" ? "—" : points === null ? unavailableEstimateLabel : `${points.toFixed(2)} 分`}</strong></div>
-              </div>
-              {submission.qualityResult?.manualReview ? (
-                <p className="form-message success">
-                  {submission.qualityResult.manualReview.reviewedByName} 已复核：{submission.qualityResult.manualReview.reason}
-                </p>
-              ) : (
-                <p className="form-message">团长仅可查看结果。如需人工修正，请联系平台管理员处理。</p>
-              )}
-            </section>
-          ) : <form className="review-form" onSubmit={save}>
-            <label><span>最终评分</span><input aria-label="最终评分" min="0" max="100" type="number" value={score} onChange={(event) => setScore(event.target.value)} /></label>
-            <div className="review-derived">
-              <div><span>最终结论</span><strong className={qualityStatus(finalScore, passThreshold) === "passed" ? "success-text" : "danger-text"}>{qualityStatus(finalScore, passThreshold) === "passed" ? "通过" : "未通过"}</strong></div>
-              <div><span>质量系数</span><strong>{coefficient === null ? unavailableEstimateLabel : coefficient.toFixed(2)}</strong></div>
-              <div><span><Clock3 size={13} />有效时长</span><strong>{effectiveDuration(submission.durationSeconds, finalInvalidSeconds)} 秒</strong></div>
-              <div><span><Coins size={13} />预计积分</span><strong>{points === null ? unavailableEstimateLabel : `${points.toFixed(2)} 分`}</strong></div>
-            </div>
-            <div className="issue-editor" aria-label="问题区间">
-              <div className="issue-editor-heading">
-                <span>问题区间</span>
-                <button
-                  aria-label="新增问题区间"
-                  className="icon-button"
-                  type="button"
-                  onClick={() =>
-                    setIssues((current) => [
-                      ...current,
-                      {
-                        id: `${submission.id}-${Date.now()}`,
-                        label: "人工标记问题",
-                        start: "0",
-                        end: "1",
-                      },
-                    ])
-                  }
-                >
-                  <Plus size={15} />
-                </button>
-              </div>
-              {issues.length ? issues.map((issue) => (
-                <div className="issue-editor-row" key={issue.id}>
-                  <input aria-label="问题类型" value={issue.label} onChange={(event) => updateIssue(issue.id, { label: event.target.value })} />
-                  <input aria-label="开始秒" min="0" step="0.1" type="number" value={issue.start} onChange={(event) => updateIssue(issue.id, { start: event.target.value })} />
-                  <input aria-label="结束秒" min="0" step="0.1" type="number" value={issue.end} onChange={(event) => updateIssue(issue.id, { end: event.target.value })} />
-                  <button aria-label="删除问题区间" className="icon-button" type="button" onClick={() => setIssues((current) => current.filter((item) => item.id !== issue.id))}><Trash2 size={15} /></button>
-                </div>
-              )) : <p className="form-message">未标记无效区间，系统会按全片有效计算。</p>}
-            </div>
-            <label><span>调整原因</span><textarea aria-label="调整原因" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="请说明人工复核依据，必填" rows={3} /></label>
-            <label className="checkbox-line"><input type="checkbox" checked={quarantine} onChange={(event) => setQuarantine(event.target.checked)} />敏感内容隔离，不进入普通资产和交付候选</label>
-            {submission.issues.length > 0 && <div className="review-issues"><AlertTriangle size={15} /><span>AI 标记 {submission.issues.length} 个问题区间，人工确认无效时长 {finalInvalidSeconds} 秒</span></div>}
-            {error && <p className="form-message error">{error}</p>}
-            <button className="button button-primary" disabled={saving} type="submit"><CheckCircle2 size={16} />{saving ? "保存中" : "保存调整"}</button>
-          </form>}
-          <section className="audit-timeline"><div className="card-heading"><div><h2>审计记录</h2><p>保留原始结果和每次人工调整</p></div><History size={17} /></div>{submission.audit.length ? submission.audit.map((record) => <div key={record.id}><i /><span><strong>{record.action}</strong><small>{record.actor} · {record.createdAt}</small><em>{record.reason}</em></span></div>) : <p className="form-message">暂无人工调整记录。</p>}</section>
+          {videoPreview}
+          {bodyContent}
         </div>
       </aside>
     </>

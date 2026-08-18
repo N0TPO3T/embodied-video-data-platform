@@ -11,18 +11,17 @@ import { rejectRateLimited } from "./rate-limit-response.js";
 
 const LOGIN_LIMIT = 20;
 const LOGIN_WINDOW_MS = 15 * 60 * 1_000;
+const LOGIN_IP_LIMIT = 100;
 
 function clientKey(request: Request): string {
-  const forwarded = request.headers["x-forwarded-for"];
-  const forwardedFor = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-  return forwardedFor?.split(",")[0]?.trim() || request.ip || "unknown";
+  return request.ip || request.socket.remoteAddress || "unknown";
 }
 
 @Injectable()
 export class LoginRateLimitGuard implements CanActivate {
   constructor(private readonly rateLimits: RateLimitService) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const http = context.switchToHttp();
     const request = http.getRequest<Request>();
     const response = http.getResponse<Response>();
@@ -30,11 +29,20 @@ export class LoginRateLimitGuard implements CanActivate {
       typeof request.body?.username === "string"
         ? normalizeUsername(request.body.username)
         : "";
-    const result = this.rateLimits.consume({
-      key: `login:${clientKey(request)}:${username}`,
-      limit: LOGIN_LIMIT,
-      windowMs: LOGIN_WINDOW_MS,
-    });
+    const ip = clientKey(request);
+    const [ipResult, accountResult] = await Promise.all([
+      this.rateLimits.consume({
+        key: `login:ip:${ip}`,
+        limit: LOGIN_IP_LIMIT,
+        windowMs: LOGIN_WINDOW_MS,
+      }),
+      this.rateLimits.consume({
+        key: `login:ip-account:${ip}:${username}`,
+        limit: LOGIN_LIMIT,
+        windowMs: LOGIN_WINDOW_MS,
+      }),
+    ]);
+    const result = !ipResult.allowed ? ipResult : accountResult;
 
     if (!result.allowed) {
       rejectRateLimited(response, result.retryAfterSeconds);

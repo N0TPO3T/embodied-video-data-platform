@@ -68,3 +68,10 @@ export function reclaimWorkerTimeouts(): Promise<BackendWorkerReclaimResult> {
     { method: "POST" },
   );
 }
+
+export function pruneInactiveWorkers(): Promise<{ removed: number }> {
+  return requestJson<{ removed: number }>(
+    "/operations/workers/prune-inactive",
+    { method: "POST" },
+  );
+}

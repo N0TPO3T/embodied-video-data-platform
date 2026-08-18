@@ -9,6 +9,7 @@ import type {
 function processingStatus(status: BackendProcessingStatus): ProcessingStatus {
   if (status === "uploading") return "uploading";
   if (status === "queued") return "queued";
+  if (status === "stuck") return "stuck";
   if (
     status === "probing" ||
     status === "awaiting_ai" ||
@@ -60,6 +61,7 @@ function createdAt(value: number): string {
 function mappedQualityStatus(
   source: BackendSubmission,
 ): Submission["qualityStatus"] {
+  if (source.quality?.status === "stuck") return "pending";
   if (
     source.quality?.status === "scored" ||
     source.quality?.status === "review_pending"
@@ -202,6 +204,19 @@ export function backendSubmissionToDomain(
             : undefined,
           attempts: source.quality.attempts,
           lastError: source.quality.lastError,
+          progressStage: source.quality.progressStage,
+          progressUpdatedAt: source.quality.progressUpdatedAt,
+          stuckReason: source.quality.stuckReason,
+          dimensions: source.quality.dimensions,
+          hardVeto: source.quality.hardVeto,
+          billingObservations: source.quality.billingObservations,
+          detectedTask: source.quality.detectedTask
+            ? {
+                task_id: source.quality.detectedTask.task_id,
+                task_summary: source.quality.detectedTask.task_summary,
+                confidence: source.quality.detectedTask.confidence ?? null,
+              }
+            : undefined,
           startedAt: source.quality.startedAt
             ? createdAt(source.quality.startedAt)
             : undefined,

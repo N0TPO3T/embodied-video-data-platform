@@ -1,10 +1,12 @@
-import { AlertTriangle, ArrowLeft, Clock3, Coins, CopyCheck, FileVideo, Sparkles } from "lucide-react";
+"use client";
+
+import { ArrowLeft, CopyCheck, FileVideo } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { QualityScore } from "../../components/QualityScore";
+import { QualityReportCard } from "../../components/QualityReportCard";
 import { StatusBadge } from "../../components/StatusBadge";
 import { useDemoStore } from "../../data/DemoStoreContext";
-import { effectiveDuration, estimatePoints } from "../../domain/calculations";
+import { estimatePoints } from "../../domain/calculations";
 import type { Submission } from "../../domain/types";
 import { getPointRule } from "../../points/client/pointCycleApi";
 import type { BackendPointRule } from "../../points/contracts";
@@ -27,23 +29,24 @@ export function SubmissionDetail({
   backLabel?: string;
 }) {
   const { state, currentUser } = useDemoStore();
-  const [item, setItem] = useState<Submission | null>(null);
-  const [detailState, setDetailState] = useState<"loading" | "ready" | "missing">("loading");
-  const [preview, setPreview] = useState<BackendSubmissionPreview | null>(null);
-  const [previewState, setPreviewState] = useState<"loading" | "ready" | "unavailable">("loading");
+  const [loadedItem, setLoadedItem] = useState<Submission | null>(null);
+  const [loadedDetailId, setLoadedDetailId] = useState<string | null>(null);
+  const [loadedDetailState, setLoadedDetailState] = useState<"ready" | "missing">("missing");
+  const [loadedPreview, setLoadedPreview] = useState<BackendSubmissionPreview | null>(null);
+  const [loadedPreviewId, setLoadedPreviewId] = useState<string | null>(null);
+  const [loadedPreviewState, setLoadedPreviewState] = useState<"ready" | "unavailable">("unavailable");
   const [pointRule, setPointRule] = useState<BackendPointRule | null>(null);
   const [pointRuleState, setPointRuleState] = useState<
     "loading" | "ready" | "unavailable"
   >("loading");
   useEffect(() => {
     let active = true;
-    setDetailState("loading");
-    setItem(null);
     getSubmission(id)
       .then((submission) => {
         if (!active) return;
-        setItem(backendSubmissionToDomain(submission));
-        setDetailState("ready");
+        setLoadedItem(backendSubmissionToDomain(submission));
+        setLoadedDetailId(id);
+        setLoadedDetailState("ready");
       })
       .catch(() => {
         if (!active) return;
@@ -53,26 +56,28 @@ export function SubmissionDetail({
             (currentUser.role === "admin" ||
               submission.ownerId === currentUser.id),
         );
-        setItem(fallback ?? null);
-        setDetailState(fallback ? "ready" : "missing");
+        setLoadedItem(fallback ?? null);
+        setLoadedDetailId(id);
+        setLoadedDetailState(fallback ? "ready" : "missing");
       });
     return () => {
       active = false;
     };
-  }, [currentUser.id, id, state.submissions]);
+  }, [currentUser.id, currentUser.role, id, state.submissions]);
   useEffect(() => {
     let active = true;
-    setPreviewState("loading");
-    setPreview(null);
     getSubmissionPreview(id)
       .then((nextPreview) => {
         if (!active) return;
-        setPreview(nextPreview);
-        setPreviewState("ready");
+        setLoadedPreview(nextPreview);
+        setLoadedPreviewId(id);
+        setLoadedPreviewState("ready");
       })
       .catch(() => {
         if (!active) return;
-        setPreviewState("unavailable");
+        setLoadedPreview(null);
+        setLoadedPreviewId(id);
+        setLoadedPreviewState("unavailable");
       });
     return () => {
       active = false;
@@ -93,6 +98,30 @@ export function SubmissionDetail({
       active = false;
     };
   }, []);
+
+  const item = loadedDetailId === id ? loadedItem : null;
+  const detailState = loadedDetailId === id ? loadedDetailState : "loading";
+  // 处理中或卡住时每 5 秒轮询一次，同步 AI 质检进度与状态流转。
+  useEffect(() => {
+    if (detailState !== "ready" || !item) return;
+    const quality = item.qualityResult;
+    const active =
+      quality !== undefined
+        ? ["queued", "running", "stuck"].includes(quality.status)
+        : item.qualityStatus === "pending" &&
+          item.processingStatus !== "completed" &&
+          item.processingStatus !== "failed" &&
+          item.processingStatus !== "stuck";
+    if (!active) return;
+    const timer = setInterval(() => {
+      getSubmission(id)
+        .then((next) => setLoadedItem(backendSubmissionToDomain(next)))
+        .catch(() => undefined);
+    }, 5_000);
+    return () => clearInterval(timer);
+  }, [detailState, id, item]);
+  const preview = loadedPreviewId === id ? loadedPreview : null;
+  const previewState = loadedPreviewId === id ? loadedPreviewState : "loading";
   if (detailState === "loading") {
     return (
       <div className="empty-state">
@@ -127,7 +156,6 @@ export function SubmissionDetail({
         ? "规则读取中"
         : "规则不可用"
       : `${points.toFixed(2)} 分`;
-  const quality = item.qualityResult;
   const duplicateCandidate = item.duplicateCandidates?.find(
     (candidate) => candidate.status === "candidate",
   );
@@ -141,16 +169,24 @@ export function SubmissionDetail({
     ? "质量通过"
     : item.qualityStatus === "failed"
       ? "需要返工"
-      : quality?.status === "review_pending"
+      : item.qualityResult?.status === "review_pending"
         ? "等待人工复核"
-        : quality?.status === "system_failed"
-          ? "质检异常"
-          : "等待质检";
+        : item.qualityResult?.status === "scored"
+          ? "质检完成"
+          : item.qualityResult?.status === "stuck" || item.pipelineStage === "stuck"
+            ? "质检卡住"
+            : item.qualityResult?.status === "system_failed"
+              ? "质检异常"
+              : "等待质检";
   const tone = item.qualityStatus === "passed"
     ? "success"
-    : item.qualityStatus === "failed" || quality?.status === "system_failed"
+    : item.qualityStatus === "failed" ||
+        item.qualityResult?.status === "system_failed" ||
+        item.qualityResult?.status === "stuck"
       ? "danger"
-      : "warning";
+      : item.qualityResult?.status === "scored"
+        ? "success"
+        : "warning";
 
   return (
     <div className="page-stack">
@@ -158,23 +194,15 @@ export function SubmissionDetail({
       <div className="page-heading"><div><p className="page-kicker">{item.id}</p><h1>{item.fileName}</h1><span>{item.createdAt} · {item.resolution} · {item.sizeMb} MB</span></div><StatusBadge label={label} tone={tone} /></div>
       {item.assetStatus === "quarantined" && <div className="form-message error">该视频已进入敏感隔离区：{item.quarantine?.reason ?? "敏感内容隔离"}</div>}
       {item.storageStatus === "deleted" && <div className="form-message error">该视频对象已删除：{item.storage?.deleteReason ?? "对象已删除"}</div>}
+      {item.storageStatus === "delete_pending" && <div className="form-message warning">该视频对象正在删除，完成前不可预览或重新处理。</div>}
       {duplicateCandidate && <div className="form-message warning"><CopyCheck size={14} />该视频疑似与 {duplicateCandidate.candidateFileName ?? duplicateCandidate.candidateSubmissionId} 重复，相似度 {Math.round(duplicateCandidate.similarity * 100)}%，管理员确认前不会进入积分锁定。</div>}
-      <div className="detail-grid">
+      <div className="detail-grid report-layout">
         <section className="video-preview">{preview ? <><video controls preload="metadata" poster={preview.thumbnail?.url} aria-label={`${preview.fileName} 预览`}>{preview.hls ? <source src={preview.hls.url} type={preview.hls.contentType} /> : null}<source src={preview.url} type={preview.contentType} /></video><span>{preview.hls ? `HLS ${preview.hls.qualities.map((quality) => quality.quality).join(" / ")}` : `${Math.floor(item.durationSeconds / 60)}:${String(item.durationSeconds % 60).padStart(2, "0")}`}</span></> : <div><FileVideo size={42} /><strong>{previewState === "loading" ? "正在生成预览地址" : "已保存原始视频"}</strong><small>{previewState === "unavailable" ? "当前无法取得短期预览地址" : "视频证据存储于本地对象存储"}</small></div>} {!preview ? <span>{Math.floor(item.durationSeconds / 60)}:{String(item.durationSeconds % 60).padStart(2, "0")}</span> : null}</section>
-        <aside className="content-card score-panel">
-          <div className="card-heading"><div><h2>质量结论</h2><p>{quality ? `${quality.initialModel} · 提示词 V${quality.promptRevision}` : "等待正式 AI 结果"}</p></div><QualityScore score={item.finalScore} ratio={quality?.settlementRatio} passed={quality?.passed} /></div>
-          <div className="score-meter"><i style={{ width: `${item.finalScore}%` }} /></div>
-          <dl><div><dt><Clock3 size={15} />有效积分时长</dt><dd>{effectiveDuration(item.durationSeconds, item.invalidSeconds)} 秒</dd></div><div><dt><Coins size={15} />预计积分</dt><dd>{pointsLabel}</dd></div></dl>
-          {quality?.summary && <p className="quality-summary">{quality.summary}</p>}
-          {quality?.lastError && <p className="form-message error">{quality.lastError}</p>}
-        </aside>
-      </div>
-      <div className="dashboard-grid">
-        <section className="content-card"><div className="card-heading"><div><h2>AI 内容理解</h2><p>场景、任务和对象来自持久化模型结果</p></div><Sparkles size={18} /></div><div className="metadata-grid"><div><small>场景</small><strong>{item.scene}</strong></div><div><small>动作</small><strong>{item.action}</strong></div><div><small>操作对象</small><strong>{item.object}</strong></div></div>{quality?.recommendations.length ? <div className="recommend-list">{quality.recommendations.map((recommendation, index) => <div key={`${index}-${recommendation}`}><em>{String(index + 1).padStart(2, "0")}</em><span><strong>{recommendation}</strong></span></div>)}</div> : null}</section>
-        <aside className="content-card"><div className="card-heading"><div><h2>质量问题区间</h2><p>无效时长共 {item.invalidSeconds} 秒</p></div></div>{item.issues.length ? <div className="issue-list">{item.issues.map((issue) => {
-          const evidence = evidenceByRange.get(`${Math.round(issue.start * 1_000)}-${Math.round(issue.end * 1_000)}`);
-          return <div key={`${issue.label}-${issue.start}-${issue.end}`}><AlertTriangle size={15} />{evidence ? <img src={evidence.url} alt={`${issue.label} 证据帧`} /> : null}<span><strong>{issue.label}</strong><small>{issue.start}s — {issue.end}s</small></span></div>;
-        })}</div> : <div className="success-empty">未发现明显质量问题</div>}</aside>
+        <QualityReportCard
+          submission={item}
+          pointsLabel={pointsLabel}
+          evidenceByRange={evidenceByRange}
+        />
       </div>
     </div>
   );

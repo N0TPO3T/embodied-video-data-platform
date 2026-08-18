@@ -70,7 +70,7 @@ export function parseQualityLabEnvironment(
       source.VIDEO_QUALITY_PROMPT_PATH?.trim() ||
       resolve(
         process.cwd(),
-        "../docs/quality/qwen-video-ai-quality-prompt-v1.md",
+        "../docs/quality/prompts/qwen-video-ai-quality-prompt-v1/manifest.json",
       ),
     qwenApiKey,
     qwenBaseUrl: url.toString().replace(/\/$/u, ""),

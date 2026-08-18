@@ -7,7 +7,6 @@ import {
 } from "@/src/auth/server/backendClient";
 import { IdentityProvider } from "@/src/auth/client/IdentityContext";
 import { DemoStoreProvider } from "@/src/data/DemoStoreContext";
-import { listBackendSubmissions } from "@/src/submissions/server/submissionBackendClient";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
@@ -41,13 +40,12 @@ export default async function Page({
   if (access.kind === "redirect") {
     redirect(access.location);
   }
-  const [accounts, teams, submissions] = currentAccount
+  const [accounts, teams] = currentAccount
     ? await Promise.all([
         listBackendAccounts(sessionToken),
         listBackendTeams(sessionToken),
-        listBackendSubmissions(sessionToken),
       ])
-    : [[], [], []];
+    : [[], []];
 
   if (!currentAccount) {
     return (
@@ -67,7 +65,7 @@ export default async function Page({
         currentAccount={currentAccount}
         accounts={accounts}
         teams={teams}
-        backendSubmissions={submissions}
+        backendSubmissions={[]}
       >
         <PlatformApp initialPath={initialPath} />
       </DemoStoreProvider>

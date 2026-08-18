@@ -9,6 +9,8 @@ import { getPointRule } from "../../points/client/pointCycleApi";
 import type { BackendSubmission } from "../../submissions/contracts";
 import {
   clearDuplicateCandidate,
+  getSubmission,
+  getSubmissionPreview,
   reviewSubmissionQuality,
   searchSubmissions,
 } from "../../submissions/client/submissionApi";
@@ -20,6 +22,8 @@ vi.mock("../../submissions/client/submissionApi", async (importOriginal) => {
   return {
     ...actual,
     clearDuplicateCandidate: vi.fn(),
+    getSubmission: vi.fn(),
+    getSubmissionPreview: vi.fn(),
     reviewSubmissionQuality: vi.fn(),
     searchSubmissions: vi.fn(),
   };
@@ -88,8 +92,17 @@ function backendSubmission(
 
 beforeEach(() => {
   vi.mocked(clearDuplicateCandidate).mockReset();
+  vi.mocked(getSubmission).mockReset();
+  vi.mocked(getSubmissionPreview).mockReset();
   vi.mocked(reviewSubmissionQuality).mockReset();
   vi.mocked(searchSubmissions).mockReset();
+  vi.mocked(getSubmission).mockResolvedValue(backendSubmission());
+  vi.mocked(getSubmissionPreview).mockResolvedValue({
+    url: "http://minio.local/preview.mp4",
+    expiresAt: Date.now() + 60_000,
+    contentType: "video/mp4",
+    fileName: "team-review.mp4",
+  });
   vi.mocked(searchSubmissions).mockResolvedValue({
     submissions: [backendSubmission()],
     pagination: {
@@ -141,6 +154,9 @@ function renderAdminWithSubmissions(submissions: BackendSubmission[]) {
       total: submissions.length,
       totalPages: 1,
     },
+  });
+  vi.mocked(getSubmission).mockImplementation(async (id: string) => {
+    return submissions.find((submission) => submission.id === id) ?? backendSubmission();
   });
   return render(
     <IdentityProvider currentAccount={admin} accounts={demoAccounts} teams={[]}>

@@ -48,7 +48,13 @@ function localReviewCandidates(
     : localTeamReviewCandidates(submissions, teamId);
 }
 
-export function ReviewPage({ admin = false }: { admin?: boolean }) {
+export function ReviewPage({
+  admin = false,
+  navigate,
+}: {
+  admin?: boolean;
+  navigate?: (path: string) => void;
+}) {
   const { state, currentTeam } = useDemoStore();
   const [selected, setSelected] = useState<Submission | null>(null);
   const [page, setPage] = useState(1);
@@ -70,7 +76,6 @@ export function ReviewPage({ admin = false }: { admin?: boolean }) {
 
   useEffect(() => {
     let active = true;
-    setMode((current) => (current === "demo" ? current : "loading"));
     searchSubmissions({
       status: backendStatus,
       page,
@@ -150,9 +155,14 @@ export function ReviewPage({ admin = false }: { admin?: boolean }) {
       <section className="content-card table-card">
         <SubmissionTable
           submissions={submissions}
+          loading={mode === "loading"}
           showOwner
           actionLabel={admin ? "复核" : "查看"}
-          onAction={setSelected}
+          onAction={
+            admin
+              ? (item) => navigate?.(`/admin/review/${item.id}`)
+              : setSelected
+          }
         />
         <div className="table-summary">
           <span>每页 {pagination.pageSize} 条</span>

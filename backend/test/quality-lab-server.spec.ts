@@ -35,9 +35,9 @@ function environment(
 
 function result(videoId: string): NormalizedVideoQcResultV1 {
   return {
-    schemaVersion: "video_qc_result_v1",
+    schemaVersion: "video_qc_v1",
     ruleVersion: "video_qc_v1",
-    promptVersion: "qwen_video_qc_prompt_v1",
+    promptVersion: "qwen_video_qc_prompt_v2",
     videoId,
     evaluationStatus: "scored",
     dimensions: {} as NormalizedVideoQcResultV1["dimensions"],
@@ -48,14 +48,8 @@ function result(videoId: string): NormalizedVideoQcResultV1 {
     invalidDurationMs: 0,
     billableDurationMs: 1_000,
     invalidSegments: [],
-    hardVeto: { triggered: false, reasons: [] },
-    detectedTask: {
-      scene_id: "",
-      task_id: "",
-      variant_id: "",
-      task_summary: "test",
-      confidence: 1,
-    },
+    hardVeto: { triggered: false, reasons: [], candidates: [] },
+    detectedTask: { task_id: "", task_summary: "test", confidence: null },
     deductions: [],
     recommendations: [],
     summary: "test",
@@ -118,10 +112,10 @@ describe("quality lab server", () => {
   it("exposes versioned prompts and locks each job to its creation revision", async () => {
     const committedPrompt: LoadedVideoQualityPrompt = {
       systemPrompt: "video_qc_v1 初始规则，返回 JSON。",
-      outputExample: { schema_version: "video_qc_result_v1" },
-      promptVersion: "qwen_video_qc_prompt_v1",
+      outputExample: { schema_version: "video_qc_v1" },
+      promptVersion: "qwen_video_qc_prompt_v2",
       ruleVersion: "video_qc_v1",
-      outputSchema: "video_qc_result_v1",
+      outputSchema: "video_qc_v1",
       initialModel: "qwen3.7-plus",
       reviewModel: "qwen3.7-flash",
       contentSha256: "a".repeat(64),
@@ -175,9 +169,9 @@ describe("quality lab server", () => {
     const committedPrompt: LoadedVideoQualityPrompt = {
       systemPrompt: "video_qc_v1 初始规则，返回 JSON。",
       outputExample: {},
-      promptVersion: "qwen_video_qc_prompt_v1",
+      promptVersion: "qwen_video_qc_prompt_v2",
       ruleVersion: "video_qc_v1",
-      outputSchema: "video_qc_result_v1",
+      outputSchema: "video_qc_v1",
       initialModel: "qwen3.7-plus",
       reviewModel: "qwen3.7-flash",
       contentSha256: "a".repeat(64),

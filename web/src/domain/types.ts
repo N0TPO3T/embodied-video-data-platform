@@ -6,6 +6,7 @@ export type ProcessingStatus =
   | "queued"
   | "processing"
   | "completed"
+  | "stuck"
   | "failed";
 
 export type ProcessingPipelineStage =
@@ -15,12 +16,13 @@ export type ProcessingPipelineStage =
   | "awaiting_ai"
   | "ai_processing"
   | "completed"
+  | "stuck"
   | "system_failed";
 
 export type QualityStatus = "pending" | "passed" | "failed";
 export type SettlementStatus = "unsettled" | "settled";
 export type AssetStatus = "active" | "quarantined";
-export type StorageStatus = "available" | "deleted";
+export type StorageStatus = "available" | "delete_pending" | "deleted";
 
 export interface DuplicateCandidate {
   id: string;
@@ -103,7 +105,11 @@ export interface Submission {
       | "scored"
       | "hard_reject"
       | "review_pending"
+      | "stuck"
       | "system_failed";
+    progressStage?: string;
+    progressUpdatedAt?: number;
+    stuckReason?: string;
     summary: string;
     recommendations: string[];
     reviewReasons: string[];
@@ -127,6 +133,51 @@ export interface Submission {
     lastError?: string;
     startedAt?: string;
     completedAt?: string;
+    dimensions?: Record<
+      string,
+      {
+        coefficient: number;
+        score: number;
+        confidence: number;
+        calculation_trace?: string;
+        issues: Array<{
+          reason_code: string;
+          description: string;
+          start_ms: number;
+          end_ms: number;
+          severity: string;
+          confidence: number;
+          evidence_timestamps_ms: number[];
+        }>;
+      }
+    >;
+    hardVeto?: {
+      triggered: boolean;
+      reasons: Array<string | Record<string, unknown>>;
+    };
+    detectedTask?: {
+      task_id?: string;
+      task_summary?: string;
+      confidence?: number | null;
+    };
+    billingObservations?: {
+      candidate_invalid_segments: Array<{
+        reason_code: string;
+        description: string;
+        start_ms: number;
+        end_ms: number;
+        confidence: number;
+        evidence_timestamps_ms: number[];
+      }>;
+      candidate_valid_waiting_segments: Array<{
+        waiting_type: string;
+        description: string;
+        start_ms: number;
+        end_ms: number;
+        confidence: number;
+        evidence_timestamps_ms: number[];
+      }>;
+    };
   };
   settlementStatus: SettlementStatus;
   createdAt: string;

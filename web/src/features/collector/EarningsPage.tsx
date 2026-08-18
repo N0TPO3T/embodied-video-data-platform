@@ -189,7 +189,6 @@ export function EarningsPage() {
 
   useEffect(() => {
     let active = true;
-    setMode((current) => (current === "demo" ? current : "loading"));
     Promise.all([
       listPointCycles(),
       loadAllSubmissions({ status: "unsettled" }),
@@ -296,7 +295,7 @@ export function EarningsPage() {
                     <strong>{item.fileName}</strong>
                   </td>
                   <td>{item.finalScore}/100</td>
-                  <td>{item.effectiveSeconds} 秒</td>
+                  <td>{Math.round((item.effectiveSeconds / 60) * 100) / 100} 分钟</td>
                   <td>
                     <strong>{formatPoints(item.points)}</strong>
                   </td>

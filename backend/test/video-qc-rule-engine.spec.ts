@@ -2,19 +2,19 @@ import { describe, expect, it } from "vitest";
 
 import { normalizeVideoQcResult } from "../src/video-quality/video-qc-rule-engine.js";
 import type {
-  DimensionKey,
   PreparedVideoEvidence,
+  RawQualityDimension,
   RawVideoQcResultV1,
   VideoQcInputV1,
 } from "../src/video-quality/video-quality.types.js";
 import { buildVideoQcInput } from "../src/video-quality/video-qc-input.js";
 
-const dimensionKeys: DimensionKey[] = [
-  "first_person_and_composition",
-  "hand_forearm_object_integrity",
-  "frame_and_video_quality",
-  "task_authenticity_completeness",
-  "task_value_uniqueness",
+const rawDimensionKeys: Array<keyof RawVideoQcResultV1["dimensions"]> = [
+  "D1",
+  "D2",
+  "D3",
+  "D4",
+  "D5",
 ];
 
 function evidence(): PreparedVideoEvidence {
@@ -57,60 +57,66 @@ function evidence(): PreparedVideoEvidence {
   };
 }
 
+function dimension(coefficient: number): RawQualityDimension {
+  return {
+    coefficient,
+    score: Number((20 * coefficient).toFixed(1)),
+    confidence: 0.95,
+    metrics: {},
+    issues: [],
+  };
+}
+
 function rawAt(
   score: number,
-  status: RawVideoQcResultV1["evaluation_status"] = "scored",
+  status: RawVideoQcResultV1["evaluation_status"] = "completed",
 ): RawVideoQcResultV1 {
   const coefficient = score / 100;
   const dimensions = Object.fromEntries(
-    dimensionKeys.map((key) => [
-      key,
-      {
-        coefficient,
-        score: Number((20 * coefficient).toFixed(1)),
-        confidence: 0.95,
-        calculation_trace: "20 × coefficient",
-        segments: [],
-        issues: [],
-      },
-    ]),
-  ) as unknown as RawVideoQcResultV1["dimensions"];
+    rawDimensionKeys.map((key) => [key, dimension(coefficient)]),
+  ) as RawVideoQcResultV1["dimensions"];
   return {
-    schema_version: "video_qc_result_v1",
+    schema_version: "video_qc_v1",
     rule_version: "video_qc_v1",
-    prompt_version: "qwen_video_qc_prompt_v1",
-    video_id: "LAB-1",
+    prompt_version: "qwen_video_qc_prompt_v2",
+    task_id: "LAB-1",
     evaluation_status: status,
-    hard_veto: {
+    input_status: {
+      is_complete: true,
+      missing_required_inputs: [],
+      conflicts: [],
+    },
+    task_summary: "test",
+    overall_result: {
+      raw_total_score: score,
+      final_score: score,
+      summary: "test",
+    },
+    hard_reject: {
       triggered: status === "hard_reject",
       reasons: status === "hard_reject" ? ["FAKE_OR_NON_TASK"] : [],
-    },
-    detected_task: {
-      scene_id: "",
-      task_id: "",
-      variant_id: "",
-      task_summary: "test",
-      confidence: 0.95,
+      candidates: [],
     },
     dimensions,
-    billing_observations: {
-      candidate_invalid_segments: [],
-      candidate_valid_waiting_segments: [],
+    review: {
+      review_required: false,
+      review_reasons: [],
     },
-    raw_total_score: score,
-    final_score: score,
-    summary: "test",
-    deductions: [],
+    duration_result: {
+      analysis_duration_ms: 10_000,
+      invalid_duration_ms: 2_000,
+      effective_duration_ms: 8_000,
+      effective_duration_ratio: 0.8,
+      invalid_segments: [],
+      necessary_wait_segments: [],
+    },
     recommendations: [],
-    review_required: false,
-    review_reasons: [],
-    missing_inputs: [],
   };
 }
 
 function normalize(raw: RawVideoQcResultV1, sourceEvidence = evidence()) {
   const sourceInput: VideoQcInputV1 = buildVideoQcInput({
-    videoId: raw.video_id,
+    videoId: raw.task_id,
     evidence: sourceEvidence,
     exactBatchDuplicate: false,
   });
@@ -149,7 +155,7 @@ describe("video_qc_v1 rule engine", () => {
 
   it("unions deterministic and semantic invalid intervals", () => {
     const raw = rawAt(80);
-    raw.billing_observations.candidate_invalid_segments.push({
+    raw.duration_result.invalid_segments.push({
       reason_code: "UNRELATED_CONTENT",
       description: "unrelated",
       start_ms: 2_000,
@@ -157,6 +163,9 @@ describe("video_qc_v1 rule engine", () => {
       confidence: 0.95,
       evidence_timestamps_ms: [2_500],
     });
+    raw.duration_result.invalid_duration_ms = 3_000;
+    raw.duration_result.effective_duration_ms = 7_000;
+    raw.duration_result.effective_duration_ratio = 0.7;
 
     const result = normalize(raw);
 
@@ -166,9 +175,8 @@ describe("video_qc_v1 rule engine", () => {
 
   it("recomputes scores and makes evidence-free deductions non-settleable", () => {
     const raw = rawAt(80);
-    raw.dimensions.first_person_and_composition.score = 20;
-    raw.deductions.push({
-      dimension: "D1",
+    raw.dimensions.D1.score = 20;
+    raw.dimensions.D1.issues.push({
       reason_code: "NON_FIRST_PERSON",
       description: "no evidence",
       start_ms: 0,
@@ -176,6 +184,7 @@ describe("video_qc_v1 rule engine", () => {
       severity: "major",
       confidence: 0.9,
       evidence_timestamps_ms: [],
+      source: "visual_model",
     });
 
     const result = normalize(raw);
@@ -188,12 +197,12 @@ describe("video_qc_v1 rule engine", () => {
 
   it("uses the unrounded dimension values before final rounding", () => {
     const raw = rawAt(0);
-    for (const key of dimensionKeys) {
+    for (const key of rawDimensionKeys) {
       raw.dimensions[key].coefficient = 0.333;
       raw.dimensions[key].score = 6.7;
     }
-    raw.raw_total_score = 33.3;
-    raw.final_score = 33.3;
+    raw.overall_result.raw_total_score = 33.3;
+    raw.overall_result.final_score = 33.3;
 
     expect(normalize(raw).finalScore).toBe(33.3);
   });

@@ -6,18 +6,9 @@ import {
   type VideoQualityModelProvider,
 } from "../src/video-quality/video-quality.service.js";
 import type {
-  DimensionKey,
   PreparedVideoEvidence,
   RawVideoQcResultV1,
 } from "../src/video-quality/video-quality.types.js";
-
-const keys: DimensionKey[] = [
-  "first_person_and_composition",
-  "hand_forearm_object_integrity",
-  "frame_and_video_quality",
-  "task_authenticity_completeness",
-  "task_value_uniqueness",
-];
 
 function evidence(): PreparedVideoEvidence {
   return {
@@ -57,45 +48,50 @@ function evidence(): PreparedVideoEvidence {
 }
 
 function raw(reviewRequired = false): RawVideoQcResultV1 {
+  const confidence = reviewRequired ? 0.6 : 0.9;
   return {
-    schema_version: "video_qc_result_v1",
+    schema_version: "video_qc_v1",
     rule_version: "video_qc_v1",
-    prompt_version: "qwen_video_qc_prompt_v1",
-    video_id: "LAB-1",
-    evaluation_status: reviewRequired ? "review_pending" : "scored",
-    hard_veto: { triggered: false, reasons: [] },
-    detected_task: {
-      scene_id: "",
-      task_id: "task",
-      variant_id: "",
-      task_summary: "task",
-      confidence: reviewRequired ? 0.6 : 0.9,
+    prompt_version: "qwen_video_qc_prompt_v2",
+    task_id: "LAB-1",
+    evaluation_status: reviewRequired ? "review_pending" : "completed",
+    input_status: {
+      is_complete: true,
+      missing_required_inputs: [],
+      conflicts: [],
     },
+    task_summary: "task",
+    overall_result: {
+      raw_total_score: 80,
+      final_score: 80,
+      summary: "summary",
+    },
+    hard_reject: { triggered: false, reasons: [], candidates: [] },
     dimensions: Object.fromEntries(
-      keys.map((key) => [
+      (["D1", "D2", "D3", "D4", "D5"] as const).map((key) => [
         key,
         {
           coefficient: 0.8,
           score: 16,
-          confidence: reviewRequired ? 0.6 : 0.9,
-          calculation_trace: "20 × 0.8",
-          segments: [],
+          confidence,
+          metrics: {},
           issues: [],
         },
       ]),
     ) as unknown as RawVideoQcResultV1["dimensions"],
-    billing_observations: {
-      candidate_invalid_segments: [],
-      candidate_valid_waiting_segments: [],
+    review: {
+      review_required: reviewRequired,
+      review_reasons: reviewRequired ? ["置信度不足"] : [],
     },
-    raw_total_score: 80,
-    final_score: 80,
-    summary: "summary",
-    deductions: [],
+    duration_result: {
+      analysis_duration_ms: 30_000,
+      invalid_duration_ms: 0,
+      effective_duration_ms: 30_000,
+      effective_duration_ratio: 1,
+      invalid_segments: [],
+      necessary_wait_segments: [],
+    },
     recommendations: [],
-    review_required: reviewRequired,
-    review_reasons: reviewRequired ? ["置信度不足"] : [],
-    missing_inputs: [],
   };
 }
 
@@ -200,6 +196,13 @@ describe("video quality service", () => {
       "completed",
     ]);
     expect(reviewed.provider.review).toHaveBeenCalledOnce();
+    const reviewRequest = vi.mocked(reviewed.provider.review).mock.calls[0]?.[0];
+    expect(reviewRequest?.frames).toHaveLength(4);
+    expect(reviewRequest?.frames).toEqual(
+      expect.arrayContaining([
+        { timestampMs: 5_000, dataUrl: "data:image/jpeg;base64,BA==" },
+      ]),
+    );
     expect(result.modelRuns.map((run) => run.stage)).toEqual(["initial", "review"]);
 
     const failed = setup({ review: true, reviewFails: true });

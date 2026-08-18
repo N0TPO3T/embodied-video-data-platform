@@ -35,4 +35,10 @@ export class OperationsController {
   async reclaimTimedOutTasks(@CurrentUser() actor: PublicUser) {
     return await this.operations.reclaimTimedOutTasks(actor);
   }
+
+  @Post("workers/prune-inactive")
+  @UseGuards(AllowedOriginGuard, SensitiveActionRateLimitGuard)
+  async pruneInactiveWorkers(@CurrentUser() actor: PublicUser) {
+    return await this.operations.pruneInactiveWorkers(actor);
+  }
 }

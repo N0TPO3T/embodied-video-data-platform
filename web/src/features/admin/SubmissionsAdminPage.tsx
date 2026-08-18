@@ -48,7 +48,7 @@ function isActiveProcessing(submission: Submission): boolean {
 function canRerun(submission: Submission): boolean {
   return (
     submission.settlementStatus !== "settled" &&
-    submission.storageStatus !== "deleted" &&
+    submission.storageStatus === "available" &&
     ["awaiting_ai", "completed", "system_failed"].includes(
       submission.pipelineStage ?? "",
     )
@@ -87,19 +87,12 @@ function RenameSubmissionModal({
   onClose(): void;
   onRenamed(submission: BackendSubmission): void;
 }) {
-  const [fileName, setFileName] = useState("");
+  const [fileName, setFileName] = useState(submission?.fileName ?? "");
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const { notify } = useInteractions();
-
-  useEffect(() => {
-    if (!open) return;
-    setFileName(submission?.fileName ?? "");
-    setReason("");
-    setError("");
-  }, [open, submission]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -194,13 +187,6 @@ function DeleteSubmissionModal({
   const [saving, setSaving] = useState(false);
   const reasonRef = useRef<HTMLTextAreaElement>(null);
   const { notify } = useInteractions();
-
-  useEffect(() => {
-    if (!open) return;
-    setReason("");
-    setForce(false);
-    setError("");
-  }, [open, submission]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -305,12 +291,7 @@ export function SubmissionsAdminPage({
     });
 
   useEffect(() => {
-    setPage(1);
-  }, [query, status]);
-
-  useEffect(() => {
     let active = true;
-    setMode((current) => (current === "demo" ? current : "loading"));
     searchSubmissions({
       q: query,
       status,
@@ -376,6 +357,10 @@ export function SubmissionsAdminPage({
       ...current,
       total: Math.max(0, current.total - 1),
     }));
+    // 删除当前页最后一条时回到上一页，避免停留在空页
+    setPage((current) =>
+      submissions.length === 1 && current > 1 ? current - 1 : current,
+    );
     refresh();
   }
 
@@ -412,7 +397,7 @@ export function SubmissionsAdminPage({
           type="button"
           className="table-action"
           disabled={settled}
-          title={settled ? "已进入积分周期的数据不能重命名" : "修改列表显示文件名"}
+          title={settled ? "已进入结算的数据不能重命名" : "修改列表显示文件名"}
           onClick={() => setRenameTarget(item)}
         >
           <Pencil size={14} />
@@ -424,7 +409,7 @@ export function SubmissionsAdminPage({
           disabled={settled || active}
           title={
             settled
-              ? "已进入积分周期的数据不能删除"
+              ? "已进入结算的数据不能删除"
               : active
                 ? "正在处理的数据暂不能删除"
                 : "删除提交记录和文件对象"
@@ -456,9 +441,15 @@ export function SubmissionsAdminPage({
       <section className="content-card table-card">
         <FilterBar
           value={query}
-          onChange={setQuery}
+          onChange={(value) => {
+            setQuery(value);
+            setPage(1);
+          }}
           status={status}
-          onStatusChange={setStatus}
+          onStatusChange={(value) => {
+            setStatus(value);
+            setPage(1);
+          }}
           placeholder="搜索编号、视频、成员、团队或场景"
         />
         <div className="table-summary">
@@ -475,6 +466,7 @@ export function SubmissionsAdminPage({
         </div>
         <SubmissionTable
           submissions={submissions}
+          loading={mode === "loading"}
           showOwner
           renderActions={renderActions}
         />
@@ -510,18 +502,24 @@ export function SubmissionsAdminPage({
         onClose={() => setRerunTarget(null)}
         onRerun={handleUpdatedSubmission}
       />
-      <RenameSubmissionModal
-        open={renameTarget !== null}
-        submission={renameTarget}
-        onClose={() => setRenameTarget(null)}
-        onRenamed={handleUpdatedSubmission}
-      />
-      <DeleteSubmissionModal
-        open={deleteTarget !== null}
-        submission={deleteTarget}
-        onClose={() => setDeleteTarget(null)}
-        onDeleted={handleDeletedSubmission}
-      />
+      {renameTarget ? (
+        <RenameSubmissionModal
+          key={renameTarget.id}
+          open
+          submission={renameTarget}
+          onClose={() => setRenameTarget(null)}
+          onRenamed={handleUpdatedSubmission}
+        />
+      ) : null}
+      {deleteTarget ? (
+        <DeleteSubmissionModal
+          key={deleteTarget.id}
+          open
+          submission={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={handleDeletedSubmission}
+        />
+      ) : null}
     </div>
   );
 }

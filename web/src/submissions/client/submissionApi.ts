@@ -57,12 +57,33 @@ async function requestJson<T>(
   });
   if (response.status === 204) return undefined as T;
   const text = await response.text();
-  const payload = text ? (JSON.parse(text) as unknown) : {};
+  let payload: unknown = {};
+  if (text) {
+    try {
+      payload = JSON.parse(text) as unknown;
+    } catch {
+      payload = {};
+    }
+  }
   if (!response.ok) {
-    const error = payload as { code?: unknown; error?: unknown };
+    const error = payload as {
+      code?: unknown;
+      error?: unknown;
+      message?: unknown;
+    };
+    const validationMessage = Array.isArray(error.message)
+      ? error.message.filter((item): item is string => typeof item === "string").join("；")
+      : typeof error.message === "string"
+        ? error.message
+        : undefined;
+    const publicMessage =
+      validationMessage ||
+      (typeof error.error === "string" && error.error !== "Bad Request"
+        ? error.error
+        : "视频请求失败");
     throw new SubmissionApiError(
       response.status,
-      typeof error.error === "string" ? error.error : "视频请求失败",
+      publicMessage,
       typeof error.code === "string" ? error.code : undefined,
     );
   }

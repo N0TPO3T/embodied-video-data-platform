@@ -43,17 +43,14 @@ describe("team member interactions", () => {
     const user = userEvent.setup();
     const createObjectURL = vi.fn().mockReturnValue("blob:member-metrics");
     const revokeObjectURL = vi.fn();
-    let clickedAnchor: HTMLAnchorElement | undefined;
     vi.stubGlobal("URL", {
       ...URL,
       createObjectURL,
       revokeObjectURL,
     });
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
-      function click(this: HTMLAnchorElement) {
-        clickedAnchor = this;
-      },
-    );
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
     renderLeader("/team/members");
 
     await user.click(await screen.findByRole("button", { name: "导出统计" }));
@@ -63,7 +60,7 @@ describe("team member interactions", () => {
     await expect(blob.text()).resolves.toContain(
       '"成员","用户名","角色","状态","上传数","已质检数","通过数","未通过数","有效分钟","平均分","通过率(%)"',
     );
-    expect(clickedAnchor).toMatchObject({
+    expect(click.mock.instances[0]).toMatchObject({
       href: "blob:member-metrics",
       download: "星火一队-近 30 日成员统计.csv",
     });
@@ -118,11 +115,8 @@ describe("team member interactions", () => {
       await screen.findByRole("button", { name: "邀请成员" }),
     );
     expect(
-      screen.getByText("请前往“成员管理”新增数采账号"),
+      screen.getByRole("heading", { name: "成员管理" }),
     ).toBeVisible();
-    expect(
-      screen.queryByRole("dialog", { name: "邀请成员" }),
-    ).not.toBeInTheDocument();
   });
 
   it("shows real-data team points instead of simulated balances", () => {

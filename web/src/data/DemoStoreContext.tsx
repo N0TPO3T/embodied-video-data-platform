@@ -77,6 +77,7 @@ function authenticatedSeed(
     ),
   );
   const seed = structuredClone(demoSeed);
+  const hasBackendSnapshot = backendSubmissions !== undefined;
   return {
     ...seed,
     currentUserId: currentAccount.id,
@@ -95,9 +96,13 @@ function authenticatedSeed(
       };
     }),
     submissions:
-      backendSubmissions === undefined
+      !hasBackendSnapshot
         ? seed.submissions
-        : backendSubmissions.map(backendSubmissionToDomain),
+        : (backendSubmissions ?? []).map(backendSubmissionToDomain),
+    settlements: hasBackendSnapshot ? [] : seed.settlements,
+    deliveryPackages: hasBackendSnapshot ? [] : seed.deliveryPackages,
+    labels: hasBackendSnapshot ? [] : seed.labels,
+    operationLogs: hasBackendSnapshot ? [] : seed.operationLogs,
   };
 }
 

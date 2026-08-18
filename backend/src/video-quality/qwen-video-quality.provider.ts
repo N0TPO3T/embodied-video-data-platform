@@ -14,6 +14,9 @@ import type {
 
 type Fetcher = typeof fetch;
 
+const MIN_VIDEO_FRAME_COUNT = 4;
+const MAX_VIDEO_FRAME_COUNT = 8_000;
+
 type ChatMessage = {
   role: "system" | "user" | "assistant";
   content:
@@ -77,6 +80,67 @@ function redactedErrorText(value: string): string {
     .replace(/data:[^;,\s]+;base64,[A-Za-z0-9+/=]+/gu, "<data-url-redacted>")
     .replace(/\/(?:private\/)?tmp\/[A-Za-z0-9_./ -]+/gu, "<temp>")
     .slice(0, 500);
+}
+
+function assertVideoFrameCount(frames: TimestampedFrame[]): void {
+  if (
+    frames.length < MIN_VIDEO_FRAME_COUNT ||
+    frames.length > MAX_VIDEO_FRAME_COUNT
+  ) {
+    throw new BailianRequestError(
+      `视频序列帧数量不符合百炼要求：需要 ${MIN_VIDEO_FRAME_COUNT}–${MAX_VIDEO_FRAME_COUNT} 帧，实际 ${frames.length} 帧`,
+      400,
+      null,
+    );
+  }
+}
+
+async function httpErrorDetails(response: Response): Promise<{
+  code: string | null;
+  message: string | null;
+}> {
+  let text = "";
+  try {
+    text = await response.text();
+  } catch {
+    return { code: null, message: null };
+  }
+  let document: unknown;
+  try {
+    document = JSON.parse(text) as unknown;
+  } catch {
+    const message = redactedErrorText(text.trim());
+    return { code: null, message: message || null };
+  }
+  if (!document || typeof document !== "object") {
+    return { code: null, message: null };
+  }
+  const root = document as Record<string, unknown>;
+  const nested =
+    root.error && typeof root.error === "object"
+      ? (root.error as Record<string, unknown>)
+      : root;
+  const rawCode =
+    typeof nested.code === "string"
+      ? nested.code
+      : typeof root.code === "string"
+        ? root.code
+        : null;
+  const rawMessage =
+    typeof nested.message === "string"
+      ? nested.message
+      : typeof root.message === "string"
+        ? root.message
+        : null;
+  const message = rawMessage
+    ? /range of sequence images should be \(4,\s*8000\)/iu.test(rawMessage)
+      ? "视频序列帧数量不符合要求，需要 4–8000 帧"
+      : redactedErrorText(rawMessage)
+    : null;
+  return {
+    code: rawCode ? redactedErrorText(rawCode) : null,
+    message,
+  };
 }
 
 function errorDetails(error: unknown): {
@@ -205,6 +269,7 @@ export class QwenVideoQualityProvider {
     request: AnalyzeVideoQualityRequest,
     signal?: AbortSignal,
   ): Promise<ModelRunResult> {
+    assertVideoFrameCount(request.frames);
     const messages = this.messagesForAnalysis(request);
     return this.run({
       model: this.config.initialModel,
@@ -220,6 +285,7 @@ export class QwenVideoQualityProvider {
     request: ReviewVideoQualityRequest,
     signal?: AbortSignal,
   ): Promise<ModelRunResult> {
+    assertVideoFrameCount(request.frames);
     const messages = this.messagesForReview(request);
     return this.run({
       model: this.config.reviewModel,
@@ -322,7 +388,7 @@ export class QwenVideoQualityProvider {
             {
               type: "text",
               text: [
-                "上一个输出不符合 video_qc_result_v1。请只返回修正后的合法 JSON。",
+                `上一个输出不符合 ${this.prompt.outputSchema}。请只返回修正后的合法 JSON。`,
                 "必须严格保留下面 output_contract 的所有字段名和嵌套层级；没有内容的数组返回 []。",
                 ...validationIssues.slice(0, 20),
                 `output_contract=${JSON.stringify(this.prompt.outputExample)}`,
@@ -410,7 +476,11 @@ export class QwenVideoQualityProvider {
         });
         if (!response.ok) {
           const id = response.headers.get("x-request-id");
+          const details = await httpErrorDetails(response);
           const retryable = response.status === 429 || response.status >= 500;
+          const failureMessage = `百炼请求失败（HTTP ${response.status}${
+            details.code ? ` · ${details.code}` : ""
+          }）${details.message ? `：${details.message}` : ""}`;
           this.emitDiagnostic({
             taskId: input.taskId,
             modelStage: input.modelStage,
@@ -425,11 +495,11 @@ export class QwenVideoQualityProvider {
             requestId: id,
             retryable: retryable && attempt < delays.length - 1,
             errorName: "BailianRequestError",
-            errorCode: `HTTP_${response.status}`,
-            errorMessage: `百炼请求失败（HTTP ${response.status}）`,
+            errorCode: details.code ?? `HTTP_${response.status}`,
+            errorMessage: failureMessage,
           });
           const error = new BailianRequestError(
-            `百炼请求失败（HTTP ${response.status}）`,
+            failureMessage,
             response.status,
             id,
           );

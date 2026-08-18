@@ -10,6 +10,7 @@ import { AiQueuePage } from "../features/admin/AiQueuePage";
 import { AssetsPage } from "../features/admin/AssetsPage";
 import { AuditLogPage } from "../features/admin/AuditLogPage";
 import { PublicConfigPage } from "../features/admin/PublicConfigPage";
+import { AdminReviewDetailPage } from "../features/admin/AdminReviewDetailPage";
 import { QualityReviewPage } from "../features/admin/QualityReviewPage";
 import { RulesPage } from "../features/admin/RulesPage";
 import { SettlementPage } from "../features/admin/SettlementPage";
@@ -104,7 +105,7 @@ function AuthenticatedPlatformContent({
     else if (safePath === "/team/review") page = <ReviewPage />;
     else if (safePath === "/team/analytics") page = <TeamAnalyticsPage />;
     else if (safePath === "/team/income") page = <TeamIncomePage />;
-    else page = <TeamDashboard />;
+    else page = <TeamDashboard navigate={navigate} />;
   } else if (currentAccount.role === "admin") {
     if (safePath === "/admin/submissions") page = <SubmissionsAdminPage navigate={navigate} />;
     else if (safePath.startsWith("/admin/submissions/")) {
@@ -118,7 +119,15 @@ function AuthenticatedPlatformContent({
       );
     }
     else if (safePath === "/admin/ai") page = <AiQueuePage />;
-    else if (safePath === "/admin/review") page = <QualityReviewPage />;
+    else if (safePath === "/admin/review") page = <QualityReviewPage navigate={navigate} />;
+    else if (safePath.startsWith("/admin/review/")) {
+      page = (
+        <AdminReviewDetailPage
+          id={safePath.split("/").at(-1) ?? ""}
+          navigate={navigate}
+        />
+      );
+    }
     else if (safePath === "/admin/assets") page = <AssetsPage />;
     else if (safePath === "/admin/people") page = <UsersTeamsPage />;
     else if (safePath === "/admin/rules") page = <RulesPage />;

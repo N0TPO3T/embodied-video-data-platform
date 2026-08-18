@@ -8,8 +8,12 @@ import {
   publishPublicSiteSnapshot,
 } from "../../public-site/client/publicSiteApi";
 import type { PublicSiteSnapshot } from "../../public-site/contracts";
-import { demoPublicSiteSnapshot } from "../../public-site/demoPublicSite";
+import {
+  demoPublicSiteSnapshot,
+  unavailablePublicSiteSnapshot,
+} from "../../public-site/demoPublicSite";
 import { useInteractions } from "../../interactions/InteractionContext";
+import { demoFallbackEnabled } from "../../config/demoFallback";
 
 function formatNumber(value: number): string {
   return value.toLocaleString("zh-CN");
@@ -17,19 +21,27 @@ function formatNumber(value: number): string {
 
 function formatHours(seconds: number): string {
   if (seconds > 0 && seconds < 3_600) {
-    return `${Math.round(seconds / 60).toLocaleString("zh-CN")}m`;
+    return `${Math.round(seconds / 60).toLocaleString("zh-CN")} 分钟`;
   }
-  return `${Math.round(seconds / 3_600).toLocaleString("zh-CN")}h`;
+  return `${Math.round(seconds / 3_600).toLocaleString("zh-CN")} 小时`;
 }
 
 export function PublicConfigPage() {
   const { notify } = useInteractions();
   const [snapshot, setSnapshot] = useState<PublicSiteSnapshot>(
-    demoPublicSiteSnapshot,
+    demoFallbackEnabled
+      ? demoPublicSiteSnapshot
+      : unavailablePublicSiteSnapshot,
   );
-  const [mode, setMode] = useState<"loading" | "live" | "demo">("loading");
+  const [mode, setMode] = useState<
+    "loading" | "live" | "demo" | "unavailable"
+  >("loading");
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState(demoPublicSiteSnapshot.config);
+  const [form, setForm] = useState(
+    demoFallbackEnabled
+      ? demoPublicSiteSnapshot.config
+      : unavailablePublicSiteSnapshot.config,
+  );
 
   useEffect(() => {
     let active = true;
@@ -42,9 +54,12 @@ export function PublicConfigPage() {
       })
       .catch(() => {
         if (!active) return;
-        setSnapshot(demoPublicSiteSnapshot);
-        setForm(demoPublicSiteSnapshot.config);
-        setMode("demo");
+        const fallback = demoFallbackEnabled
+          ? demoPublicSiteSnapshot
+          : unavailablePublicSiteSnapshot;
+        setSnapshot(fallback);
+        setForm(fallback.config);
+        setMode(demoFallbackEnabled ? "demo" : "unavailable");
       });
     return () => {
       active = false;
@@ -76,7 +91,9 @@ export function PublicConfigPage() {
       ? `后端脱敏快照 V${snapshot.revision}`
       : mode === "loading"
         ? "正在读取公开快照"
-        : "当前显示演示快照";
+        : mode === "demo"
+          ? "当前显示演示快照"
+          : "公开快照服务不可用";
 
   return (
     <div className="page-stack">
@@ -160,7 +177,7 @@ export function PublicConfigPage() {
               }
             />
           </label>
-          <button className="button button-primary" type="submit" disabled={saving}>
+          <button className="button button-primary" type="submit" disabled={saving || mode === "unavailable"}>
             {saving ? <RefreshCw size={16} /> : <Save size={16} />}
             {saving ? "正在生成快照" : "保存公开配置"}
           </button>

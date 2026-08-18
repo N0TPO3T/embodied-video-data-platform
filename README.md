@@ -128,7 +128,7 @@ docker compose up -d --build
 如果只调试账号等 API，可以用 Docker 启动五个基础服务，再使用本机 Node 启动后端：
 
 ```bash
-docker compose up -d postgres redis rabbitmq minio qdrant
+docker compose up -d postgres redis rabbitmq minio
 
 cd backend
 pnpm install
@@ -146,7 +146,7 @@ pnpm start:local
 docker compose --profile ai-test up --build ai-quality-lab
 ```
 
-打开 `http://localhost:4010`，可一次选择多个 MP4/MOV；浏览器和服务端都最多同时处理 2 条。页面使用 `docs/quality/` 中的 `video_qc_v1` 评分规则与 `qwen_video_qc_prompt_v1` 提示词，初检固定调用 `qwen3.7-plus`，满足复核条件时调用 `qwen3.7-flash`。系统提示词可直接在页面编辑并发布新版本；每个新任务会锁定创建时的提示词版本，之后的修改不会影响已上传或历史任务。
+打开 `http://localhost:4010`，可一次选择多个 MP4/MOV；浏览器和服务端都最多同时处理 2 条。页面使用 `docs/quality/` 中的 `video_qc_v1` 评分规则与 `qwen_video_qc_prompt_v2` 提示词，初检固定调用 `qwen3.7-plus`，满足复核条件时调用 `qwen3.7-flash`。系统提示词可直接在页面编辑并发布新版本；每个新任务会锁定创建时的提示词版本，之后的修改不会影响已上传或历史任务。
 
 实验模式不写正式数据库。每次上传由服务端生成固定的 `LAB-...` 任务 ID；页面刷新后会从本地历史恢复，容器重启后仍可查询。点击左侧历史任务即可在右侧切换对应评分详情，任务缩略卡会显示总分。任务状态、评分结果、当前提示词和脱敏百炼调用诊断通过 Docker 命名卷持久化，任务数据保留 30 天，也可以在页面手动删除并下载单项或整批 JSON。诊断包含每次尝试的阶段、模型、耗时、HTTP 状态、百炼 `request_id` 和底层网络错误码，但不保存 API Key、Authorization 请求头、Base64 帧、请求正文或完整模型回复。
 

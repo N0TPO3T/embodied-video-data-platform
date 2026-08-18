@@ -25,6 +25,7 @@ import { VideoQualityPromptVersionEntity } from "./entities/video-quality-prompt
 import { VideoQualityResultEntity } from "./entities/video-quality-result.entity.js";
 import { WorkerHeartbeatEntity } from "./entities/worker-heartbeat.entity.js";
 import { AiQuality2026081200003 } from "./migrations/202608120003-ai-quality.js";
+import { AiQualityProgressStuck2026081700001 } from "./migrations/202608170001-ai-quality-progress-stuck.js";
 import { DeliveryPackages2026081300006 } from "./migrations/202608130006-delivery-packages.js";
 import { DeliveryArchiveTasks2026081300020 } from "./migrations/202608130020-delivery-archive-tasks.js";
 import { HlsPreviewAssets2026081300021 } from "./migrations/202608130021-hls-preview-assets.js";
@@ -42,6 +43,8 @@ import { SensitiveVideoQuarantine2026081300017 } from "./migrations/202608130017
 import { SubmissionDuplicateCandidates2026081300022 } from "./migrations/202608130022-submission-duplicate-candidates.js";
 import { RuleRuntimeSnapshots2026081300023 } from "./migrations/202608130023-rule-runtime-snapshots.js";
 import { DeliveryArchiveTaskLeases2026081300024 } from "./migrations/202608130024-delivery-archive-task-leases.js";
+import { SubmissionStorageRecovery2026081300025 } from "./migrations/202608130025-submission-storage-recovery.js";
+import { UploadCompletingStatus2026081300026 } from "./migrations/202608130026-upload-completing-status.js";
 import { ObjectStorageGovernance2026081300018 } from "./migrations/202608130018-object-storage-governance.js";
 import { UploadAuthorization2026081300016 } from "./migrations/202608130016-upload-authorization.js";
 import { VideoIngestion2026080700002 } from "./migrations/202608070002-video-ingestion.js";
@@ -109,6 +112,9 @@ export function createDataSource(
       SubmissionDuplicateCandidates2026081300022,
       RuleRuntimeSnapshots2026081300023,
       DeliveryArchiveTaskLeases2026081300024,
+      SubmissionStorageRecovery2026081300025,
+      UploadCompletingStatus2026081300026,
+      AiQualityProgressStuck2026081700001,
     ],
     synchronize: false,
     logging: false,

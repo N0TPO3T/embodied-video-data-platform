@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { BadgeCheck, Clock3, FileVideo, Users } from "lucide-react";
+import { BadgeCheck, Clock3, FileVideo, Timer } from "lucide-react";
 import { MetricCard } from "../../components/MetricCard";
 import { useIdentity } from "../../auth/client/IdentityContext";
 import { useDemoStore } from "../../data/DemoStoreContext";
@@ -38,7 +38,11 @@ function countFailedTasks(submissions: Submission[]): number {
   ).length;
 }
 
-export function TeamDashboard() {
+export function TeamDashboard({
+  navigate,
+}: {
+  navigate?(path: string): void;
+}) {
   const { accounts, currentAccount, teams } = useIdentity();
   const { state } = useDemoStore();
   const { notify } = useInteractions();
@@ -59,7 +63,6 @@ export function TeamDashboard() {
 
   useEffect(() => {
     let active = true;
-    setMode((current) => (current === "demo" ? current : "loading"));
     loadAllSubmissions({ status: "all" })
       .then((result) => {
         if (!active) return;
@@ -83,6 +86,7 @@ export function TeamDashboard() {
   const maxUploads = Math.max(1, ...trend.map((record) => record.uploads));
   const pendingReview = countPendingReview(teamSubmissions);
   const failedTasks = countFailedTasks(teamSubmissions);
+  const totalUploads = trend.reduce((total, record) => total + record.uploads, 0);
 
   return (
     <div className="page-stack">
@@ -106,7 +110,13 @@ export function TeamDashboard() {
           </span>
           <button
             className="button button-primary"
-            onClick={() => notify("info", "请前往“成员管理”新增数采账号")}
+            onClick={() => {
+              if (navigate) {
+                navigate("/team/members");
+              } else {
+                notify("info", "请前往“成员管理”新增数采账号");
+              }
+            }}
           >
             邀请成员
           </button>
@@ -138,7 +148,7 @@ export function TeamDashboard() {
           label="高分有效时长"
           value={formatDuration(monthMetrics.highScoreEffectiveSeconds)}
           detail={`80 分及以上 · 通过率 ${formatRate(monthMetrics.passRate)}`}
-          icon={Users}
+          icon={Timer}
         />
       </div>
       <div className="dashboard-grid">
@@ -150,13 +160,20 @@ export function TeamDashboard() {
             </div>
           </div>
           <div className="large-chart-placeholder" aria-label="近 7 日上传趋势">
-            {trend.map((record) => (
-              <i
-                key={record.date}
-                title={`${record.date} · ${record.uploads} 条 · ${formatDuration(record.effectiveSeconds)}`}
-                style={{ height: trendHeight(record.uploads, maxUploads) }}
-              />
-            ))}
+            {totalUploads === 0 ? (
+              <span className="chart-empty-hint">近 7 日暂无上传数据</span>
+            ) : (
+              trend.map((record) => (
+                <div
+                  className="chart-column"
+                  key={record.date}
+                  title={`${record.date} · ${record.uploads} 条 · ${formatDuration(record.effectiveSeconds)}`}
+                >
+                  <i style={{ height: trendHeight(record.uploads, maxUploads) }} />
+                  <span>{record.date.slice(5)}</span>
+                </div>
+              ))
+            )}
           </div>
         </section>
         <aside className="content-card">

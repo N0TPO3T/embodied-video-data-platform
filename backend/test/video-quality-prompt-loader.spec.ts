@@ -16,92 +16,168 @@ afterEach(async () => {
   );
 });
 
+const VALID_MANIFEST = {
+  promptVersion: "qwen_video_qc_prompt_v2",
+  ruleVersion: "video_qc_v1",
+  outputSchema: "video_qc_v1",
+  initialModel: "qwen3.7-plus",
+  reviewModel: "qwen3.7-flash",
+  files: {
+    systemPrompt: "system.txt",
+    outputExample: "output-example.json",
+  },
+};
+
+const VALID_OUTPUT_EXAMPLE = {
+  schema_version: "video_qc_v1",
+  rule_version: "video_qc_v1",
+  prompt_version: "qwen_video_qc_prompt_v2",
+  task_id: "",
+  evaluation_status: "completed",
+  hard_reject: { triggered: false, reasons: [], candidates: [] },
+  dimensions: { D5: { score: 0, coefficient: 0 } },
+};
+
+async function makePromptDirectory(
+  files: {
+    manifest?: unknown;
+    systemPrompt?: string;
+    outputExample?: unknown;
+  } = {},
+): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), "evdp-prompt-test-"));
+  temporaryDirectories.push(directory);
+  await writeFile(
+    join(directory, "manifest.json"),
+    `${JSON.stringify(files.manifest ?? VALID_MANIFEST, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    join(directory, "system.txt"),
+    files.systemPrompt ?? "system prompt",
+    "utf8",
+  );
+  await writeFile(
+    join(directory, "output-example.json"),
+    `${JSON.stringify(files.outputExample ?? VALID_OUTPUT_EXAMPLE, null, 2)}\n`,
+    "utf8",
+  );
+  return directory;
+}
+
 describe("video quality prompt loader", () => {
-  it("loads the committed V1 system prompt and model metadata", async () => {
+  it("loads the committed V1 prompt directory from its manifest", async () => {
     const prompt = await loadVideoQualityPrompt(
       resolve(
         process.cwd(),
-        "../docs/quality/qwen-video-ai-quality-prompt-v1.md",
+        "../docs/quality/prompts/qwen-video-ai-quality-prompt-v1/manifest.json",
       ),
     );
 
-    expect(prompt.promptVersion).toBe("qwen_video_qc_prompt_v1");
+    expect(prompt.promptVersion).toBe("qwen_video_qc_prompt_v2");
     expect(prompt.ruleVersion).toBe("video_qc_v1");
-    expect(prompt.outputSchema).toBe("video_qc_result_v1");
+    expect(prompt.outputSchema).toBe("video_qc_v1");
     expect(prompt.initialModel).toBe("qwen3.7-plus");
     expect(prompt.reviewModel).toBe("qwen3.7-flash");
     expect(prompt.systemPrompt).toContain("具身视频数据质量评估器");
-    expect(prompt.systemPrompt).toContain("请用中文输出");
+    expect(prompt.systemPrompt).toContain("简体中文");
     expect(prompt.systemPrompt).not.toContain("## 用户输入模板");
-    expect(prompt.outputExample.schema_version).toBe("video_qc_result_v1");
-    expect(prompt.outputExample).toHaveProperty("hard_veto.triggered", false);
-    expect(prompt.outputExample).toHaveProperty(
-      "dimensions.task_value_uniqueness",
-    );
+    expect(prompt.outputExample.schema_version).toBe("video_qc_v1");
+    expect(prompt.outputExample).toHaveProperty("hard_reject.triggered", false);
+    expect(prompt.outputExample).toHaveProperty("dimensions.D5");
     expect(prompt.contentSha256).toMatch(/^[a-f0-9]{64}$/u);
   });
 
-  it("rejects a prompt document without the system prompt block", async () => {
+  it("accepts a directory path and resolves its manifest.json", async () => {
+    const directory = await makePromptDirectory();
+    const prompt = await loadVideoQualityPrompt(directory);
+    expect(prompt.promptVersion).toBe("qwen_video_qc_prompt_v2");
+    expect(prompt.systemPrompt).toContain("system prompt");
+  });
+
+  it("rejects a manifest that is not valid JSON", async () => {
     const directory = await mkdtemp(join(tmpdir(), "evdp-prompt-test-"));
     temporaryDirectories.push(directory);
-    const path = join(directory, "bad.md");
-    await writeFile(
-      path,
-      [
-        "提示词版本：`qwen_video_qc_prompt_v1`",
-        "适配规则：`video_qc_v1`",
-        "推荐模型：`qwen3.7-plus`",
-        "复核模型：`qwen3.7-flash`",
-      ].join("\n"),
-      "utf8",
+    await writeFile(join(directory, "manifest.json"), "not json", "utf8");
+    await expect(loadVideoQualityPrompt(directory)).rejects.toThrow(
+      "manifest 不是合法 JSON",
     );
+  });
 
-    await expect(loadVideoQualityPrompt(path)).rejects.toThrow("系统提示词");
+  it("rejects a manifest missing required metadata", async () => {
+    const directory = await makePromptDirectory({
+      manifest: {
+        ...VALID_MANIFEST,
+        promptVersion: undefined,
+      },
+    });
+    await expect(loadVideoQualityPrompt(directory)).rejects.toThrow(
+      "缺少或无效：promptVersion",
+    );
   });
 
   it("rejects unsupported prompt and rule versions", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "evdp-prompt-test-"));
-    temporaryDirectories.push(directory);
-    const path = join(directory, "bad-version.md");
-    await writeFile(
-      path,
-      [
-        "提示词版本：`qwen_video_qc_prompt_v2`",
-        "适配规则：`video_qc_v2`",
-        "推荐模型：`qwen3.7-plus`",
-        "复核模型：`qwen3.7-flash`",
-        "## 系统提示词",
-        "```text",
-        "system prompt",
-        "```",
-        "requested_output_schema: video_qc_result_v2",
-      ].join("\n"),
-      "utf8",
-    );
-
-    await expect(loadVideoQualityPrompt(path)).rejects.toThrow("不支持");
+    const directory = await makePromptDirectory({
+      manifest: {
+        ...VALID_MANIFEST,
+        promptVersion: "qwen_video_qc_prompt_v3",
+        ruleVersion: "video_qc_v2",
+      },
+      systemPrompt: "system prompt",
+      outputExample: { ...VALID_OUTPUT_EXAMPLE, schema_version: "video_qc_v2" },
+    });
+    await expect(loadVideoQualityPrompt(directory)).rejects.toThrow("不支持");
   });
 
-  it("rejects a supported prompt without its standard output contract", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "evdp-prompt-test-"));
-    temporaryDirectories.push(directory);
-    const path = join(directory, "missing-output.md");
-    await writeFile(
-      path,
-      [
-        "提示词版本：`qwen_video_qc_prompt_v1`",
-        "适配规则：`video_qc_v1`",
-        "推荐模型：`qwen3.7-plus`",
-        "复核模型：`qwen3.7-flash`",
-        "## 系统提示词",
-        "```text",
-        "system prompt",
-        "```",
-        '"requested_output_schema": "video_qc_result_v1"',
-      ].join("\n"),
-      "utf8",
+  it("rejects a manifest referencing a missing system prompt file", async () => {
+    const directory = await makePromptDirectory({
+      manifest: {
+        ...VALID_MANIFEST,
+        files: {
+          systemPrompt: "missing.txt",
+          outputExample: "output-example.json",
+        },
+      },
+      outputExample: VALID_OUTPUT_EXAMPLE,
+    });
+    await expect(loadVideoQualityPrompt(directory)).rejects.toThrow(
+      "系统提示词正文",
     );
+  });
 
-    await expect(loadVideoQualityPrompt(path)).rejects.toThrow("标准输出结构");
+  it("rejects a prompt without a standard output contract", async () => {
+    const directory = await makePromptDirectory({
+      manifest: {
+        ...VALID_MANIFEST,
+        files: {
+          systemPrompt: "system.txt",
+          outputExample: "missing.json",
+        },
+      },
+      systemPrompt: "system prompt",
+    });
+    await expect(loadVideoQualityPrompt(directory)).rejects.toThrow(
+      "标准输出结构",
+    );
+  });
+
+  it("rejects an output contract whose schema does not match", async () => {
+    const directory = await makePromptDirectory({
+      systemPrompt: "system prompt",
+      outputExample: { ...VALID_OUTPUT_EXAMPLE, schema_version: "video_qc_result_v2" },
+    });
+    await expect(loadVideoQualityPrompt(directory)).rejects.toThrow(
+      "与 requested_output_schema 不一致",
+    );
+  });
+
+  it("rejects an empty system prompt body", async () => {
+    const directory = await makePromptDirectory({
+      systemPrompt: "   ",
+      outputExample: VALID_OUTPUT_EXAMPLE,
+    });
+    await expect(loadVideoQualityPrompt(directory)).rejects.toThrow(
+      "系统提示词正文为空",
+    );
   });
 });

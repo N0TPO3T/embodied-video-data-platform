@@ -11,7 +11,7 @@ export function MetricCard({
   value: string;
   detail: string;
   icon: LucideIcon;
-  tone?: "blue" | "violet" | "green" | "amber";
+  tone?: "blue" | "violet" | "green" | "amber" | "red";
 }) {
   return (
     <article className="metric-card">

@@ -79,7 +79,7 @@ describe("public configuration page", () => {
     renderAdmin();
 
     expect(await screen.findByLabelText("可交付视频")).toHaveValue("2");
-    expect(screen.getByLabelText("有效数据时长")).toHaveValue("3m");
+    expect(screen.getByLabelText("有效数据时长")).toHaveValue("3 分钟");
     expect(screen.getByLabelText("高频作业场景")).toHaveValue("2");
     expect(screen.getByDisplayValue("66.7%")).toBeVisible();
     expect(screen.getByDisplayValue("后端家庭操作")).toBeVisible();

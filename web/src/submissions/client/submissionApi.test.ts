@@ -4,6 +4,7 @@ import type { BackendSubmission } from "../contracts";
 import {
   getSubmissionPreview,
   loadAllSubmissions,
+  submissionUploadApi,
   submissionsExportUrl,
 } from "./submissionApi";
 
@@ -39,6 +40,34 @@ describe("submission API client", () => {
       hls: {
         url: "http://localhost:4000/api/v1/submissions/SUB-001/preview/hls/master.m3u8",
       },
+    });
+  });
+
+  it("shows validation details instead of the generic Bad Request label", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          statusCode: 400,
+          error: "Bad Request",
+          message: ["单个视频不能超过 2 GiB"],
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    await expect(
+      submissionUploadApi.createUpload({
+        fileName: "oversized.mp4",
+        contentType: "video/mp4",
+        sizeBytes: 2 * 1024 ** 3 + 1,
+        checksumSha256: "a".repeat(64),
+        dataUsageAuthorized: true,
+        privacyConfirmed: true,
+        sensitiveContentConfirmed: true,
+      }),
+    ).rejects.toMatchObject({
+      status: 400,
+      message: "单个视频不能超过 2 GiB",
     });
   });
 

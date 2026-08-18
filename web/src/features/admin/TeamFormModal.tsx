@@ -143,7 +143,10 @@ export function TeamFormModal({
           <button
             type="submit"
             className="button button-primary"
-            disabled={submitting}
+            disabled={
+              submitting ||
+              (mode === "edit" && status === "disabled" && memberCount > 0)
+            }
           >
             {submitting ? "保存中…" : mode === "create" ? "创建团队" : "保存团队"}
           </button>
