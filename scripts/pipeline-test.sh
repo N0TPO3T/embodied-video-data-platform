@@ -14,7 +14,7 @@ docker run --rm -v /tmp:/out evdp-media-worker:latest ffmpeg -y -loglevel error 
 ls -la /tmp/pipeline-test.mp4
 FILE=/tmp/pipeline-test.mp4
 
-PW=$(grep '^ceshirenyuan1=' /root/evdp-initial-credentials.txt | cut -d= -f2)
+PW=${COLLECTOR_PASSWORD:?需要设置 COLLECTOR_PASSWORD 环境变量}
 echo '== 1. login =='
 curl -s -c "$JAR" -X POST "$BASE/auth/login" -H 'Content-Type: application/json' -H "$ORIGIN" \
   -d "{\"username\":\"ceshirenyuan1\",\"password\":\"$PW\"}" >/dev/null
