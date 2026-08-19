@@ -50,6 +50,8 @@ const durationSegmentSchema = z
     confidence: boundedCoefficient,
     evidence_timestamps_ms: z.array(nonNegativeTime),
     source: z.string().optional(),
+    // 模型可能在无效片段上附带严重级别；仅作提示信息，服务端不依赖。
+    severity: z.enum(["info", "minor", "major", "critical"]).optional(),
   })
   .strict();
 
