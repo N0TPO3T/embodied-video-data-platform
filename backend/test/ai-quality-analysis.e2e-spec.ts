@@ -67,7 +67,7 @@ function scored(videoId: string): NormalizedVideoQcResultV1 {
   return {
     schemaVersion: "video_qc_v1",
     ruleVersion: "video_qc_v1",
-    promptVersion: "qwen_video_qc_prompt_v2",
+    promptVersion: "qwen_video_qc_prompt_v3",
     videoId,
     evaluationStatus: "scored",
     dimensions: {} as NormalizedVideoQcResultV1["dimensions"],
@@ -197,6 +197,40 @@ describe("AI quality analysis persistence", () => {
       dataSource.getRepository(LabelSetVersionEntity),
       {} as AuditService,
     );
+    const scarcityConfigService = {
+      getActive: async () => ({
+        id: "SC-test",
+        revision: 1,
+        version: "SCARCITY-TEST",
+        enabled: true,
+        tiers: [
+          { id: "t1", minCount: 0, maxCount: 5, coefficient: 1, label: "稀缺" },
+          { id: "t2", minCount: 6, maxCount: null, coefficient: 0.9, label: "较多" },
+        ],
+        weights: { scene: 0.2, standardTask: 0.5, variant: 0.3 },
+        description: "test",
+        createdByAccountId: "u",
+        createdByName: "t",
+        createdAt: new Date(),
+      }),
+    };
+    const inventoryService = {
+      buildInventoryContext: async () => ({
+        snapshot_id: "inventory-test",
+        mode: "cold_start",
+        authoritative_coefficient: 1,
+        c_scene: 1,
+        c_standard_task: 1,
+        c_variant: 1,
+        current_video_excluded: true,
+        scene_inventory_count: null,
+        task_inventory_count: null,
+        variant_inventory_count: null,
+        scene_name: null,
+        task_name: null,
+        variant_name: null,
+      }),
+    };
     evaluate = vi.fn(async (input: { videoId: string }) => scored(input.videoId));
     const evaluatorFactory: AiQualityEvaluatorFactory = (prompt) => {
       evaluatorPrompts.push(prompt);
@@ -209,6 +243,8 @@ describe("AI quality analysis persistence", () => {
       promptService,
       qualityRuleService,
       labelSetService,
+      scarcityConfigService as never,
+      inventoryService as never,
       new TestStorage(),
       evaluatorFactory,
     );

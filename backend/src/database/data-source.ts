@@ -15,6 +15,7 @@ import { PointCycleEntity } from "./entities/point-cycle.entity.js";
 import { PointCycleItemEntity } from "./entities/point-cycle-item.entity.js";
 import { PointRuleVersionEntity } from "./entities/point-rule-version.entity.js";
 import { PublicSiteSnapshotEntity } from "./entities/public-site-snapshot.entity.js";
+import { ScarcityConfigEntity } from "./entities/scarcity-config.entity.js";
 import { QualityRuleVersionEntity } from "./entities/quality-rule-version.entity.js";
 import { SessionEntity } from "./entities/session.entity.js";
 import { SubmissionDuplicateCandidateEntity } from "./entities/submission-duplicate-candidate.entity.js";
@@ -26,6 +27,7 @@ import { VideoQualityResultEntity } from "./entities/video-quality-result.entity
 import { WorkerHeartbeatEntity } from "./entities/worker-heartbeat.entity.js";
 import { AiQuality2026081200003 } from "./migrations/202608120003-ai-quality.js";
 import { AiQualityProgressStuck2026081700001 } from "./migrations/202608170001-ai-quality-progress-stuck.js";
+import { ScarcityConfigAndMediaScene2026081900001 } from "./migrations/202608190001-scarcity-config-and-media-scene.js";
 import { DeliveryPackages2026081300006 } from "./migrations/202608130006-delivery-packages.js";
 import { DeliveryArchiveTasks2026081300020 } from "./migrations/202608130020-delivery-archive-tasks.js";
 import { HlsPreviewAssets2026081300021 } from "./migrations/202608130021-hls-preview-assets.js";
@@ -75,6 +77,7 @@ export const identityEntities = [
   DeliveryPackageItemEntity,
   DeliveryArchiveTaskEntity,
   PublicSiteSnapshotEntity,
+  ScarcityConfigEntity,
 ];
 
 export function createDataSource(
@@ -115,6 +118,7 @@ export function createDataSource(
       SubmissionStorageRecovery2026081300025,
       UploadCompletingStatus2026081300026,
       AiQualityProgressStuck2026081700001,
+      ScarcityConfigAndMediaScene2026081900001,
     ],
     synchronize: false,
     logging: false,

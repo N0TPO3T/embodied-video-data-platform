@@ -6,6 +6,7 @@ import type { ReviewWindow } from "./media-preprocessor.js";
 import { buildVideoQcInput } from "./video-qc-input.js";
 import { normalizeVideoQcResult } from "./video-qc-rule-engine.js";
 import type {
+  InventoryContextInput,
   NormalizedVideoQcResultV1,
   PreparedVideoEvidence,
   QualityStage,
@@ -44,6 +45,10 @@ export type EvaluateVideoQualityRequest = {
   filePath: string;
   workDirectory: string;
   registerSha256: (sha256: string) => boolean;
+  /** 库存稀缺度上下文（D5 维度）；缺省时 cold_start 不惩罚不奖励 */
+  inventoryContext?: InventoryContextInput;
+  /** 场景/动作/对象标签字典（供模型结构化分类） */
+  labelDictionary?: string[];
 };
 
 export type QualityProgressObserver = (stage: QualityStage) => void;
@@ -158,6 +163,8 @@ export class VideoQualityService {
       videoId: request.videoId,
       evidence,
       exactBatchDuplicate,
+      inventoryContext: request.inventoryContext,
+      labelDictionary: request.labelDictionary,
     });
 
     observer("initial_review");

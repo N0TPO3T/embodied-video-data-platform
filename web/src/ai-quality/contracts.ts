@@ -50,3 +50,43 @@ export type LabelSet = {
 };
 
 export type UpdateLabelInput = Pick<LabelSetItem, "id" | "name" | "enabled">;
+
+export type CreateLabelInput = {
+  name: string;
+  type: LabelSetItem["type"];
+  enabled: boolean;
+};
+
+export type ScarcityTier = {
+  id: string;
+  minCount: number;
+  maxCount: number | null;
+  coefficient: number;
+  label: string;
+};
+
+export type ScarcityWeights = {
+  scene: number;
+  standardTask: number;
+  variant: number;
+};
+
+export type ScarcityConfig = {
+  id: string;
+  revision: number;
+  version: string;
+  enabled: boolean;
+  tiers: ScarcityTier[];
+  weights: ScarcityWeights;
+  description: string;
+  createdByAccountId: string;
+  createdByName: string;
+  createdAt: number;
+};
+
+export type PublishScarcityConfigInput = {
+  enabled: boolean;
+  tiers: ScarcityTier[];
+  weights: ScarcityWeights;
+  description: string;
+};

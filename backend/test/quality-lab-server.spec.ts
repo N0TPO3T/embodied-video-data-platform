@@ -37,7 +37,7 @@ function result(videoId: string): NormalizedVideoQcResultV1 {
   return {
     schemaVersion: "video_qc_v1",
     ruleVersion: "video_qc_v1",
-    promptVersion: "qwen_video_qc_prompt_v2",
+    promptVersion: "qwen_video_qc_prompt_v3",
     videoId,
     evaluationStatus: "scored",
     dimensions: {} as NormalizedVideoQcResultV1["dimensions"],
@@ -113,7 +113,7 @@ describe("quality lab server", () => {
     const committedPrompt: LoadedVideoQualityPrompt = {
       systemPrompt: "video_qc_v1 初始规则，返回 JSON。",
       outputExample: { schema_version: "video_qc_v1" },
-      promptVersion: "qwen_video_qc_prompt_v2",
+      promptVersion: "qwen_video_qc_prompt_v3",
       ruleVersion: "video_qc_v1",
       outputSchema: "video_qc_v1",
       initialModel: "qwen3.7-plus",
@@ -169,7 +169,7 @@ describe("quality lab server", () => {
     const committedPrompt: LoadedVideoQualityPrompt = {
       systemPrompt: "video_qc_v1 初始规则，返回 JSON。",
       outputExample: {},
-      promptVersion: "qwen_video_qc_prompt_v2",
+      promptVersion: "qwen_video_qc_prompt_v3",
       ruleVersion: "video_qc_v1",
       outputSchema: "video_qc_v1",
       initialModel: "qwen3.7-plus",

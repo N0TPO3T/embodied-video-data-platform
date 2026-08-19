@@ -42,6 +42,8 @@ import {
 } from "./ai-quality.tokens.js";
 import { LabelSetService } from "./label-set.service.js";
 import { QualityRuleService } from "./quality-rule.service.js";
+import { InventoryService } from "./inventory.service.js";
+import { ScarcityConfigService } from "./scarcity-config.service.js";
 import {
   evaluationSystemPrompt,
   promptContentSha256,
@@ -237,6 +239,8 @@ export class AiQualityAnalysisService {
     private readonly prompts: AiQualityPromptService,
     private readonly qualityRules: QualityRuleService,
     private readonly labelSets: LabelSetService,
+    private readonly scarcityConfigs: ScarcityConfigService,
+    private readonly inventory: InventoryService,
     @Inject(OBJECT_STORAGE)
     private readonly storage: ObjectStoragePort,
     @Inject(AI_QUALITY_EVALUATOR_FACTORY)
@@ -317,6 +321,23 @@ export class AiQualityAnalysisService {
           initialModel: task.result.initialModel,
           reviewModel: task.result.reviewModel,
         });
+        const [scarcityConfig, labelSet] = await Promise.all([
+          this.scarcityConfigs.getActive(),
+          this.labelSets.getActiveLabelSetForWorker(),
+        ]);
+        const inventoryContext = await this.inventory.buildInventoryContext(
+          task.submission.id,
+          scarcityConfig,
+        );
+        const labelDictionary = (labelSet?.labels ?? [])
+          .filter(
+            (label) =>
+              label.enabled &&
+              (label.type === "scene" ||
+                label.type === "action" ||
+                label.type === "object"),
+          )
+          .map((label) => label.name);
         const normalized = await abortable(
           evaluator.evaluate(
             {
@@ -331,6 +352,8 @@ export class AiQualityAnalysisService {
                 }
                 return exactDuplicate;
               },
+              inventoryContext,
+              labelDictionary,
             },
             (stage) => {
               const progress = qualityProgressFromStage(stage);
@@ -342,6 +365,7 @@ export class AiQualityAnalysisService {
           ),
           input.signal,
         );
+        await this.persistDetectedScene(task.submission.id, normalized);
         await this.complete(
           task.submission.id,
           exactDuplicate ? enforceExactDuplicate(normalized) : normalized,
@@ -537,6 +561,36 @@ export class AiQualityAnalysisService {
       .addOrderBy("submission.id", "ASC")
       .getOne();
     return canonical !== null && canonical.id !== submissionId;
+  }
+
+  /**
+   * 把 AI 识别的场景/任务/变体分类写入媒体元数据，供库存快照统计使用。
+   * 模型未输出分类或输出不在字典内的 id 时不写入（保持 null）。
+   */
+  private async persistDetectedScene(
+    submissionId: string,
+    normalized: NormalizedVideoQcResultV1,
+  ): Promise<void> {
+    const task = normalized.detectedTask;
+    if (!task) return;
+    const updates: Partial<{
+      sceneId: string | null;
+      taskId: string | null;
+      variantId: string | null;
+    }> = {};
+    if (typeof task.scene_id === "string" && task.scene_id.trim()) {
+      updates.sceneId = task.scene_id.trim().slice(0, 64);
+    }
+    if (typeof task.standard_task_id === "string" && task.standard_task_id.trim()) {
+      updates.taskId = task.standard_task_id.trim().slice(0, 64);
+    }
+    if (typeof task.variant_id === "string" && task.variant_id.trim()) {
+      updates.variantId = task.variant_id.trim().slice(0, 64);
+    }
+    if (Object.keys(updates).length === 0) return;
+    await this.dataSource
+      .getRepository(MediaMetadataEntity)
+      .update({ submissionId }, updates);
   }
 
   private async complete(

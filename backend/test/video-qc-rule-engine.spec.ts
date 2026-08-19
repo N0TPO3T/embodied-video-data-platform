@@ -78,7 +78,7 @@ function rawAt(
   return {
     schema_version: "video_qc_v1",
     rule_version: "video_qc_v1",
-    prompt_version: "qwen_video_qc_prompt_v2",
+    prompt_version: "qwen_video_qc_prompt_v3",
     task_id: "LAB-1",
     evaluation_status: status,
     input_status: {

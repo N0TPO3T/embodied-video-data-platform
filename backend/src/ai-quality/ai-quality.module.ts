@@ -4,14 +4,18 @@ import { TypeOrmModule } from "@nestjs/typeorm";
 import { AuditModule } from "../audit/audit.module.js";
 import { AuthModule } from "../auth/auth.module.js";
 import { LabelSetVersionEntity } from "../database/entities/label-set-version.entity.js";
+import { MediaMetadataEntity } from "../database/entities/media-metadata.entity.js";
 import { QualityRuleVersionEntity } from "../database/entities/quality-rule-version.entity.js";
+import { ScarcityConfigEntity } from "../database/entities/scarcity-config.entity.js";
 import { VideoQualityPromptVersionEntity } from "../database/entities/video-quality-prompt-version.entity.js";
 import { AllowedOriginGuard } from "../http/allowed-origin.guard.js";
 import { SecurityModule } from "../security/security.module.js";
 import { AiQualityController } from "./ai-quality.controller.js";
 import { AiQualityPromptService } from "./ai-quality-prompt.service.js";
+import { InventoryService } from "./inventory.service.js";
 import { LabelSetService } from "./label-set.service.js";
 import { QualityRuleService } from "./quality-rule.service.js";
+import { ScarcityConfigService } from "./scarcity-config.service.js";
 
 @Module({
   imports: [
@@ -19,6 +23,8 @@ import { QualityRuleService } from "./quality-rule.service.js";
       VideoQualityPromptVersionEntity,
       QualityRuleVersionEntity,
       LabelSetVersionEntity,
+      ScarcityConfigEntity,
+      MediaMetadataEntity,
     ]),
     AuthModule,
     AuditModule,
@@ -29,8 +35,16 @@ import { QualityRuleService } from "./quality-rule.service.js";
     AiQualityPromptService,
     QualityRuleService,
     LabelSetService,
+    ScarcityConfigService,
+    InventoryService,
     AllowedOriginGuard,
   ],
-  exports: [AiQualityPromptService, QualityRuleService, LabelSetService],
+  exports: [
+    AiQualityPromptService,
+    QualityRuleService,
+    LabelSetService,
+    ScarcityConfigService,
+    InventoryService,
+  ],
 })
 export class AiQualityModule {}

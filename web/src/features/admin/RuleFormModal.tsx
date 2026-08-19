@@ -8,6 +8,7 @@ import {
 } from "react";
 import {
   AiQualityApiError,
+  createQualityLabel,
   createQualityRule,
   updateQualityLabel,
 } from "../../ai-quality/client/aiQualityApi";
@@ -17,6 +18,13 @@ import { demoFallbackEnabled } from "../../config/demoFallback";
 import { useDemoStore } from "../../data/DemoStoreContext";
 import type { LabelConfig } from "../../domain/types";
 import { useInteractions } from "../../interactions/InteractionContext";
+
+const labelTypes: Array<{ value: LabelConfig["type"]; label: string }> = [
+  { value: "scene", label: "场景" },
+  { value: "action", label: "动作" },
+  { value: "object", label: "对象" },
+  { value: "issue", label: "质量问题" },
+];
 
 export function RuleFormModal({
   open,
@@ -29,7 +37,7 @@ export function RuleFormModal({
   returnFocusRef,
 }: {
   open: boolean;
-  mode: "rule" | "label";
+  mode: "rule" | "label" | "label-create";
   label?: LabelConfig;
   currentRule?: Pick<QualityRule, "passThreshold">;
   onRulePublished?(rule: QualityRule): void;
@@ -45,6 +53,9 @@ export function RuleFormModal({
   );
   const [description, setDescription] = useState("");
   const [labelName, setLabelName] = useState(label?.name ?? "");
+  const [labelType, setLabelType] = useState<LabelConfig["type"]>(
+    label?.type ?? "scene",
+  );
   const [enabled, setEnabled] = useState(label?.enabled ?? true);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -104,6 +115,21 @@ export function RuleFormModal({
           createRuleVersion(input);
         }
         notify("success", "规则版本已发布");
+      } else if (mode === "label-create") {
+        const input = { name: labelName.trim(), type: labelType, enabled };
+        try {
+          const published = await createQualityLabel(input);
+          onLabelSetPublished?.(published);
+        } catch (caught) {
+          if (
+            !demoFallbackEnabled ||
+            (caught instanceof AiQualityApiError && caught.status < 500)
+          ) {
+            throw caught;
+          }
+          updateLabel({ id: "", name: input.name, enabled: input.enabled });
+        }
+        notify("success", "标签已新增");
       } else if (label) {
         const input = { id: label.id, name: labelName.trim(), enabled };
         try {
@@ -131,7 +157,7 @@ export function RuleFormModal({
   return (
     <Modal
       open={open}
-      title={mode === "rule" ? "新建规则版本" : "编辑标签"}
+      title={mode === "rule" ? "新建规则版本" : mode === "label-create" ? "新增标签" : "编辑标签"}
       onClose={close}
       returnFocusRef={returnFocusRef}
       initialFocusRef={firstInputRef}
@@ -158,6 +184,16 @@ export function RuleFormModal({
               标签名称
               <input ref={firstInputRef} value={labelName} onChange={(event) => setLabelName(event.target.value)} required />
             </label>
+            {mode === "label-create" && (
+              <label>
+                标签类型
+                <select value={labelType} onChange={(event) => setLabelType(event.target.value as LabelConfig["type"])}>
+                  {labelTypes.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className="checkbox-field">
               <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
               启用标签

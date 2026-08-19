@@ -13,6 +13,10 @@ const promptApi = vi.hoisted(() => ({
   createRule: vi.fn(),
   getLabelSet: vi.fn(),
   updateLabel: vi.fn(),
+  createLabel: vi.fn(),
+  deleteLabel: vi.fn(),
+  getScarcityConfig: vi.fn(),
+  publishScarcityConfig: vi.fn(),
 }));
 
 vi.mock("../../ai-quality/client/aiQualityApi", () => ({
@@ -22,6 +26,10 @@ vi.mock("../../ai-quality/client/aiQualityApi", () => ({
   createQualityRule: promptApi.createRule,
   getLabelSet: promptApi.getLabelSet,
   updateQualityLabel: promptApi.updateLabel,
+  createQualityLabel: promptApi.createLabel,
+  deleteQualityLabel: promptApi.deleteLabel,
+  getScarcityConfig: promptApi.getScarcityConfig,
+  publishScarcityConfig: promptApi.publishScarcityConfig,
 }));
 
 const currentPrompt = {
@@ -109,6 +117,21 @@ describe("administrator rule configuration", () => {
         createdByName: "平台管理员",
       }));
     promptApi.getLabelSet.mockReset().mockResolvedValue(currentLabelSet);
+    promptApi.getScarcityConfig.mockReset().mockResolvedValue({
+      id: "SC-1",
+      revision: 1,
+      version: "SCARCITY-2026-08",
+      enabled: true,
+      tiers: [
+        { id: "t1", minCount: 0, maxCount: 5, coefficient: 1, label: "稀缺" },
+        { id: "t2", minCount: 6, maxCount: null, coefficient: 0.9, label: "较多" },
+      ],
+      weights: { scene: 0.2, standardTask: 0.5, variant: 0.3 },
+      description: "稀缺奖励配置",
+      createdByAccountId: "U-ADMIN",
+      createdByName: "平台管理员",
+      createdAt: 1,
+    });
     promptApi.updateLabel
       .mockReset()
       .mockImplementation(async (input) => ({

@@ -1,5 +1,5 @@
 export const VIDEO_QC_RULE_VERSION = "video_qc_v1" as const;
-export const VIDEO_QC_PROMPT_VERSION = "qwen_video_qc_prompt_v2" as const;
+export const VIDEO_QC_PROMPT_VERSION = "qwen_video_qc_prompt_v3" as const;
 export const VIDEO_QC_INPUT_SCHEMA = "video_qc_input_v1" as const;
 export const VIDEO_QC_RESULT_SCHEMA = "video_qc_v1" as const;
 
@@ -70,15 +70,21 @@ export type VideoQcInputV1 = {
     expected_task_id: string;
     expected_variant_id: string;
     prohibited_content_policy: string[];
+    /** 场景/动作/对象标签字典（供模型从中选择分类） */
+    label_dictionary: string[];
   };
   inventory_context: {
     snapshot_id: string;
-    mode: "cold_start";
-    authoritative_coefficient: 1;
-    c_scene: 1;
-    c_standard_task: 1;
-    c_variant: 1;
-    current_video_excluded: true;
+    mode: "cold_start" | "live_snapshot";
+    authoritative_coefficient: number;
+    c_scene: number;
+    c_standard_task: number;
+    c_variant: number;
+    current_video_excluded: boolean;
+    /** live_snapshot 模式下各层级的有效存量 */
+    scene_inventory_count?: number | null;
+    task_inventory_count?: number | null;
+    variant_inventory_count?: number | null;
   };
   similarity_context: {
     snapshot_id: string;
@@ -100,6 +106,19 @@ export type VideoQcInputV1 = {
 export type TimestampedFrame = {
   timestampMs: number;
   dataUrl: string;
+};
+
+/** 调用方注入的库存稀缺度上下文（由 InventoryService 构建） */
+export type InventoryContextInput = {
+  snapshot_id: string;
+  mode: "cold_start" | "live_snapshot";
+  authoritative_coefficient: number;
+  c_scene: number;
+  c_standard_task: number;
+  c_variant: number;
+  scene_inventory_count?: number | null;
+  task_inventory_count?: number | null;
+  variant_inventory_count?: number | null;
 };
 
 export type DimensionKey =
@@ -173,6 +192,12 @@ export type RawVideoQcResultV1 = {
     necessary_wait_segments: Array<RawDurationSegment>;
   };
   recommendations: string[];
+  /** 模型按标签字典输出的结构化任务分类（v3 提示词起） */
+  detectedTask?: {
+    scene_id?: string | null;
+    standard_task_id?: string | null;
+    variant_id?: string | null;
+  } | null;
 };
 
 export type RawDimensionKey = "D1" | "D2" | "D3" | "D4" | "D5";
@@ -216,6 +241,12 @@ export type DetectedTaskSummary = {
   task_id: string;
   task_summary: string;
   confidence: number | null;
+  /** 从标签字典中选择的场景分类 */
+  scene_id?: string | null;
+  /** 从标签字典中选择的动作/标准任务分类 */
+  standard_task_id?: string | null;
+  /** 从标签字典中选择的任务变体分类 */
+  variant_id?: string | null;
 };
 
 export type ValidationReport = {

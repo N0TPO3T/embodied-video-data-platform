@@ -1,8 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
+  Post,
   Put,
   Res,
   UseFilters,
@@ -17,14 +19,19 @@ import { AllowedOriginGuard } from "../http/allowed-origin.guard.js";
 import { IdentityFailureFilter } from "../identity/identity-failure.filter.js";
 import { SensitiveActionRateLimitGuard } from "../security/sensitive-action-rate-limit.guard.js";
 import { AiQualityPromptService } from "./ai-quality-prompt.service.js";
-import { UpdateLabelDto } from "./dto/label-set.dto.js";
+import { CreateLabelDto, UpdateLabelDto } from "./dto/label-set.dto.js";
 import { CreateQualityRuleDto } from "./dto/quality-rule.dto.js";
+import { PublishScarcityConfigDto } from "./dto/scarcity-config.dto.js";
 import { UpdateAiQualityPromptDto } from "./dto/update-ai-quality-prompt.dto.js";
 import { LabelSetService, publicLabelSet } from "./label-set.service.js";
 import {
   publicQualityRule,
   QualityRuleService,
 } from "./quality-rule.service.js";
+import {
+  publicScarcityConfig,
+  ScarcityConfigService,
+} from "./scarcity-config.service.js";
 
 function publicPrompt(prompt: Awaited<ReturnType<AiQualityPromptService["getActive"]>>) {
   return {
@@ -50,6 +57,7 @@ export class AiQualityController {
     private readonly prompts: AiQualityPromptService,
     private readonly rules: QualityRuleService,
     private readonly labelSets: LabelSetService,
+    private readonly scarcityConfigs: ScarcityConfigService,
   ) {}
 
   @Get("prompt")
@@ -121,6 +129,59 @@ export class AiQualityController {
     return {
       labelSet: publicLabelSet(
         await this.labelSets.updateLabel(actor, { ...input, id }),
+      ),
+    };
+  }
+
+  @Post("labels")
+  @UseGuards(AllowedOriginGuard, SensitiveActionRateLimitGuard)
+  async createLabel(
+    @CurrentUser() actor: PublicUser,
+    @Body() input: CreateLabelDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    response.setHeader("Cache-Control", "no-store");
+    return {
+      labelSet: publicLabelSet(await this.labelSets.createLabel(actor, input)),
+    };
+  }
+
+  @Delete("labels/:id")
+  @UseGuards(AllowedOriginGuard, SensitiveActionRateLimitGuard)
+  async deleteLabel(
+    @CurrentUser() actor: PublicUser,
+    @Param("id") id: string,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    response.setHeader("Cache-Control", "no-store");
+    return {
+      labelSet: publicLabelSet(await this.labelSets.deleteLabel(actor, id)),
+    };
+  }
+
+  @Get("scarcity-config")
+  async getScarcityConfig(
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    response.setHeader("Cache-Control", "no-store");
+    return {
+      scarcityConfig: publicScarcityConfig(
+        await this.scarcityConfigs.getActive(),
+      ),
+    };
+  }
+
+  @Put("scarcity-config")
+  @UseGuards(AllowedOriginGuard, SensitiveActionRateLimitGuard)
+  async publishScarcityConfig(
+    @CurrentUser() actor: PublicUser,
+    @Body() input: PublishScarcityConfigDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    response.setHeader("Cache-Control", "no-store");
+    return {
+      scarcityConfig: publicScarcityConfig(
+        await this.scarcityConfigs.publish(actor, input),
       ),
     };
   }

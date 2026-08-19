@@ -11,7 +11,7 @@ const directories: string[] = [];
 const committedPrompt: LoadedVideoQualityPrompt = {
   systemPrompt: "video_qc_v1 请用中文输出合法 JSON。",
   outputExample: { schema_version: "video_qc_v1" },
-  promptVersion: "qwen_video_qc_prompt_v2",
+  promptVersion: "qwen_video_qc_prompt_v3",
   ruleVersion: "video_qc_v1",
   outputSchema: "video_qc_v1",
   initialModel: "qwen3.7-plus",

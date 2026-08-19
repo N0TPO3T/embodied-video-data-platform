@@ -23,7 +23,7 @@ function rawResult(): RawVideoQcResultV1 {
   return {
     schema_version: "video_qc_v1",
     rule_version: "video_qc_v1",
-    prompt_version: "qwen_video_qc_prompt_v2",
+    prompt_version: "qwen_video_qc_prompt_v3",
     task_id: "LAB-1",
     evaluation_status: "completed",
     input_status: {
@@ -88,7 +88,7 @@ function response(
 const prompt: LoadedVideoQualityPrompt = {
   systemPrompt: "system prompt",
   outputExample: rawResult() as unknown as Record<string, unknown>,
-  promptVersion: "qwen_video_qc_prompt_v2",
+  promptVersion: "qwen_video_qc_prompt_v3",
   ruleVersion: "video_qc_v1",
   outputSchema: "video_qc_v1",
   initialModel: "qwen3.7-plus",

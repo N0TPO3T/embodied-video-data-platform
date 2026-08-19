@@ -351,6 +351,18 @@ export function normalizeVideoQcResult(
       task_id: input.raw.task_id,
       task_summary: input.raw.task_summary,
       confidence: null,
+      scene_id:
+        typeof input.raw.detectedTask?.scene_id === "string"
+          ? input.raw.detectedTask.scene_id
+          : null,
+      standard_task_id:
+        typeof input.raw.detectedTask?.standard_task_id === "string"
+          ? input.raw.detectedTask.standard_task_id
+          : null,
+      variant_id:
+        typeof input.raw.detectedTask?.variant_id === "string"
+          ? input.raw.detectedTask.variant_id
+          : null,
     },
     deductions,
     recommendations: input.raw.recommendations,

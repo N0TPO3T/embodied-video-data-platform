@@ -59,6 +59,18 @@ export class MediaMetadataEntity {
   @Column({ name: "preview_object_key", type: "text", nullable: true })
   previewObjectKey: string | null = null;
 
+  /** AI 质检识别的场景分类（来自 label set 字典） */
+  @Column({ name: "scene_id", type: "varchar", length: 64, nullable: true })
+  sceneId: string | null = null;
+
+  /** AI 质检识别的标准任务分类 */
+  @Column({ name: "task_id", type: "varchar", length: 64, nullable: true })
+  taskId: string | null = null;
+
+  /** AI 质检识别的任务变体分类 */
+  @Column({ name: "variant_id", type: "varchar", length: 64, nullable: true })
+  variantId: string | null = null;
+
   @Column({ name: "hls_master_object_key", type: "text", nullable: true })
   hlsMasterObjectKey: string | null = null;
 

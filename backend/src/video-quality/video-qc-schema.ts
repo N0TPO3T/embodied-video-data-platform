@@ -113,6 +113,14 @@ export const rawVideoQcResultSchema = z
       })
       .strict(),
     recommendations: z.array(z.string()),
+    detectedTask: z
+      .object({
+        scene_id: z.string().nullable().optional(),
+        standard_task_id: z.string().nullable().optional(),
+        variant_id: z.string().nullable().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

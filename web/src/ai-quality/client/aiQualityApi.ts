@@ -1,8 +1,11 @@
 import type {
   AiQualityPrompt,
+  CreateLabelInput,
   CreateQualityRuleInput,
   LabelSet,
+  PublishScarcityConfigInput,
   QualityRule,
+  ScarcityConfig,
   UpdateLabelInput,
 } from "../contracts";
 
@@ -121,4 +124,49 @@ export async function updateQualityLabel(
     },
   );
   return payload.labelSet;
+}
+
+export async function createQualityLabel(
+  input: CreateLabelInput,
+): Promise<LabelSet> {
+  const payload = await requestJson<{ labelSet: LabelSet }>(
+    "/ai-quality/labels",
+    "标签新增失败",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+  );
+  return payload.labelSet;
+}
+
+export async function deleteQualityLabel(id: string): Promise<LabelSet> {
+  const payload = await requestJson<{ labelSet: LabelSet }>(
+    `/ai-quality/labels/${encodeURIComponent(id)}`,
+    "标签删除失败",
+    { method: "DELETE" },
+  );
+  return payload.labelSet;
+}
+
+export async function getScarcityConfig(): Promise<ScarcityConfig> {
+  const payload = await requestJson<{ scarcityConfig: ScarcityConfig }>(
+    "/ai-quality/scarcity-config",
+    "稀缺奖励配置请求失败",
+  );
+  return payload.scarcityConfig;
+}
+
+export async function publishScarcityConfig(
+  input: PublishScarcityConfigInput,
+): Promise<ScarcityConfig> {
+  const payload = await requestJson<{ scarcityConfig: ScarcityConfig }>(
+    "/ai-quality/scarcity-config",
+    "稀缺奖励配置保存失败",
+    {
+      method: "PUT",
+      body: JSON.stringify(input),
+    },
+  );
+  return payload.scarcityConfig;
 }

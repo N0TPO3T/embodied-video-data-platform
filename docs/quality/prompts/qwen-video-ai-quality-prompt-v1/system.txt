@@ -241,6 +241,15 @@ S_segment = 0.70 × matched_duration_ratio + 0.30 × temporal_order_similarity
 
 禁止自行猜测库存或相似度。
 
+【7.1 任务分类输出】
+
+调用方会在 task_context.label_dictionary 中提供"场景 / 动作 / 对象"标签字典（以名称列表给出）。
+
+- 必须依据视频内容从字典中分别选择最匹配的：scene_id（场景）、standard_task_id（动作/标准任务）、variant_id（任务变体，可省略）。
+- 输出的是标签名称本身（必须与字典中的名称完全一致，禁止自创或改写名称）。
+- 字典中无匹配项时：对应字段输出 null，并明确告知，不得编造。
+- 分类用于库存稀缺度统计，分类错误会直接影响采集者奖励，置信度不足时必须进入 review_pending。
+
 【8. 人工复核与状态】
 
 以下任一情况需要人工复核：任一维度 confidence < 0.75；疑似硬性否决；模型与确定性结果冲突；S_total >= 0.92；任务分类置信度不足；缺少必要输入；用户申诉。
@@ -334,6 +343,11 @@ source：visual_model | technical_metrics | deterministic_detector | inventory_c
     "conflicts": []
   },
   "task_summary": "<中文任务摘要>",
+  "detectedTask": {
+    "scene_id": "<字典中的场景名称或 null>",
+    "standard_task_id": "<字典中的动作名称或 null>",
+    "variant_id": "<字典中的变体名称或 null>"
+  },
   "overall_result": {
     "raw_total_score": 86.47,
     "final_score": 86.5,

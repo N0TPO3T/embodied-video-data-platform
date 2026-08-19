@@ -3,32 +3,43 @@
 import { BadgeCheck, Bot, CircleGauge, Tags } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
+  deleteQualityLabel,
   getLabelSet,
   getQualityRule,
+  getScarcityConfig,
 } from "../../ai-quality/client/aiQualityApi";
-import type { LabelSet, QualityRule } from "../../ai-quality/contracts";
+import type { LabelSet, QualityRule, ScarcityConfig } from "../../ai-quality/contracts";
 import { StatusBadge } from "../../components/StatusBadge";
 import { demoFallbackEnabled } from "../../config/demoFallback";
 import { useDemoStore } from "../../data/DemoStoreContext";
 import type { LabelConfig } from "../../domain/types";
+import { useInteractions } from "../../interactions/InteractionContext";
 import { RuleFormModal } from "./RuleFormModal";
 import { AiSystemPromptCard } from "./AiSystemPromptCard";
+import { ScarcityConfigModal } from "./ScarcityConfigModal";
 
 const typeLabel = { scene: "场景", action: "动作", object: "对象", issue: "质量问题" };
 
 export function RulesPage() {
   const { state } = useDemoStore();
+  const { notify } = useInteractions();
   const [qualityRule, setQualityRule] = useState<QualityRule>();
   const [labelSet, setLabelSet] = useState<LabelSet>();
+  const [scarcityConfig, setScarcityConfig] = useState<ScarcityConfig>();
   const [ruleMode, setRuleMode] = useState<
     "loading" | "live" | "demo" | "unavailable"
   >(
     "loading",
   );
   const [ruleOpen, setRuleOpen] = useState(false);
+  const [labelCreateOpen, setLabelCreateOpen] = useState(false);
+  const [scarcityOpen, setScarcityOpen] = useState(false);
   const [selectedLabel, setSelectedLabel] = useState<LabelConfig>();
+  const [deletingLabelId, setDeletingLabelId] = useState<string>();
   const ruleTriggerRef = useRef<HTMLButtonElement>(null);
   const labelTriggerRef = useRef<HTMLButtonElement>(null);
+  const labelCreateTriggerRef = useRef<HTMLButtonElement>(null);
+  const scarcityTriggerRef = useRef<HTMLButtonElement>(null);
   const visibleRule = qualityRule ?? {
     version: state.rule.version,
     passThreshold: state.rule.passThreshold,
@@ -67,10 +78,35 @@ export function RulesPage() {
         if (!active) return;
         setLabelSet(undefined);
       });
+    getScarcityConfig()
+      .then((config) => {
+        if (!active) return;
+        setScarcityConfig(config);
+      })
+      .catch(() => {
+        if (!active) return;
+        setScarcityConfig(undefined);
+      });
     return () => {
       active = false;
     };
   }, []);
+
+  async function handleDeleteLabel(label: LabelConfig) {
+    if (!window.confirm(`确定删除标签「${label.name}」？该操作会发布一个新的标签体系版本。`)) {
+      return;
+    }
+    setDeletingLabelId(label.id);
+    try {
+      const next = await deleteQualityLabel(label.id);
+      setLabelSet(next);
+      notify("success", "标签已删除");
+    } catch (reason) {
+      notify("error", reason instanceof Error ? reason.message : "删除失败，请重试");
+    } finally {
+      setDeletingLabelId(undefined);
+    }
+  }
 
   return (
     <div className="page-stack">
@@ -86,15 +122,26 @@ export function RulesPage() {
       </div>
       <AiSystemPromptCard />
       <section className="content-card table-card">
-        <div className="card-heading"><div><h2>核心标签</h2><p>场景、动作、对象和质量问题标签</p></div></div>
+        <div className="card-heading"><div><h2>核心标签</h2><p>场景、动作、对象和质量问题标签（AI 质检据此做任务分类）</p></div><button ref={labelCreateTriggerRef} className="button button-secondary" onClick={() => setLabelCreateOpen(true)}>新增标签</button></div>
         <div className="table-scroll"><table className="data-table"><thead><tr><th>编号</th><th>标签名称</th><th>类型</th><th>关联视频</th><th>状态</th><th/></tr></thead><tbody>
           {visibleLabels.map((label) => (
-            <tr key={label.id}><td>{label.id}</td><td><strong>{label.name}</strong></td><td>{typeLabel[label.type]}</td><td>{label.associationCount} 条</td><td><StatusBadge label={label.enabled ? "启用" : "停用"} tone={label.enabled ? "success" : "neutral"}/></td><td><button className="table-action" onClick={(event) => { labelTriggerRef.current = event.currentTarget; setSelectedLabel(label); }}>编辑</button></td></tr>
+            <tr key={label.id}><td>{label.id}</td><td><strong>{label.name}</strong></td><td>{typeLabel[label.type]}</td><td>{label.associationCount} 条</td><td><StatusBadge label={label.enabled ? "启用" : "停用"} tone={label.enabled ? "success" : "neutral"}/></td><td><span className="row-actions"><button className="table-action" onClick={(event) => { labelTriggerRef.current = event.currentTarget; setSelectedLabel(label); }}>编辑</button><button className="table-action danger" disabled={deletingLabelId === label.id} onClick={() => void handleDeleteLabel(label)}>{deletingLabelId === label.id ? "删除中…" : "删除"}</button></span></td></tr>
           ))}
         </tbody></table></div>
       </section>
+      <section className="content-card table-card">
+        <div className="card-heading"><div><h2>稀缺奖励</h2><p>按场景/任务/变体有效存量分档计酬，存量越少奖励越高</p></div>{scarcityConfig ? <button ref={scarcityTriggerRef} className="button button-secondary" onClick={() => setScarcityOpen(true)}>编辑配置（V{scarcityConfig.revision}）</button> : null}</div>
+        <div className="table-scroll"><table className="data-table"><thead><tr><th>档位</th><th>存量区间</th><th>系数</th><th>状态</th></tr></thead><tbody>
+          {(scarcityConfig?.tiers ?? []).map((tier) => (
+            <tr key={tier.id}><td><strong>{tier.label}</strong></td><td>{tier.minCount} — {tier.maxCount === null ? "∞" : tier.maxCount} 条</td><td>{tier.coefficient.toFixed(2)}</td><td><StatusBadge label={scarcityConfig?.enabled ? "启用" : "停用"} tone={scarcityConfig?.enabled ? "success" : "neutral"}/></td></tr>
+          ))}
+          {!scarcityConfig ? <tr><td colSpan={4}>稀缺奖励配置读取失败或不可用</td></tr> : null}
+        </tbody></table></div>
+      </section>
       {ruleOpen && <RuleFormModal open mode="rule" currentRule={qualityRule} onRulePublished={(rule) => { setQualityRule(rule); setRuleMode("live"); }} onClose={() => setRuleOpen(false)} returnFocusRef={ruleTriggerRef} />}
+      {labelCreateOpen && <RuleFormModal open mode="label-create" onLabelSetPublished={setLabelSet} onClose={() => setLabelCreateOpen(false)} returnFocusRef={labelCreateTriggerRef} />}
       {selectedLabel && <RuleFormModal open mode="label" label={selectedLabel} onLabelSetPublished={setLabelSet} onClose={() => setSelectedLabel(undefined)} returnFocusRef={labelTriggerRef} />}
+      {scarcityOpen && scarcityConfig && <ScarcityConfigModal open config={scarcityConfig} onPublished={setScarcityConfig} onClose={() => setScarcityOpen(false)} returnFocusRef={scarcityTriggerRef} />}
     </div>
   );
 }

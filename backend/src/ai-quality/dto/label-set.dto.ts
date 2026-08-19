@@ -2,6 +2,7 @@ import {
   IsBoolean,
   IsIn,
   IsInt,
+  IsOptional,
   IsString,
   Max,
   MaxLength,
@@ -22,6 +23,20 @@ export class UpdateLabelDto {
 
   @IsBoolean()
   enabled!: boolean;
+}
+
+export class CreateLabelDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  name!: string;
+
+  @IsIn(["scene", "action", "object", "issue"])
+  type!: "scene" | "action" | "object" | "issue";
+
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
 }
 
 export class LabelSetItemDto extends UpdateLabelDto {

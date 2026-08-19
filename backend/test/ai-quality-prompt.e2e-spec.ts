@@ -126,7 +126,7 @@ describe("AI quality prompt API", () => {
     expect(response.headers["cache-control"]).toContain("no-store");
     expect(response.body.prompt).toMatchObject({
       revision: 1,
-      promptVersion: "qwen_video_qc_prompt_v2",
+      promptVersion: "qwen_video_qc_prompt_v3",
       ruleVersion: "video_qc_v1",
       outputSchema: "video_qc_v1",
       initialModel: "qwen3.7-plus",
