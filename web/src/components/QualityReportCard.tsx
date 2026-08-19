@@ -14,7 +14,6 @@ import {
 } from "../ai-quality/dimensionLabels";
 import type { BackendSubmissionPreview } from "../submissions/contracts";
 import { effectiveDuration } from "../domain/calculations";
-import { formatDuration } from "../features/team/teamMetrics";
 import type { Submission } from "../domain/types";
 import { AiQualityProgress } from "./AiQualityProgress";
 
@@ -50,7 +49,7 @@ function formatSeconds(seconds: number): string {
   const rounded = Math.max(0, Math.round(seconds));
   const minutes = Math.floor(rounded / 60);
   const rest = rounded % 60;
-  return minutes > 0 ? `${minutes}分${rest}秒` : `${rest}秒`;
+  return minutes > 0 ? `${minutes}分${String(rest).padStart(2, "0")}秒` : `${rest}秒`;
 }
 
 export function QualityReportCard({
@@ -71,7 +70,6 @@ export function QualityReportCard({
     ? Object.entries(quality.dimensions)
     : [];
   const issues = submission.issues;
-  const invalidSeconds = submission.invalidSeconds;
   const totalSeconds = Math.max(1, submission.durationSeconds);
 
   return (
@@ -115,8 +113,8 @@ export function QualityReportCard({
         </div>
       </div>
       <div className="report-metrics">
-        <div><small>有效时长</small><strong>{formatDuration(effectiveDuration(submission.durationSeconds, submission.invalidSeconds))}</strong></div>
-        <div><small>无效时长</small><strong>{invalidSeconds} 秒</strong></div>
+        <div><small>有效时长</small><strong>{formatSeconds(effectiveDuration(submission.durationSeconds, submission.invalidSeconds))}</strong></div>
+        <div><small>无效时长</small><strong>{formatSeconds(submission.invalidSeconds)}</strong></div>
         <div><small>预计积分</small><strong>{pointsLabel}</strong></div>
         <div><small>问题区间</small><strong>{issues.length} 处</strong></div>
       </div>
