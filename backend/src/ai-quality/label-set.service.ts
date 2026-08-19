@@ -108,10 +108,15 @@ export class LabelSetService {
       if (!creator) {
         throw new Error("初始化标签体系前必须存在启用的管理员账号");
       }
+      const latest = await repository
+        .createQueryBuilder("labelSet")
+        .select("MAX(labelSet.revision)", "max")
+        .getRawOne<{ max: string | null }>();
+      const nextRevision = Number(latest?.max ?? 0) + 1;
       return repository.save({
         id: `LSV-${randomUUID()}`,
-        revision: 1,
-        version: "LABELS-2026-08",
+        revision: nextRevision,
+        version: `LABELS-REV-${nextRevision}`,
         labels: DEFAULT_LABELS,
         active: true,
         createdByAccountId: creator.id,

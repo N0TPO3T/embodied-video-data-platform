@@ -92,10 +92,15 @@ export class ScarcityConfigService {
       if (!creator) {
         throw new Error("初始化稀缺奖励配置前必须存在启用的管理员账号");
       }
+      const latest = await repository
+        .createQueryBuilder("scarcityConfig")
+        .select("MAX(scarcityConfig.revision)", "max")
+        .getRawOne<{ max: string | null }>();
+      const nextRevision = Number(latest?.max ?? 0) + 1;
       return repository.save({
         id: `SC-${randomUUID()}`,
-        revision: 1,
-        version: "SCARCITY-2026-08",
+        revision: nextRevision,
+        version: `SCARCITY-REV-${nextRevision}`,
         enabled: true,
         tiers: DEFAULT_SCARCITY_TIERS,
         weights: DEFAULT_SCARCITY_WEIGHTS,
