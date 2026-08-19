@@ -1,5 +1,6 @@
 FROM node:22-alpine AS dependencies
 WORKDIR /app
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 RUN apk add --no-cache python3 make g++
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -13,6 +14,7 @@ RUN pnpm build
 FROM node:22-alpine AS runtime-base
 WORKDIR /app
 ENV NODE_ENV=production
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 RUN apk add --no-cache libstdc++ && corepack enable
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
