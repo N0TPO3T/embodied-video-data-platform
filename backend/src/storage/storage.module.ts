@@ -21,6 +21,8 @@ function required(name: string): string {
             publicEndpoint: required("MINIO_PUBLIC_ENDPOINT"),
             accessKey: required("MINIO_ACCESS_KEY"),
             secretKey: required("MINIO_SECRET_KEY"),
+            region: process.env.MINIO_REGION?.trim() || "us-east-1",
+            forcePathStyle: process.env.MINIO_FORCE_PATH_STYLE !== "false",
           },
         ),
     },

@@ -32,11 +32,13 @@ export class MinioObjectStorageService implements ObjectStoragePort {
       publicEndpoint?: string;
       accessKey: string;
       secretKey: string;
+      region?: string;
+      forcePathStyle?: boolean;
     },
   ) {
     const common = {
-      region: "us-east-1",
-      forcePathStyle: true,
+      region: input.region ?? "us-east-1",
+      forcePathStyle: input.forcePathStyle ?? true,
       requestChecksumCalculation: "WHEN_REQUIRED" as const,
       responseChecksumValidation: "WHEN_REQUIRED" as const,
       credentials: {
