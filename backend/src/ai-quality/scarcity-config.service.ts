@@ -173,10 +173,10 @@ export class ScarcityConfigService {
         const previous = sorted[index - 1]!;
         const previousUpper =
           previous.maxCount === null ? Number.POSITIVE_INFINITY : previous.maxCount;
-        if (tier.minCount <= previousUpper + 1) {
+        if (tier.minCount !== previousUpper + 1) {
           throw new IdentityFailure(
             "VALIDATION",
-            `档位 ${previous.label} 与 ${tier.label} 区间重叠或未覆盖`,
+            `档位 ${previous.label} 与 ${tier.label} 区间必须恰好衔接（上限+1 = 下一档下限）`,
             400,
           );
         }
