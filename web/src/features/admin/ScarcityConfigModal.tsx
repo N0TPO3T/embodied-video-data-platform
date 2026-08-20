@@ -67,7 +67,6 @@ export function ScarcityConfigModal({
     if (previous && previous.maxCount !== null) {
       tier.minCount = previous.maxCount + 1;
       tier.maxCount = null;
-      previous.maxCount = previous.maxCount;
     }
     setTiers((current) => [...current, tier]);
   }

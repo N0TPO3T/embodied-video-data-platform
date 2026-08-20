@@ -7,6 +7,9 @@ on:
       - main
       - "codex/**"
 
+permissions:
+  contents: read
+
 jobs:
   backend:
     name: Backend
@@ -101,3 +104,24 @@ jobs:
       - name: Render smoke test
         working-directory: web
         run: pnpm test:render
+
+  secretscan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan for leaked secrets
+        env:
+          GITLEAKS_VERSION: v8.30.1
+        run: |
+          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION#v}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          ./gitleaks detect --source . --redact --exit-code 1
+
+  credential-regression:
+    name: Credential regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check no live credentials in tracked files
+        run: node scripts/check-no-credentials.mjs

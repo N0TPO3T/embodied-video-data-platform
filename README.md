@@ -76,20 +76,20 @@ VIDEO_QUALITY_REVIEW_MODEL=qwen3.7-flash
 
 ### 本地预设账号
 
-首次启动且 `users` 表为空时，系统会创建以下账号并写入 PostgreSQL：
+首次启动且 `users` 表为空时，系统会创建以下账号并写入 PostgreSQL（本地初始密码由管理员通过私密渠道提供，不写入公开仓库）：
 
-| 角色 | 用户名 | 本地初始密码 | 团队 |
-| --- | --- | --- | --- |
-| 平台管理员 | `admin` | `admin123` | 无 |
-| 团长 | `tuanzhang1` | `team1234` | TEAM-01 |
-| 团长 | `tuanzhang2` | `team1234` | TEAM-02 |
-| 数采人员 | `ceshirenyuan1` | `user1234` | TEAM-01 |
-| 数采人员 | `ceshirenyuan2` | `user1234` | TEAM-01 |
-| 数采人员 | `ceshirenyuan3` | `user1234` | TEAM-01 |
-| 数采人员 | `ceshirenyuan4` | `user1234` | TEAM-02 |
-| 数采人员 | `ceshirenyuan5` | `user1234` | TEAM-02 |
+| 角色 | 用户名 | 团队 |
+| --- | --- | --- |
+| 平台管理员 | `admin` | 无 |
+| 团长 | `tuanzhang1` | TEAM-01 |
+| 团长 | `tuanzhang2` | TEAM-02 |
+| 数采人员 | `ceshirenyuan1` | TEAM-01 |
+| 数采人员 | `ceshirenyuan2` | TEAM-01 |
+| 数采人员 | `ceshirenyuan3` | TEAM-01 |
+| 数采人员 | `ceshirenyuan4` | TEAM-02 |
+| 数采人员 | `ceshirenyuan5` | TEAM-02 |
 
-这些是明确可知的本地默认密码，只适合本机联调。把服务开放到局域网或公网之前，必须登录“个人资料”修改各账号密码，并更换 `.env` 中的数据库、会话、队列和对象存储密钥。
+这些预设账号只适合本机联调。把服务开放到局域网或公网之前，必须登录“个人资料”修改各账号密码，并更换 `.env` 中的数据库、会话、队列和对象存储密钥。
 后端在生产模式下会拦截这些本地默认密钥和本地预设账号密码；`compose.yaml` 的本地服务会显式带上 `EVDP_ALLOW_LOCAL_DEFAULT_PASSWORDS=true` 作为本机联调许可，真实部署不应设置该开关。
 
 正常重启只会在账号表完全为空时创建预设账号；只要已有任意账号，就不会重置密码或覆盖现有身份。对于已经运行过旧版本、但需要一次性校准上述八个账号的本地数据库，可明确执行：
