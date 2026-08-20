@@ -172,7 +172,7 @@ export function PointRuleModal({
             onChange={(event) => setDefaultPoints(event.target.value)}
           />
         </label>
-        <div className="modal-fieldset">
+        <fieldset className="modal-fieldset">
           <legend>质量系数档位（按最终评分计算结算比例）</legend>
           <div className="table-scroll">
             <table className="data-table">
@@ -186,14 +186,14 @@ export function PointRuleModal({
                     <td><input type="number" min="0" max="100" value={band.minScore} onChange={(event) => updateBand(index, { minScore: Number(event.target.value) })} aria-label="分数下限" /></td>
                     <td><input type="number" min="0" max="100" value={band.maxScore} onChange={(event) => updateBand(index, { maxScore: Number(event.target.value) })} aria-label="分数上限" /></td>
                     <td><input type="number" min="0" max="1" step="0.05" value={band.ratio} onChange={(event) => updateBand(index, { ratio: Number(event.target.value) })} aria-label="比例" /></td>
-                    <td><button type="button" className="table-action danger" onClick={() => removeBand(index)}>删除</button></td>
+                    <td><button type="button" className="table-action table-action-danger" onClick={() => removeBand(index)}>删除</button></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           <button type="button" className="button button-secondary" onClick={addBand}>添加档位</button>
-        </div>
+        </fieldset>
         <label>
           规则说明
           <textarea
