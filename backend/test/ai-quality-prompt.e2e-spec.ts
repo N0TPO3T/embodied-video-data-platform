@@ -235,7 +235,7 @@ describe("AI quality prompt API", () => {
       .expect(200);
     expect(initial.body.labelSet).toMatchObject({
       revision: 1,
-      version: "LABELS-2026-08",
+      version: "LABELS-REV-1",
       createdByName: "系统初始化",
     });
     expect(initial.body.labelSet.labels).toEqual(
