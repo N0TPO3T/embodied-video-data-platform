@@ -22,6 +22,9 @@ const KNOWN_DEFAULT_PASSWORDS = ["admin123", "team1234", "user1234"];
 //  - docs/superpowers/*: historical design/plan archives from before the
 //    credential-hardening policy; kept as read-only audit trail
 const ALLOWLIST = new Set([
+  // This script itself: KNOWN_DEFAULT_PASSWORDS below must contain the literals
+  // it searches for.
+  "scripts/check-no-credentials.mjs",
   "backend/src/cli/bootstrap-local-identity.ts",
   "backend/test/bootstrap-local-identity.spec.ts",
   "deploy/bootstrap-production-identity.sh",
