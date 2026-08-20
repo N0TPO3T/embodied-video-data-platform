@@ -480,7 +480,7 @@ describe("collector journey", () => {
       "src",
       "http://minio.local/preview.mp4",
     );
-    expect(screen.getByText("HLS 720p")).toBeVisible();
+    expect(screen.getByText("720p")).toBeVisible();
     await user.click(
       await screen.findByRole("button", { name: /评分依据与扣分明细/ }),
     );

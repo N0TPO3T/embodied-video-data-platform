@@ -272,7 +272,7 @@ export function AiQueuePage() {
               {reclaiming ? "处理中" : "处理卡住/超时任务"}
             </button>
           ) : null}
-          <span className="live-pill"><i />{queueMode === "live" ? "队列快照已连接后端" : queueMode === "loading" ? "正在读取队列快照" : "演示队列"}</span>
+          <span className="live-pill"><i />{queueMode === "live" ? "队列快照已连接后端" : queueMode === "loading" ? "正在读取队列快照" : "队列暂不可用"}</span>
         </div>
       </div>
       <div className="metric-grid metric-grid-5">
@@ -386,7 +386,7 @@ export function AiQueuePage() {
         </section>
       )}
       <section className="content-card table-card">
-        <div className="card-heading"><div><h2>任务队列</h2><p>{liveSubmissions ? `真实任务状态，共 ${jobs.length} 条 · 每 10 秒自动刷新` : mixedData ? "后端提交列表暂不可用，任务队列显示本地演示数据" : "正式提交的媒体分析与 AI 质检状态"}</p></div></div>
+        <div className="card-heading"><div><h2>任务队列</h2><p>{liveSubmissions ? `真实任务状态，共 ${jobs.length} 条 · 每 10 秒自动刷新` : mixedData ? "任务数据暂不可用，当前展示本地示例" : "正式提交的媒体分析与 AI 质检状态"}</p></div></div>
         <div className="table-scroll">
           <table className="data-table">
             <thead><tr><th>提交</th><th>视频文件</th><th>质检进度</th><th>模型路由</th><th>尝试</th><th>状态</th></tr></thead>

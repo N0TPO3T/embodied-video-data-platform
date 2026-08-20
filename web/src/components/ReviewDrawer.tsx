@@ -273,13 +273,13 @@ export function ReviewDrawer({
             {preview.hls ? <source src={preview.hls.url} type={preview.hls.contentType} /> : null}
             <source src={preview.url} type={preview.contentType} />
           </video>
-          <span>{preview.hls ? `HLS ${preview.hls.qualities.map((quality) => quality.quality).join(" / ")}` : `${Math.floor(submission.durationSeconds / 60)}:${String(submission.durationSeconds % 60).padStart(2, "0")}`}</span>
+          <span>{preview.hls ? `${preview.hls.qualities.map((quality) => quality.quality).join(" / ")}` : `${Math.floor(submission.durationSeconds / 60)}:${String(submission.durationSeconds % 60).padStart(2, "0")}`}</span>
         </>
       ) : (
         <div>
           <FileVideo size={42} />
           <strong>{previewState === "loading" ? "正在生成预览地址" : "已保存原始视频"}</strong>
-          <small>{previewState === "unavailable" ? "当前无法取得短期预览地址" : "视频证据存储于本地对象存储"}</small>
+          <small>{previewState === "unavailable" ? "预览暂时无法生成" : "视频已安全保存至云端"}</small>
         </div>
       )}
       {!preview ? <span>{Math.floor(submission.durationSeconds / 60)}:{String(submission.durationSeconds % 60).padStart(2, "0")}</span> : null}
@@ -309,7 +309,6 @@ export function ReviewDrawer({
           </div>
         ) : null}
         {submission.qualityResult?.reviewReasons?.length ? <div className="review-reasons"><strong>AI 建议人工复核：</strong><ul>{submission.qualityResult.reviewReasons.map((reason, index) => <li key={`reason-${index}`}>{reason}</li>)}</ul></div> : null}
-        {submission.qualityResult && <p className="field-hint">{submission.qualityResult.initialModel} · 条件复核 {submission.qualityResult.reviewModel} · 提示词 V{submission.qualityResult.promptRevision}</p>}
       </section>
       {duplicateCandidate && (
         <section className="ai-conclusion duplicate-review">

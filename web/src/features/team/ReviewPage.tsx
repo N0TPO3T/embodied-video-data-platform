@@ -146,7 +146,7 @@ export function ReviewPage({
               : "团队质检结果已连接后端"
             : mode === "loading"
               ? "正在读取后端质检结果"
-              : "当前显示本地演示质检结果"}
+              : "当前展示本地示例结果"}
         </span>
         <span>
           第 {pagination.page} / {pagination.totalPages} 页

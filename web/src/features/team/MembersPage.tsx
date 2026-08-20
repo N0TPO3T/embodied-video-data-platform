@@ -226,7 +226,7 @@ export function MembersPage() {
               ? "已连接后端指标"
               : metricsMode === "loading"
                 ? "正在读取指标"
-                : "演示指标"}
+                : "数据暂不可用"}
           </span>
           <button
             ref={createTriggerRef}

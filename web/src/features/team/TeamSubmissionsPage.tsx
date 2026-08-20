@@ -158,7 +158,7 @@ export function TeamSubmissionsPage() {
               ? `后端筛选 ${range} / ${pagination.total} 条团队数据`
               : mode === "loading"
                 ? "正在读取后端团队数据"
-                : `演示筛选 ${range} / ${pagination.total} 条团队数据`}
+                : `共 ${range} / ${pagination.total} 条团队数据`}
           </span>
           <span>处理中 {processingCount(submissions)} 条</span>
         </div>

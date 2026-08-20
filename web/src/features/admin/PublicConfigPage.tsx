@@ -92,7 +92,7 @@ export function PublicConfigPage() {
       : mode === "loading"
         ? "正在读取公开快照"
         : mode === "demo"
-          ? "当前显示演示快照"
+          ? "当前展示本地示例快照"
           : "公开快照服务不可用";
 
   return (

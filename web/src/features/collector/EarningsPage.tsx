@@ -238,7 +238,7 @@ export function EarningsPage() {
             ? "已连接后端积分"
             : mode === "loading"
               ? "正在读取积分"
-              : "演示积分"}
+              : "数据暂不可用"}
         </span>
       </div>
       <div className="metric-grid">

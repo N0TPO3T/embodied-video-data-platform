@@ -170,7 +170,7 @@ describe("administrator rule configuration", () => {
     renderAdmin("/admin/rules");
 
     expect(await screen.findByText("RULE-2026-08")).toBeVisible();
-    expect(screen.getByText("V1 · 后端生效")).toBeVisible();
+    expect(screen.getByText("V1 · 已生效")).toBeVisible();
     expect(promptApi.getRule).toHaveBeenCalled();
   });
 

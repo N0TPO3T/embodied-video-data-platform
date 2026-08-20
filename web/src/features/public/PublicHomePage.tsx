@@ -98,7 +98,7 @@ export function PublicHomePage({ navigate }: { navigate(path: string): void }) {
             <h1>让每一段视频，<br /><span>成为可用的具身数据</span></h1>
             <p>从开放采集、AI 内容理解到自动质检与资产入库，用一条可追溯的数据流水线，为具身智能持续供给高质量视频数据。</p>
             <div className="hero-actions">
-              <button className="button button-primary" onClick={() => navigate("/login")}>进入演示平台 <ArrowRight size={17} /></button>
+              <button className="button button-primary" onClick={() => navigate("/login")}>进入平台 <ArrowRight size={17} /></button>
               <button className="button button-secondary" onClick={scrollToProcess}><PlayCircle size={18} /> 了解生产流程</button>
             </div>
             <div className="hero-trust">
@@ -110,10 +110,10 @@ export function PublicHomePage({ navigate }: { navigate(path: string): void }) {
           <div className="hero-visual" aria-label="数据生产概览">
             <div className="visual-glow" />
             <div className="hero-dashboard-card">
-              <div className="mini-card-head"><span>数据生产公开概览</span><em>{mode === "live" ? "脱敏快照" : mode === "loading" ? "读取中" : mode === "demo" ? "演示" : "暂不可用"}</em></div>
+              <div className="mini-card-head"><span>数据生产公开概览</span><em>{mode === "live" ? "脱敏快照" : mode === "loading" ? "读取中" : mode === "demo" ? "示例" : "暂不可用"}</em></div>
               <div className="mini-metrics">
-                <div><small>已验收视频</small><strong>{formatNumber(metrics.deliverableVideoCount)}</strong><span>V{snapshot.revision}</span></div>
-                <div><small>有效时长</small><strong>{formatHours(metrics.effectiveDurationSeconds)}</strong><span>{snapshot.snapshotDate}</span></div>
+                <div><small>已验收视频</small><strong>{formatNumber(metrics.deliverableVideoCount)}</strong><span>{snapshot.snapshotDate}</span></div>
+                <div><small>有效时长</small><strong>{formatHours(metrics.effectiveDurationSeconds)}</strong><span>累计数据</span></div>
               </div>
               <div className="mini-chart">
                 {trend.map((height, index) => <i key={`${index}-${height}`} style={{ height }} />)}

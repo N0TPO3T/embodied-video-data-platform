@@ -150,7 +150,7 @@ describe("platform routing", () => {
     await user.click(
       screen.getByRole("button", { name: "通知，3 条未读" }),
     );
-    expect(screen.getByText("AI 任务 SUB-019 处理异常")).toBeVisible();
+    expect(screen.getByText("AI 质检任务处理异常")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "全部标为已读" }));
 
     expect(screen.getByRole("button", { name: "通知，无未读" })).toBeVisible();
