@@ -124,7 +124,7 @@ export function backendSubmissionToDomain(
     ownerName: source.ownerName,
     teamId: source.teamId,
     teamName: source.teamName,
-    scene: detected?.scene_id || "待 AI 识别",
+    scene: detected?.scene_id || "未识别",
     action:
       detected?.task_summary ||
       (source.processingStatus === "awaiting_ai"
@@ -132,7 +132,7 @@ export function backendSubmissionToDomain(
         : source.processingStatus === "ai_processing"
           ? "AI 质检中"
           : "媒体处理中"),
-    object: detected?.variant_id || "待 AI 识别",
+    object: detected?.variant_id || "未识别",
     durationSeconds: source.media
       ? Math.round(source.media.durationSeconds)
       : 0,

@@ -254,7 +254,7 @@ describe("AiQueuePage", () => {
 
     renderQueuePage();
 
-    expect(await screen.findByText("演示队列")).toBeVisible();
+    expect(await screen.findByText("队列暂不可用")).toBeVisible();
     expect(
       screen.getByText("正式提交的媒体分析与 AI 质检状态"),
     ).toBeVisible();

@@ -172,7 +172,7 @@ export function SubmissionsPage({
               ? `后端筛选 ${range} / ${pagination.total} 条数据`
               : mode === "loading"
                 ? "正在读取后端数据"
-                : `演示筛选 ${range} / ${pagination.total} 条数据`}
+                : `共 ${range} / ${pagination.total} 条数据`}
           </span>
           <span>数据范围：仅本人</span>
         </div>

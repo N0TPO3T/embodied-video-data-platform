@@ -269,7 +269,7 @@ describe("settlement actions", () => {
     renderAdmin("/admin/settlements");
 
     expect(
-      await screen.findByText("积分周期已连接后端持久化"),
+      await screen.findByText("积分周期数据已同步"),
     ).toBeVisible();
     await user.click(
       await screen.findByRole("button", { name: "生成积分周期" }),
@@ -344,7 +344,7 @@ describe("delivery package actions", () => {
     renderAdmin("/admin/assets");
 
     expect(
-      await screen.findByText("交付包已连接后端持久化"),
+      await screen.findByText("交付包数据已同步"),
     ).toBeVisible();
     await user.click(
       await screen.findByRole("button", { name: "创建交付包" }),
@@ -378,7 +378,7 @@ describe("delivery package actions", () => {
     renderAdmin("/admin/assets");
 
     expect(
-      await screen.findByText("交付包已连接后端持久化"),
+      await screen.findByText("交付包数据已同步"),
     ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "下载链接" }));
 
@@ -396,7 +396,7 @@ describe("delivery package actions", () => {
     renderAdmin("/admin/assets");
 
     expect(
-      await screen.findByText("交付包已连接后端持久化"),
+      await screen.findByText("交付包数据已同步"),
     ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "准备 ZIP" }));
 

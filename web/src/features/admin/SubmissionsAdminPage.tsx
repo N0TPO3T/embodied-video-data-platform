@@ -458,7 +458,7 @@ export function SubmissionsAdminPage({
               ? `后端筛选 ${range} / ${pagination.total} 条`
               : mode === "loading"
                 ? "正在读取后端数据"
-                : `演示筛选 ${range} / ${pagination.total} 条`}
+                : `共 ${range} / ${pagination.total} 条`}
           </span>
           <span>
             第 {pagination.page} / {pagination.totalPages} 页

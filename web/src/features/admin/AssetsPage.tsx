@@ -42,7 +42,7 @@ function packageFromDemo(
     assetCount: deliveryPackage.assetCount,
     totalSizeBytes: "0",
     createdByAccountId: "demo",
-    createdByName: "演示数据",
+    createdByName: "系统",
     createdAt: Date.now(),
     items: [],
   };
@@ -264,7 +264,7 @@ export function AssetsPage() {
     <div className="page-stack">
       <div className="page-heading"><div><p className="page-kicker">已锁定可交付数据</p><h1>数据资产</h1><span>仅包含质检通过且完成结算锁定的视频资产</span></div><button ref={triggerRef} className="button button-primary" onClick={() => setPackageOpen(true)}>创建交付包</button></div>
       <div className="metric-grid"><MetricCard label="待交付资产" value={String(preview?.assetCount ?? assets.length)} detail="已锁定且未入包" icon={Archive}/><MetricCard label="已入包资产" value={String(totalPackageAssets)} detail={`${packages.length} 个交付包`} icon={Database} tone="green"/><MetricCard label="本月交付包" value={String(monthlyPackageCount)} detail="可导出清单" icon={Boxes} tone="violet"/><MetricCard label="存储占用" value={formatBytes(totalDeliveryBytes)} detail="待交付与已入包合计" icon={HardDrive} tone="amber"/></div>
-      <div className="audit-summary"><Boxes size={18}/><span><strong>{backendMode === "live" ? "交付包已连接后端持久化" : backendMode === "loading" ? "正在读取交付包" : "当前显示本地演示交付包"}</strong><small>{backendMode === "live" ? "创建后会保存交付包、资产条目和审计记录，并可下载 CSV 清单、短期资产链接和可追踪归档任务。" : backendMode === "loading" ? "页面会在接口返回后切换为真实数据。" : "后端不可用时保留可操作演示，真实部署会自动使用接口。"}</small></span></div>
+      <div className="audit-summary"><Boxes size={18}/><span><strong>{backendMode === "live" ? "交付包数据已同步" : backendMode === "loading" ? "正在读取交付包" : "当前显示本地示例数据"}</strong><small>{backendMode === "live" ? "创建交付包后可在线下载清单与资产链接，归档过程全程可追踪。" : backendMode === "loading" ? "页面会在接口返回后切换为真实数据。" : "数据服务暂不可用，请稍后重试。"}</small></span></div>
       <section className="content-card table-card"><div className="card-heading"><div><h2>交付包</h2><p>已持久化的资产包、下载清单、短期资产链接和归档准备状态</p></div></div><div className="table-scroll"><table className="data-table"><thead><tr><th>交付包</th><th>资产数</th><th>创建人</th><th>状态</th><th>归档任务</th><th/></tr></thead><tbody>{packages.map((deliveryPackage) => {
         const tasks = archiveTasks[deliveryPackage.id] ?? [];
         const latestTask = tasks[0];

@@ -273,13 +273,13 @@ export function ReviewDrawer({
             {preview.hls ? <source src={preview.hls.url} type={preview.hls.contentType} /> : null}
             <source src={preview.url} type={preview.contentType} />
           </video>
-          <span>{preview.hls ? `HLS ${preview.hls.qualities.map((quality) => quality.quality).join(" / ")}` : `${Math.floor(submission.durationSeconds / 60)}:${String(submission.durationSeconds % 60).padStart(2, "0")}`}</span>
+          <span>{preview.hls ? `${preview.hls.qualities.map((quality) => quality.quality).join(" / ")}` : `${Math.floor(submission.durationSeconds / 60)}:${String(submission.durationSeconds % 60).padStart(2, "0")}`}</span>
         </>
       ) : (
         <div>
           <FileVideo size={42} />
           <strong>{previewState === "loading" ? "正在生成预览地址" : "已保存原始视频"}</strong>
-          <small>{previewState === "unavailable" ? "当前无法取得短期预览地址" : "视频证据存储于本地对象存储"}</small>
+          <small>{previewState === "unavailable" ? "预览暂时无法生成" : "视频已安全保存至云端"}</small>
         </div>
       )}
       {!preview ? <span>{Math.floor(submission.durationSeconds / 60)}:{String(submission.durationSeconds % 60).padStart(2, "0")}</span> : null}

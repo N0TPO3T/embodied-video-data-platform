@@ -149,7 +149,7 @@ export function ScarcityConfigModal({
         <p className="form-help">按场景/任务/变体的有效存量分档计酬：存量越少系数越高（稀缺奖励）。档位按 minCount 升序排列，最后一个档位必须无上限。</p>
         <label className="checkbox-field">
           <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
-          启用稀缺奖励（关闭后 D5 库存维度按 cold_start 处理，不奖不罚）
+          启用稀缺奖励（关闭后场景稀缺度不参与评分，不奖不罚）
         </label>
         <div className="table-scroll">
           <table className="data-table">

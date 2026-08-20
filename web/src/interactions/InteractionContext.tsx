@@ -44,7 +44,7 @@ const seedNotifications: DemoNotification[] = [
   },
   {
     id: "NOTICE-AI",
-    title: "AI 任务 SUB-019 处理异常",
+    title: "AI 质检任务处理异常",
     detail: "视频解析失败，可在 AI 任务页重新执行。",
     read: false,
   },

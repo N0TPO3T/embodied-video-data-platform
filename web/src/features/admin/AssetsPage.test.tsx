@@ -151,7 +151,7 @@ describe("AssetsPage", () => {
   it("uses backend packages, preview and deliverable assets", async () => {
     renderPage();
 
-    expect(await screen.findByText("交付包已连接后端持久化")).toBeVisible();
+    expect(await screen.findByText("交付包数据已同步")).toBeVisible();
     expect(screen.getByText("真实交付包")).toBeVisible();
     expect(screen.getByText("deliverable.mp4")).toBeVisible();
     expect(screen.queryByText("unsettled.mp4")).not.toBeInTheDocument();

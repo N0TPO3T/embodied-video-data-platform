@@ -243,14 +243,14 @@ export function AuditLogPage() {
               ? "审计日志已连接后端筛选"
               : mode === "loading"
                 ? "正在读取审计日志"
-                : "当前显示本地演示日志"}
+                : "当前展示本地示例日志"}
           </strong>
           <small>
             {mode === "live"
               ? "账号、质检、积分和交付包关键动作均可按操作人、动作和时间追溯。"
               : mode === "loading"
                 ? "页面会在接口返回后切换为真实数据。"
-                : "后端不可用时保留可操作演示，真实部署会自动使用接口。"}
+                : "数据服务暂不可用，请稍后重试。"}
           </small>
         </span>
       </div>
@@ -326,7 +326,7 @@ export function AuditLogPage() {
               ? `后端筛选 ${range} / ${pagination.total} 条`
               : mode === "loading"
                 ? "正在读取后端数据"
-                : `演示筛选 ${range} / ${pagination.total} 条`}
+                : `共 ${range} / ${pagination.total} 条`}
           </span>
           <span>
             第 {pagination.page} / {pagination.totalPages} 页

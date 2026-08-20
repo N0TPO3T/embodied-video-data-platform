@@ -106,7 +106,7 @@ export function TeamDashboard({
               ? "已连接后端数据"
               : mode === "loading"
                 ? "正在读取数据"
-                : "演示数据"}
+                : "数据暂不可用"}
           </span>
           <button
             className="button button-primary"

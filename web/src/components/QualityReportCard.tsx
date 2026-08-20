@@ -208,7 +208,7 @@ export function QualityReportCard({
         {openMore && (
           <div className="report-fold-body">
             <div className="metadata-grid">
-              <div><small>任务摘要</small><strong>{quality?.detectedTask?.task_summary || submission.action || "待 AI 识别"}</strong></div>
+              <div><small>任务摘要</small><strong>{quality?.detectedTask?.task_summary || submission.action || "未识别"}</strong></div>
               <div><small>置信度</small><strong>{quality?.detectedTask?.confidence === null || quality?.detectedTask?.confidence === undefined ? "—" : `${Math.round(quality.detectedTask.confidence * 100)}%`}</strong></div>
               <div><small>初检模型</small><strong>{quality?.initialModel ?? "—"}</strong></div>
               <div><small>复核模型</small><strong>{quality?.reviewModel ?? "—"}</strong></div>
