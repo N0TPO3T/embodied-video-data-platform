@@ -202,7 +202,7 @@ export function QualityReportCard({
 
       <div className="report-fold">
         <button type="button" className="report-fold-toggle" onClick={() => setOpenMore((v) => !v)}>
-          <span>更多信息（内容理解 / 模型 / 版本）</span>
+          <span>更多信息（内容理解）</span>
           <ChevronDown size={14} className={openMore ? "open" : ""} />
         </button>
         {openMore && (
@@ -210,10 +210,6 @@ export function QualityReportCard({
             <div className="metadata-grid">
               <div><small>任务摘要</small><strong>{quality?.detectedTask?.task_summary || submission.action || "未识别"}</strong></div>
               <div><small>置信度</small><strong>{quality?.detectedTask?.confidence === null || quality?.detectedTask?.confidence === undefined ? "—" : `${Math.round(quality.detectedTask.confidence * 100)}%`}</strong></div>
-              <div><small>初检模型</small><strong>{quality?.initialModel ?? "—"}</strong></div>
-              <div><small>复核模型</small><strong>{quality?.reviewModel ?? "—"}</strong></div>
-              <div><small>提示词版本</small><strong>{quality ? `V${quality.promptRevision}` : "—"}</strong></div>
-              <div><small>尝试次数</small><strong>{quality?.attempts ?? 0}</strong></div>
             </div>
             {quality?.recommendations && quality.recommendations.length > 0 && (
               <div className="recommend-list">

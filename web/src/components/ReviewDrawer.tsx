@@ -309,7 +309,6 @@ export function ReviewDrawer({
           </div>
         ) : null}
         {submission.qualityResult?.reviewReasons?.length ? <div className="review-reasons"><strong>AI 建议人工复核：</strong><ul>{submission.qualityResult.reviewReasons.map((reason, index) => <li key={`reason-${index}`}>{reason}</li>)}</ul></div> : null}
-        {submission.qualityResult && <p className="field-hint">{submission.qualityResult.initialModel} · 条件复核 {submission.qualityResult.reviewModel} · 提示词 V{submission.qualityResult.promptRevision}</p>}
       </section>
       {duplicateCandidate && (
         <section className="ai-conclusion duplicate-review">
