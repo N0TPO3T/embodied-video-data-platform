@@ -10,6 +10,7 @@ export type BackendPointCycleItem = {
   settlementRatio: number;
   effectiveDurationMs: number;
   effectiveMinutes: number;
+  invalidDurationMs: number;
   pointsPerMinute: number;
   points: number;
   qualityRevision: number;

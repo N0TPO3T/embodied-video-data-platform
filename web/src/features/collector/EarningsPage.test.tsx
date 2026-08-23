@@ -65,6 +65,7 @@ function pointCycle(): BackendPointCycle {
         settlementRatio: 1,
         effectiveDurationMs: 60_000,
         effectiveMinutes: 1,
+        invalidDurationMs: 0,
         pointsPerMinute: 10,
         points: 10,
         qualityRevision: 0,

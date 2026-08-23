@@ -27,6 +27,27 @@ import { PointCycleFailure } from "./point-cycle-failure.js";
 import { PointCyclesPolicy } from "./point-cycles.policy.js";
 import { PointRulesService } from "./point-rules.service.js";
 
+/** 批量读取各提交的原始无效时长（人工覆盖优先，其次质检结果） */
+async function loadInvalidDurationBySubmission(
+  manager: EntityManager,
+  submissionIds: string[],
+): Promise<Map<string, number>> {
+  const unique = [...new Set(submissionIds)];
+  if (unique.length === 0) return new Map();
+  const rows = await manager
+    .getRepository(VideoQualityResultEntity)
+    .createQueryBuilder("quality")
+    .select([
+      "quality.submissionId AS submission_id",
+      "COALESCE(quality.manual_invalid_duration_ms, quality.invalid_duration_ms, 0) AS invalid_ms",
+    ])
+    .where("quality.submissionId IN (:...submissionIds)", { submissionIds: unique })
+    .getRawMany<{ submission_id: string; invalid_ms: string | null }>();
+  return new Map(
+    rows.map((row) => [row.submission_id, Number(row.invalid_ms ?? 0)]),
+  );
+}
+
 type Candidate = {
   submission: SubmissionEntity;
   quality: VideoQualityResultEntity;
@@ -71,6 +92,7 @@ function effectiveItemValues(
 function publicItem(
   item: PointCycleItemEntity,
   adjustment?: PointCycleAdjustmentEntity,
+  invalidDurationMs?: number,
 ) {
   const effective = effectiveItemValues(item, adjustment);
   return {
@@ -86,6 +108,10 @@ function publicItem(
     effectiveDurationMs: effective.effectiveDurationMs,
     effectiveMinutes:
       Math.round((effective.effectiveDurationMs / 60_000) * 100) / 100,
+    invalidDurationMs:
+      adjustment?.nextInvalidDurationMs !== undefined
+        ? Number(adjustment.nextInvalidDurationMs)
+        : (invalidDurationMs ?? 0),
     pointsPerMinute: Number(item.pointsPerMinute),
     points: effective.points,
     qualityRevision: item.qualityRevision,
@@ -98,10 +124,15 @@ function publicItem(
 function publicCycle(
   cycle: PointCycleEntity,
   latestAdjustments = new Map<string, PointCycleAdjustmentEntity>(),
+  invalidBySubmission = new Map<string, number>(),
 ) {
   const items = cycle.items ?? [];
   const publicItems = items.map((item) =>
-    publicItem(item, latestAdjustments.get(item.id)),
+    publicItem(
+      item,
+      latestAdjustments.get(item.id),
+      invalidBySubmission.get(item.submissionId),
+    ),
   );
   const visibleSubmissionCount = items.length;
   const visibleEffectiveDurationMs = publicItems.reduce(
@@ -183,7 +214,15 @@ export class PointCyclesService {
       this.dataSource.manager,
       cycles.flatMap((cycle) => (cycle.items ?? []).map((item) => item.id)),
     );
-    return cycles.map((cycle) => publicCycle(cycle, latestAdjustments));
+    const invalidBySubmission = await loadInvalidDurationBySubmission(
+      this.dataSource.manager,
+      cycles.flatMap((cycle) =>
+        (cycle.items ?? []).map((item) => item.submissionId),
+      ),
+    );
+    return cycles.map((cycle) =>
+      publicCycle(cycle, latestAdjustments, invalidBySubmission),
+    );
   }
 
   async get(actor: PublicUser, id: string) {
@@ -208,7 +247,11 @@ export class PointCyclesService {
       this.dataSource.manager,
       (cycle.items ?? []).map((item) => item.id),
     );
-    return publicCycle(cycle, latestAdjustments);
+    const invalidBySubmission = await loadInvalidDurationBySubmission(
+      this.dataSource.manager,
+      (cycle.items ?? []).map((item) => item.submissionId),
+    );
+    return publicCycle(cycle, latestAdjustments, invalidBySubmission);
   }
 
   async exportCsv(actor: PublicUser, id: string): Promise<string> {
@@ -399,8 +442,12 @@ export class PointCyclesService {
         manager,
         (reloaded.items ?? []).map((entry) => entry.id),
       );
+      const invalidBySubmission = await loadInvalidDurationBySubmission(
+        manager,
+        (reloaded.items ?? []).map((entry) => entry.submissionId),
+      );
       void adjustment;
-      return publicCycle(reloaded, allAdjustments);
+      return publicCycle(reloaded, allAdjustments, invalidBySubmission);
     });
   }
 
@@ -479,7 +526,11 @@ export class PointCyclesService {
         .addOrderBy("item.ownerName", "ASC")
         .addOrderBy("item.fileName", "ASC")
         .getOneOrFail();
-      return publicCycle(locked);
+      const invalidBySubmission = await loadInvalidDurationBySubmission(
+        manager,
+        (locked.items ?? []).map((entry) => entry.submissionId),
+      );
+      return publicCycle(locked, undefined, invalidBySubmission);
     });
   }
 

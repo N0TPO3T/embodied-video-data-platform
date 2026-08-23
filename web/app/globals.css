@@ -594,3 +594,8 @@ button:disabled { cursor: not-allowed; opacity: .56; }
   gap: 7px;
 }
 .modal-intro p { margin: 0; }
+
+/* ---- 补齐引用但未定义的类 ---- */
+.content-card-wide { grid-column: 1 / -1; }
+.duplicate-review { color: #a15b13; background: #fff7e8; }
+.review-page { }

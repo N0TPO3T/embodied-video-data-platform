@@ -27,6 +27,9 @@ export function CycleItemAdjustModal({
 }) {
   const { notify } = useInteractions();
   const [finalScore, setFinalScore] = useState(String(item.finalScore));
+  const [invalidSeconds, setInvalidSeconds] = useState(
+    String(Math.round(item.invalidDurationMs / 1_000)),
+  );
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -39,8 +42,13 @@ export function CycleItemAdjustModal({
       setError("请输入 0 到 100 之间的最终评分");
       return;
     }
-    if (score === item.finalScore) {
-      setError("最终评分未变化，无需调整");
+    const invalidMs = Math.round(Number(invalidSeconds) * 1_000);
+    if (!Number.isFinite(invalidMs) || invalidMs < 0) {
+      setError("请输入 ≥0 的无效时长（秒）");
+      return;
+    }
+    if (score === item.finalScore && invalidMs === item.invalidDurationMs) {
+      setError("评分与无效时长均未变化，无需调整");
       return;
     }
     if (!reason.trim()) {
@@ -52,6 +60,7 @@ export function CycleItemAdjustModal({
       const cycle = await adjustPointCycleItem(cycleId, item.id, {
         reason: reason.trim(),
         nextFinalScore: score,
+        nextInvalidDurationMs: invalidMs,
       });
       notify("success", "条目积分已调整");
       onAdjusted(cycle);
@@ -70,7 +79,7 @@ export function CycleItemAdjustModal({
       returnFocusRef={returnFocusRef}
     >
       <form className="modal-form" onSubmit={submit}>
-        <p className="form-help">当前评分 {item.finalScore.toFixed(1)} 分 · 积分 {item.points.toFixed(2)} 分。修改评分后，结算比例与积分将按当前积分规则自动重算。</p>
+        <p className="form-help">当前评分 {item.finalScore.toFixed(1)} 分 · 无效 {Math.round(item.invalidDurationMs / 1_000)} 秒 · 积分 {item.points.toFixed(2)} 分。修改评分或无效时长后，结算比例与积分将按当前积分规则自动重算。</p>
         <label>
           最终评分
           <input
@@ -81,6 +90,16 @@ export function CycleItemAdjustModal({
             value={finalScore}
             onChange={(event) => setFinalScore(event.target.value)}
             required
+          />
+        </label>
+        <label>
+          无效时长（秒）
+          <input
+            type="number"
+            min="0"
+            step="1"
+            value={invalidSeconds}
+            onChange={(event) => setInvalidSeconds(event.target.value)}
           />
         </label>
         <label>

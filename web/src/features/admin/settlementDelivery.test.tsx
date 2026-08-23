@@ -452,6 +452,7 @@ describe("delivery package actions", () => {
           settlementRatio: 1,
           effectiveDurationMs: 60_000,
           effectiveMinutes: 1,
+          invalidDurationMs: 0,
           pointsPerMinute: 12,
           points: 12,
           qualityRevision: 1,
@@ -486,6 +487,7 @@ describe("delivery package actions", () => {
     expect(adjustPointCycleItemMock).toHaveBeenCalledWith("PC-20260812", "PCI-1", {
       reason: "人工复核修正评分",
       nextFinalScore: 80,
+      nextInvalidDurationMs: 0,
     });
     expect(await screen.findByText("已调整")).toBeVisible();
     expect(screen.getByText("10.20")).toBeVisible();

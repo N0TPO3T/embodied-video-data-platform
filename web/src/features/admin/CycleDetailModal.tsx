@@ -44,7 +44,7 @@ export function CycleDetailModal({
         <div className="table-scroll">
           <table className="data-table">
             <thead>
-              <tr><th>视频</th><th>数采</th><th>团队</th><th>评分</th><th>比例</th><th>有效时长</th><th>积分</th><th>状态</th><th /></tr>
+              <tr><th>视频</th><th>数采</th><th>团队</th><th>评分</th><th>比例</th><th>有效时长</th><th>无效时长</th><th>积分</th><th>状态</th><th /></tr>
             </thead>
             <tbody>
               {(cycle.items ?? []).map((item) => (
@@ -55,6 +55,7 @@ export function CycleDetailModal({
                   <td>{item.finalScore.toFixed(1)}</td>
                   <td>{item.settlementRatio.toFixed(2)}</td>
                   <td>{item.effectiveMinutes} 分钟</td>
+                  <td>{Math.round(item.invalidDurationMs / 1_000)} 秒</td>
                   <td><strong>{item.points.toFixed(2)}</strong></td>
                   <td>
                     {item.adjusted ? (

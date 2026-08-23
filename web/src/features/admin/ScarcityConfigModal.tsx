@@ -62,13 +62,26 @@ export function ScarcityConfigModal({
   }
 
   function addTier() {
-    const previous = tiers[tiers.length - 1];
-    const tier = newTier();
-    if (previous && previous.maxCount !== null) {
+    setTiers((current) => {
+      const previous = current[current.length - 1];
+      const tier = newTier();
+      if (!previous) {
+        tier.minCount = 0;
+        tier.maxCount = null;
+        return [tier];
+      }
+      if (previous.maxCount === null) {
+        // 最后一个档位无上限时不能在其后追加：先把它收口为单值档位，
+        // 再追加一个新档位衔接在其后（新档位无上限，保持"最后档无上限"约束）。
+        const boundedPrevious = { ...previous, maxCount: previous.minCount };
+        tier.minCount = previous.minCount + 1;
+        tier.maxCount = null;
+        return [...current.slice(0, -1), boundedPrevious, tier];
+      }
       tier.minCount = previous.maxCount + 1;
       tier.maxCount = null;
-    }
-    setTiers((current) => [...current, tier]);
+      return [...current, tier];
+    });
   }
 
   function removeTier(index: number) {
