@@ -317,6 +317,10 @@ describe("collector journey", () => {
     const user = userEvent.setup();
     renderCollector("/collector/upload");
 
+    expect(
+      screen.getByRole("button", { name: /请先完成上方三项授权确认/ }),
+    ).toBeDisabled();
+
     await user.upload(
       screen.getByLabelText("选择视频文件"),
       new File(["a"], "kitchen.mp4", { type: "video/mp4" }),
@@ -448,6 +452,7 @@ describe("collector journey", () => {
       status: "all",
       page: 1,
       pageSize: 20,
+      includeThumbnails: true,
     });
     expect(screen.queryByText("warehouse_packing_0803.mp4")).not.toBeInTheDocument();
   });
@@ -461,6 +466,7 @@ describe("collector journey", () => {
       status: "reviewed",
       page: 1,
       pageSize: 20,
+      includeThumbnails: true,
     });
   });
 

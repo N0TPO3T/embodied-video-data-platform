@@ -85,6 +85,7 @@ export function SubmissionsPage({
       status: backendStatus(status, qualityOnly),
       page,
       pageSize: PAGE_SIZE,
+      includeThumbnails: true,
     })
       .then((result) => {
         if (!active) return;

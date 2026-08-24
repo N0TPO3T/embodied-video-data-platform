@@ -383,4 +383,27 @@ describe("backend submission mapping", () => {
       candidate_valid_waiting_segments: [],
     });
   });
+  it("passes through the list thumbnail URL", () => {
+    const submission = backendSubmissionToDomain({
+      id: "SUB-THUMB",
+      fileName: "thumb.mp4",
+      ownerId: "U-01",
+      ownerName: "测试数采",
+      teamId: "TEAM-01",
+      teamName: "测试团队",
+      sizeBytes: "1048576",
+      uploadStatus: "uploaded",
+      processingStatus: "completed",
+      isTestData: false,
+      createdAt: Date.parse("2026-08-11T01:02:03.000Z"),
+      segments: [],
+      thumbnail: {
+        url: "https://oss.example/thumb.jpg",
+        expiresAt: Date.parse("2026-08-11T02:00:00.000Z"),
+        contentType: "image/jpeg",
+      },
+    });
+
+    expect(submission.thumbnailUrl).toBe("https://oss.example/thumb.jpg");
+  });
 });

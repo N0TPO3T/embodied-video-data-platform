@@ -1,10 +1,11 @@
 "use client";
 
-import { Eye, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { ClipboardCheck, Eye, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { FilterBar } from "../../components/FilterBar";
 import { Modal } from "../../components/Modal";
+import { ReviewDrawer } from "../../components/ReviewDrawer";
 import { SubmissionTable } from "../../components/SubmissionTable";
 import { useDemoStore } from "../../data/DemoStoreContext";
 import { isActivePassedSubmission } from "../../domain/calculations";
@@ -52,6 +53,15 @@ function canRerun(submission: Submission): boolean {
     ["awaiting_ai", "completed", "system_failed"].includes(
       submission.pipelineStage ?? "",
     )
+  );
+}
+
+function canReview(submission: Submission): boolean {
+  if (submission.settlementStatus === "settled") return false;
+  if (submission.pipelineStage !== "completed") return false;
+  if (submission.storageStatus !== "available") return false;
+  return ["scored", "review_pending"].includes(
+    submission.qualityResult?.status ?? "",
   );
 }
 
@@ -280,6 +290,7 @@ export function SubmissionsAdminPage({
   const [mode, setMode] = useState<ListMode>("loading");
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [rerunTarget, setRerunTarget] = useState<Submission | null>(null);
+  const [reviewTarget, setReviewTarget] = useState<Submission | null>(null);
   const [renameTarget, setRenameTarget] = useState<Submission | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Submission | null>(null);
   const [pagination, setPagination] =
@@ -297,6 +308,7 @@ export function SubmissionsAdminPage({
       status,
       page,
       pageSize: PAGE_SIZE,
+      includeThumbnails: true,
     })
       .then((result) => {
         if (!active) return;
@@ -379,6 +391,20 @@ export function SubmissionsAdminPage({
             详情
           </button>
         )}
+        <button
+          type="button"
+          className="table-action"
+          disabled={!canReview(item)}
+          title={
+            canReview(item)
+              ? "对未结算数据进行复核打分"
+              : "仅未结算且已有质检结果的数据可复核"
+          }
+          onClick={() => setReviewTarget(item)}
+        >
+          <ClipboardCheck size={14} />
+          复核
+        </button>
         <button
           type="button"
           className="table-action"
@@ -502,6 +528,15 @@ export function SubmissionsAdminPage({
         onClose={() => setRerunTarget(null)}
         onRerun={handleUpdatedSubmission}
       />
+      {reviewTarget ? (
+        <ReviewDrawer
+          submission={reviewTarget}
+          onClose={() => {
+            setReviewTarget(null);
+            refresh();
+          }}
+        />
+      ) : null}
       {renameTarget ? (
         <RenameSubmissionModal
           key={renameTarget.id}

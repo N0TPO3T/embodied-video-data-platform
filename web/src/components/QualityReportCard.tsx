@@ -86,6 +86,18 @@ export function QualityReportCard({
       {quality?.hardVeto?.triggered && (
         <div className="veto-banner"><AlertTriangle size={15} /><div><strong>硬性否决：</strong><ul>{quality.hardVeto.reasons.map((reason, index) => <li key={`veto-${index}`}>{hardVetoReasonLabel(reason)}</li>)}</ul></div></div>
       )}
+      {quality?.manualReview && (
+        <div className="manual-review-banner">
+          <div className="manual-review-head">
+            <strong>人工复核记录</strong>
+            <span>{quality.manualReview.reviewedByName} · {quality.manualReview.reviewedAt}</span>
+          </div>
+          <p>{quality.manualReview.reason}</p>
+          {quality.manualReview.finalScore !== null && quality.manualReview.finalScore !== undefined && (
+            <small>复核后评分 {quality.manualReview.finalScore}/100</small>
+          )}
+        </div>
+      )}
       <div className="report-head">
         <div className="report-score">
           <span className={`report-conclusion ${result.tone}`}>{result.label}</span>

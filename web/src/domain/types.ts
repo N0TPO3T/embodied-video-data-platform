@@ -78,6 +78,7 @@ export interface Submission {
   invalidSeconds: number;
   sizeMb: number;
   resolution: string;
+  thumbnailUrl?: string;
   processingStatus: ProcessingStatus;
   pipelineStage?: ProcessingPipelineStage;
   qualityStatus: QualityStatus;

@@ -194,6 +194,11 @@ export type BackendSubmission = {
     sizeBytes: string;
   };
   segments: BackendMediaSegment[];
+  thumbnail?: {
+    url: string;
+    expiresAt: number;
+    contentType: string;
+  };
   quality?: BackendQualityResult;
   audit?: Array<{
     id: string;

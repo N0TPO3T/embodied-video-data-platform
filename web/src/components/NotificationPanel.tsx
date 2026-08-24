@@ -7,19 +7,29 @@ export function NotificationPanel({
 }: {
   navigate?(path: string): void;
 }) {
-  const { notifications, unreadCount, markAllRead, notify } = useInteractions();
+  const { notifications, unreadCount, markAllRead, markPathVisited, notify } =
+    useInteractions();
 
   function clearUnread() {
     markAllRead();
     notify("success", "通知已全部标为已读");
   }
 
+  function openNotification(path: string) {
+    markPathVisited(path);
+    navigate?.(path);
+  }
+
   return (
-    <section className="notification-panel" aria-label="通知中心">
+    <section
+      id="operations-notifications"
+      className="notification-panel"
+      aria-label="通知中心"
+    >
       <header>
         <div>
           <strong>通知中心</strong>
-          <small>{unreadCount} 条未读</small>
+          <small aria-live="polite">{unreadCount} 条未读</small>
         </div>
         <button
           type="button"
@@ -31,7 +41,12 @@ export function NotificationPanel({
         </button>
       </header>
       <div className="notification-list">
-        {notifications.map((notification) => (
+        {notifications.length === 0 ? (
+          <div className="notification-empty">
+            <strong>暂无待处理通知</strong>
+            <span>系统状态更新后会显示在这里</span>
+          </div>
+        ) : notifications.map((notification) => (
           <article
             key={notification.id}
             className={`notification-item ${notification.read ? "notification-read" : ""}`}
@@ -44,7 +59,7 @@ export function NotificationPanel({
                 <button
                   type="button"
                   className="table-action"
-                  onClick={() => navigate(notification.path!)}
+                  onClick={() => openNotification(notification.path!)}
                 >
                   查看
                 </button>

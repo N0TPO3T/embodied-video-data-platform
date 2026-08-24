@@ -145,6 +145,7 @@ export function backendSubmissionToDomain(
     resolution: source.media
       ? `${source.media.width}×${source.media.height}`
       : "解析中",
+    thumbnailUrl: source.thumbnail?.url,
     processingStatus: processingStatus(source.processingStatus),
     pipelineStage: source.processingStatus,
     qualityStatus: mappedQualityStatus(source),

@@ -649,6 +649,11 @@ describe("operations API", () => {
         (badge: { path: string }) => badge.path === "/admin/settlements",
       ),
     ).toBeUndefined();
+    expect(
+      admin.body.navigationBadges.find(
+        (badge: { path: string }) => badge.path === "/admin/audit",
+      ),
+    ).toBeUndefined();
     expect(admin.body.notifications).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

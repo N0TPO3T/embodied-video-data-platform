@@ -110,6 +110,7 @@ describe("SubmissionsAdminPage", () => {
       status: "all",
       page: 1,
       pageSize: 20,
+      includeThumbnails: true,
     });
   });
 
@@ -155,6 +156,7 @@ describe("SubmissionsAdminPage", () => {
         status: "passed",
         page: 1,
         pageSize: 20,
+        includeThumbnails: true,
       }),
     );
     expect(
@@ -171,6 +173,7 @@ describe("SubmissionsAdminPage", () => {
         status: "passed",
         page: 2,
         pageSize: 20,
+        includeThumbnails: true,
       }),
     );
   });

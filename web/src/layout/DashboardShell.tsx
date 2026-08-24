@@ -2,7 +2,7 @@
 
 import { Bell, LogOut, Menu, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { navigationByRole } from "../app/navigation";
+import { navigationByRole, roleHome } from "../app/navigation";
 import { BrandMark } from "../components/BrandMark";
 import { NotificationPanel } from "../components/NotificationPanel";
 import { useIdentity } from "../auth/client/IdentityContext";
@@ -14,6 +14,20 @@ const roleLabel = {
   leader: "团长",
   admin: "平台管理员",
 };
+
+type SystemStatus = "loading" | "healthy" | "attention" | "unavailable";
+
+const systemStatusCopy: Record<SystemStatus, string> = {
+  loading: "正在读取系统状态",
+  healthy: "系统运行正常",
+  attention: "系统有待处理异常",
+  unavailable: "暂时无法读取状态",
+};
+
+function badgeLabel(count: number): string {
+  if (count <= 0) return "";
+  return count > 99 ? "99+" : String(count);
+}
 
 export function DashboardShell({
   currentPath,
@@ -33,9 +47,10 @@ export function DashboardShell({
   });
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus>("loading");
   const loggingOutRef = useRef(false);
   const { currentAccount } = useIdentity();
-  const { notify, unreadCount, navigationBadges, syncOperationsStatus } =
+  const { notify, unreadCount, navigationBadges, syncOperationsStatus, markPathVisited } =
     useInteractions();
   const badgeByPath = useMemo(
     () => new Map(navigationBadges.map((badge) => [badge.path, badge.label])),
@@ -45,20 +60,37 @@ export function DashboardShell({
 
   useEffect(() => {
     let active = true;
-    getOperationsStatus()
-      .then((status) => {
+    async function refreshOperationsStatus() {
+      try {
+        const status = await getOperationsStatus();
         if (!active) return;
         syncOperationsStatus(status);
-      })
-      .catch(() => undefined);
+        setSystemStatus(
+          status.summary.failedSubmissions > 0 ||
+            status.summary.failedJobs > 0 ||
+            status.summary.workerAlerts > 0
+            ? "attention"
+            : "healthy",
+        );
+      } catch {
+        if (active) setSystemStatus("unavailable");
+      }
+    }
+
+    void refreshOperationsStatus();
+    const timer = window.setInterval(() => {
+      void refreshOperationsStatus();
+    }, 30_000);
     return () => {
       active = false;
+      window.clearInterval(timer);
     };
   }, [currentAccount.id, syncOperationsStatus]);
 
   function go(path: string) {
     setMobileOpen(false);
     setNotificationsOpen(false);
+    markPathVisited(path);
     navigate(path);
   }
 
@@ -122,7 +154,10 @@ export function DashboardShell({
           <p className="nav-section-label">工作台</p>
           {navigation.map((item) => {
             const Icon = item.icon;
-            const active = currentPath === item.path;
+            const active =
+              currentPath === item.path ||
+              (item.path !== roleHome[currentAccount.role] &&
+                currentPath.startsWith(`${item.path}/`));
             return (
               <a
                 key={item.path}
@@ -143,8 +178,11 @@ export function DashboardShell({
           })}
         </nav>
         <div className="sidebar-foot">
-          <div className="system-pulse"><span />系统运行正常</div>
-          <small>本地运行版 v0.1.0</small>
+          <div className={`system-pulse system-pulse-${systemStatus}`}>
+            <span />
+            {systemStatusCopy[systemStatus]}
+          </div>
+          <small>数据平台 v0.1.0</small>
         </div>
       </aside>
 
@@ -182,10 +220,11 @@ export function DashboardShell({
               className="icon-button notification-button"
               aria-label={unreadCount > 0 ? `通知，${unreadCount} 条未读` : "通知，无未读"}
               aria-expanded={notificationsOpen}
+              aria-controls="operations-notifications"
               onClick={() => setNotificationsOpen((open) => !open)}
             >
               <Bell size={19} />
-              {unreadCount > 0 && <span />}
+              {unreadCount > 0 && <span className="notification-count">{badgeLabel(unreadCount)}</span>}
             </button>
             {notificationsOpen && <NotificationPanel navigate={go} />}
             <div className="user-chip">

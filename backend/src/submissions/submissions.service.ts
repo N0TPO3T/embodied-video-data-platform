@@ -138,6 +138,7 @@ type SubmissionListQuery = {
   status?: string;
   page?: number;
   pageSize?: number;
+  includeThumbnails?: boolean;
 };
 
 function decimal(value: number, digits: number): string {
@@ -843,10 +844,19 @@ export class SubmissionsService {
     const ordered = new Map(
       submissions.map((submission) => [submission.id, submission]),
     );
+    const thumbnails = input.includeThumbnails
+      ? await this.thumbnailMap(submissions)
+      : new Map<
+          string,
+          { url: string; expiresAt: number; contentType: string }
+        >();
     return {
       submissions: ids.flatMap((id) => {
         const submission = ordered.get(id);
-        return submission ? [publicSubmission(submission)] : [];
+        if (!submission) return [];
+        const item = publicSubmission(submission);
+        const thumbnail = thumbnails.get(id);
+        return [thumbnail ? { ...item, thumbnail } : item];
       }),
       pagination: {
         page,
@@ -855,6 +865,46 @@ export class SubmissionsService {
         totalPages: paged ? Math.max(1, Math.ceil(total / pageSize)) : 1,
       },
     };
+  }
+
+  private async thumbnailMap(
+    submissions: SubmissionEntity[],
+  ): Promise<
+    Map<
+      string,
+      { url: string; expiresAt: number; contentType: string }
+    >
+  > {
+    const result = new Map<
+      string,
+      { url: string; expiresAt: number; contentType: string }
+    >();
+    await Promise.all(
+      submissions.map(async (submission) => {
+        if (submission.storageStatus !== "available") return;
+        const metadata = (
+          submission as SubmissionEntity & {
+            metadata?: MediaMetadataEntity | null;
+          }
+        ).metadata;
+        const objectKey = metadata?.thumbnailObjectKey;
+        if (!objectKey) return;
+        try {
+          const signed = await this.storage.presignDownloadObject({
+            objectKey,
+            expiresInSeconds: PREVIEW_URL_TTL_SECONDS,
+          });
+          result.set(submission.id, {
+            url: signed.url,
+            expiresAt: signed.expiresAt.getTime(),
+            contentType: "image/jpeg",
+          });
+        } catch {
+          // 缩略图签名失败不应阻断列表返回，仅跳过该条缩略图。
+        }
+      }),
+    );
+    return result;
   }
 
   async exportCsv(actor: PublicUser, input: SubmissionListQuery = {}) {

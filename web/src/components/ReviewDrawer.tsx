@@ -310,9 +310,21 @@ export function ReviewDrawer({
         ) : null}
         {submission.qualityResult?.reviewReasons?.length ? <div className="review-reasons"><strong>AI 建议人工复核：</strong><ul>{submission.qualityResult.reviewReasons.map((reason, index) => <li key={`reason-${index}`}>{reason}</li>)}</ul></div> : null}
       </section>
+      {submission.qualityResult?.manualReview && (
+        <div className="manual-review-banner">
+          <div className="manual-review-head">
+            <strong>人工复核记录</strong>
+            <span>{submission.qualityResult.manualReview.reviewedByName} · {submission.qualityResult.manualReview.reviewedAt}</span>
+          </div>
+          <p>{submission.qualityResult.manualReview.reason}</p>
+          {submission.qualityResult.manualReview.finalScore !== null && submission.qualityResult.manualReview.finalScore !== undefined && (
+            <small>复核后评分 {submission.qualityResult.manualReview.finalScore}/100</small>
+          )}
+        </div>
+      )}
       {duplicateCandidate && (
         <section className="ai-conclusion duplicate-review">
-          <div><span>近似重复候选</span><StatusBadge label="待确认" tone="warning" /></div>
+          <div className="ai-conclusion-head"><span>近似重复候选</span><StatusBadge label="待确认" tone="warning" /></div>
           <strong>{Math.round(duplicateCandidate.similarity * 100)}<small>%</small></strong>
           <p>疑似与 {duplicateCandidate.candidateFileName ?? duplicateCandidate.candidateSubmissionId} 重复，解除前不会进入积分锁定。</p>
           {!readOnly && <button className="table-action" disabled={duplicateSaving} type="button" onClick={clearDuplicate}><CopyCheck size={15} />{duplicateSaving ? "处理中" : "解除重复标记"}</button>}
@@ -327,9 +339,7 @@ export function ReviewDrawer({
             <div><span><Coins size={13} />预估积分</span><strong>{submission.qualityStatus === "pending" ? "—" : points === null ? unavailableEstimateLabel : `${points.toFixed(2)} 分`}</strong></div>
           </div>
           {submission.qualityResult?.manualReview ? (
-            <p className="form-message success">
-              {submission.qualityResult.manualReview.reviewedByName} 已复核：{submission.qualityResult.manualReview.reason}
-            </p>
+            <p className="form-message">复核原因已在上方「人工复核记录」中展示。</p>
           ) : (
             <p className="form-message">团长仅可查看结果。如需人工修正，请联系平台管理员处理。</p>
           )}
