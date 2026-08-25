@@ -1,7 +1,7 @@
-export const VIDEO_QC_RULE_VERSION = "video_qc_v1" as const;
-export const VIDEO_QC_PROMPT_VERSION = "qwen_video_qc_prompt_v3" as const;
+export const VIDEO_QC_RULE_VERSION = "video_qc_v2" as const;
+export const VIDEO_QC_PROMPT_VERSION = "qwen_video_qc_prompt_v4" as const;
 export const VIDEO_QC_INPUT_SCHEMA = "video_qc_input_v1" as const;
-export const VIDEO_QC_RESULT_SCHEMA = "video_qc_v1" as const;
+export const VIDEO_QC_RESULT_SCHEMA = "video_qc_v2" as const;
 
 export type EvaluationStatus =
   | "scored"
@@ -198,6 +198,8 @@ export type RawVideoQcResultV1 = {
     standard_task_id?: string | null;
     variant_id?: string | null;
   } | null;
+  /** 任务符合度（v2 提示词起；提供任务要求区块时必须输出） */
+  task_compliance?: TaskComplianceResult | null;
 };
 
 export type RawDimensionKey = "D1" | "D2" | "D3" | "D4" | "D5";
@@ -249,6 +251,28 @@ export type DetectedTaskSummary = {
   variant_id?: string | null;
 };
 
+/** 任务符合度条目判定（模型输出，服务端复算为准） */
+export type TaskComplianceItemResult = "met" | "partial" | "unmet";
+
+export type TaskComplianceItem = {
+  requirement: string;
+  type: "hard" | "soft";
+  result: TaskComplianceItemResult;
+  confidence: number;
+  evidence_timestamps_ms: number[];
+};
+
+export type TaskComplianceResult = {
+  scene_match: {
+    matched: boolean;
+    confidence: number;
+    note?: string;
+  };
+  items: TaskComplianceItem[];
+  compliance_ratio: number | null;
+  review_required: boolean;
+};
+
 export type ValidationReport = {
   warnings: string[];
   errors: string[];
@@ -275,6 +299,8 @@ export type NormalizedVideoQcResultV1 = {
   }>;
   hardVeto: RawVideoQcResultV1["hard_reject"];
   detectedTask: DetectedTaskSummary;
+  /** 任务符合度（任务要求区块存在时由模型输出；服务端以复算结果为准） */
+  taskCompliance: TaskComplianceResult | null;
   deductions: Array<QualityIssue & { dimension?: string }>;
   recommendations: string[];
   summary: string;

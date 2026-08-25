@@ -188,8 +188,8 @@ export function createQualityLabApp(options: QualityLabAppOptions): Express {
         : "not_configured",
       initialModel: options.environment.initialModel,
       reviewModel: options.environment.reviewModel,
-      ruleVersion: "video_qc_v1",
-      promptVersion: "qwen_video_qc_prompt_v1",
+      ruleVersion: "video_qc_v2",
+      promptVersion: "qwen_video_qc_prompt_v4",
       promptRevision: activePrompt?.revision ?? 1,
       concurrency: maxConcurrency,
     });

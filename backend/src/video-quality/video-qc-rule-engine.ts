@@ -8,6 +8,8 @@ import type {
   RawDimensionKey,
   RawQualityIssue,
   RawVideoQcResultV1,
+  TaskComplianceItem,
+  TaskComplianceResult,
   VideoQcInputV1,
 } from "./video-quality.types.js";
 import {
@@ -259,6 +261,11 @@ export function normalizeVideoQcResult(
     errors.push("EXACT_DUPLICATE 缺少权威文件哈希依据");
   }
 
+  const taskCompliance = normalizeTaskCompliance(
+    input.raw.task_compliance,
+    warnings,
+  );
+
   const invalidSegments: NormalizedVideoQcResultV1["invalidSegments"] = [];
   for (const window of input.evidence.technicalMetrics.detector_windows) {
     if (window.type !== "black" && window.type !== "freeze") continue;
@@ -364,6 +371,7 @@ export function normalizeVideoQcResult(
           ? input.raw.detectedTask.variant_id
           : null,
     },
+    taskCompliance,
     deductions,
     recommendations: input.raw.recommendations,
     summary: input.raw.overall_result.summary,
@@ -383,6 +391,200 @@ export function normalizeVideoQcResult(
       technicalMetrics: input.evidence.technicalMetrics,
       fullVideoSamplingFps: input.evidence.fullVideoSamplingFps,
       fullVideoFrameCount: input.evidence.fullVideoFrames.length,
+    },
+  };
+}
+
+function clampRatio(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+/**
+ * 把模型输出的任务符合度规整为受控结构（缺失/非法字段容错）。
+ */
+export function normalizeTaskCompliance(
+  raw: RawVideoQcResultV1["task_compliance"],
+  warnings: string[],
+): TaskComplianceResult | null {
+  if (!raw || typeof raw !== "object") return null;
+  const items = Array.isArray(raw.items)
+    ? raw.items
+        .filter(
+          (item): item is TaskComplianceResult["items"][number] =>
+            item !== null &&
+            typeof item === "object" &&
+            typeof (item as { requirement?: unknown }).requirement === "string" &&
+            (item as { requirement: string }).requirement.trim() !== "",
+        )
+        .map((item): TaskComplianceItem => {
+          const record = item as Record<string, unknown>;
+          const type: TaskComplianceItem["type"] =
+            record.type === "hard" ? "hard" : "soft";
+          const result: TaskComplianceItem["result"] =
+            record.result === "met" || record.result === "partial"
+              ? record.result
+              : "unmet";
+          return {
+            requirement: String(record.requirement).slice(0, 2_000),
+            type,
+            result,
+            confidence: Number.isFinite(Number(record.confidence))
+              ? clampRatio(Number(record.confidence))
+              : 0.5,
+            evidence_timestamps_ms: Array.isArray(record.evidence_timestamps_ms)
+              ? record.evidence_timestamps_ms
+                  .filter((timestamp) => Number.isFinite(Number(timestamp)))
+                  .map((timestamp) => Math.max(0, Number(timestamp)))
+                  .slice(0, 200)
+              : [],
+          };
+        })
+        .slice(0, 100)
+    : [];
+  const sceneMatch =
+    raw.scene_match && typeof raw.scene_match === "object"
+      ? {
+          matched: raw.scene_match.matched === true,
+          confidence: Number.isFinite(Number(raw.scene_match.confidence))
+            ? clampRatio(Number(raw.scene_match.confidence))
+            : 0.5,
+          ...(typeof raw.scene_match.note === "string" &&
+          raw.scene_match.note.trim()
+            ? { note: raw.scene_match.note.slice(0, 500) }
+            : {}),
+        }
+      : { matched: true, confidence: 0.5 };
+  const ratio = serverComplianceRatio(items);
+  if (
+    raw.compliance_ratio !== null &&
+    raw.compliance_ratio !== undefined &&
+    Number.isFinite(Number(raw.compliance_ratio)) &&
+    Math.abs(Number(raw.compliance_ratio) - ratio) > 0.05
+  ) {
+    warnings.push(
+      `模型 compliance_ratio 与条目复算结果不一致（模型 ${raw.compliance_ratio} / 复算 ${ratio.toFixed(2)}）`,
+    );
+  }
+  return {
+    scene_match: sceneMatch,
+    items,
+    compliance_ratio: ratio,
+    review_required: raw.review_required === true,
+  };
+}
+
+/** 服务端按条目复算符合度比例：met=1、partial=0.5、unmet=0（无条目时为 0） */
+export function serverComplianceRatio(
+  items: TaskComplianceResult["items"],
+): number {
+  if (items.length === 0) return 0;
+  const total = items.reduce((sum, item) => {
+    if (item.result === "met") return sum + 1;
+    if (item.result === "partial") return sum + 0.5;
+    return sum;
+  }, 0);
+  return total / items.length;
+}
+
+/**
+ * 服务端任务符合度复算：覆盖模型 D4 分数并重算总分。
+ * - D4 系数 = 符合度比例 × 场景匹配因子（场景不匹配 0.5）；
+ * - 硬性要求未满足 ≥ 1 项或场景不匹配 → 进入人工复核（review_pending）；
+ * - 重算 raw_total_score / final_score / settlement_ratio。
+ * 返回新的 normalized 对象，不修改入参。
+ */
+export function applyServerTaskCompliance(
+  normalized: NormalizedVideoQcResultV1,
+  compliance: TaskComplianceResult,
+): NormalizedVideoQcResultV1 {
+  const ratio = serverComplianceRatio(compliance.items);
+  const sceneMatched = compliance.scene_match.matched;
+  const sceneFactor = sceneMatched ? 1 : 0.5;
+  const d4Coefficient = clampRatio(ratio * sceneFactor);
+
+  const hardUnmet = compliance.items.filter(
+    (item) => item.type === "hard" && item.result === "unmet",
+  );
+  const complianceReview = !sceneMatched || hardUnmet.length > 0;
+  const reviewReasons = [...normalized.reviewReasons];
+  if (!sceneMatched) {
+    reviewReasons.push("任务符合度：视频内容与任务声明场景不匹配");
+  }
+  if (hardUnmet.length > 0) {
+    reviewReasons.push(
+      `任务符合度：${hardUnmet.length} 条硬性要求未满足（${hardUnmet
+        .slice(0, 5)
+        .map((item) => item.requirement)
+        .join("；")}）`,
+    );
+  }
+
+  const dimensions = { ...normalized.dimensions };
+  const d4 = dimensions.task_authenticity_completeness;
+  dimensions.task_authenticity_completeness = {
+    ...d4,
+    coefficient: d4Coefficient,
+    score: Math.round((d4Coefficient * 20 + Number.EPSILON) * 10) / 10,
+    calculation_trace: [
+      d4.calculation_trace,
+      `server_task_compliance: ratio=${ratio.toFixed(3)}, scene_matched=${sceneMatched}, coefficient=${d4Coefficient.toFixed(3)}`,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    metrics: {
+      ...d4.metrics,
+      task_compliance_ratio: ratio,
+      ...(sceneMatched ? {} : { scene_matched: 0 }),
+    },
+  };
+
+  const unroundedTotal = (
+    Object.values(dimensions) as QualityDimension[]
+  ).reduce<number | null>((total, dimension) => {
+    if (dimension.coefficient === null) return null;
+    const score = 20 * dimension.coefficient;
+    return total === null ? score : total + score;
+  }, 0);
+  const finalScore =
+    unroundedTotal === null
+      ? null
+      : Math.round(
+          (Math.max(0, Math.min(100, unroundedTotal)) + Number.EPSILON) * 10,
+        ) / 10;
+
+  const evaluationStatus: NormalizedVideoQcResultV1["evaluationStatus"] =
+    complianceReview && normalized.evaluationStatus === "scored"
+      ? "review_pending"
+      : normalized.evaluationStatus;
+  const settlementRatio =
+    evaluationStatus === "hard_reject"
+      ? 0
+      : evaluationStatus === "scored"
+        ? coefficientForScore(finalScore ?? 0)
+        : null;
+
+  return {
+    ...normalized,
+    dimensions,
+    rawTotalScore:
+      unroundedTotal === null ? null : Math.round((unroundedTotal + Number.EPSILON) * 10) / 10,
+    finalScore,
+    settlementRatio,
+    taskCompliance: {
+      ...compliance,
+      review_required:
+        compliance.review_required || complianceReview,
+    },
+    evaluationStatus,
+    reviewRequired:
+      normalized.reviewRequired || complianceReview,
+    reviewReasons: [...new Set(reviewReasons)],
+    validation: {
+      ...normalized.validation,
+      warnings: [
+        ...normalized.validation.warnings,
+        "任务符合度已由服务端按条目复算并覆盖 D4 分数",
+      ],
     },
   };
 }
