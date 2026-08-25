@@ -8,7 +8,7 @@ export function videoQualityPromptPath(): string {
   if (configured && existsSync(configured)) return configured;
   return fileURLToPath(
     new URL(
-      "../../../docs/quality/prompts/qwen-video-ai-quality-prompt-v1/manifest.json",
+      "../../../docs/quality/prompts/qwen-video-ai-quality-framework-v2/manifest.json",
       import.meta.url,
     ),
   );

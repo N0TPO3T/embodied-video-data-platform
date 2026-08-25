@@ -7,6 +7,7 @@ import { DataSource, In, Repository, type EntityManager } from "typeorm";
 import { AuditService } from "../audit/audit.service.js";
 import type { PublicUser } from "../auth/auth.types.js";
 import { csvDocument } from "../csv/csv.js";
+import { CollectionTaskEntity } from "../database/entities/collection-task.entity.js";
 import { MediaMetadataEntity } from "../database/entities/media-metadata.entity.js";
 import { PointCycleAdjustmentEntity } from "../database/entities/point-cycle-adjustment.entity.js";
 import { PointCycleEntity } from "../database/entities/point-cycle.entity.js";
@@ -22,9 +23,31 @@ import {
   settlementRatioForScore,
 } from "../rules/rule-calculator.js";
 import { loadLatestPointCycleAdjustments } from "./latest-point-cycle-adjustments.js";
+import { AdjustPointCycleItemDto } from "./dto/point-cycle.dto.js";
 import { PointCycleFailure } from "./point-cycle-failure.js";
 import { PointCyclesPolicy } from "./point-cycles.policy.js";
 import { PointRulesService } from "./point-rules.service.js";
+
+/** 批量读取各提交的原始无效时长（人工覆盖优先，其次质检结果） */
+async function loadInvalidDurationBySubmission(
+  manager: EntityManager,
+  submissionIds: string[],
+): Promise<Map<string, number>> {
+  const unique = [...new Set(submissionIds)];
+  if (unique.length === 0) return new Map();
+  const rows = await manager
+    .getRepository(VideoQualityResultEntity)
+    .createQueryBuilder("quality")
+    .select([
+      "quality.submissionId AS submission_id",
+      "COALESCE(quality.manual_invalid_duration_ms, quality.invalid_duration_ms, 0) AS invalid_ms",
+    ])
+    .where("quality.submissionId IN (:...submissionIds)", { submissionIds: unique })
+    .getRawMany<{ submission_id: string; invalid_ms: string | null }>();
+  return new Map(
+    rows.map((row) => [row.submission_id, Number(row.invalid_ms ?? 0)]),
+  );
+}
 
 type Candidate = {
   submission: SubmissionEntity;
@@ -36,6 +59,7 @@ type Candidate = {
   effectiveDurationMs: number;
   pointsPerMinute: number;
   points: number;
+  taskName: string | null;
 };
 
 function decimal(value: number, digits: number): string {
@@ -70,6 +94,7 @@ function effectiveItemValues(
 function publicItem(
   item: PointCycleItemEntity,
   adjustment?: PointCycleAdjustmentEntity,
+  invalidDurationMs?: number,
 ) {
   const effective = effectiveItemValues(item, adjustment);
   return {
@@ -80,25 +105,44 @@ function publicItem(
     teamId: item.teamId,
     teamName: item.teamName,
     fileName: item.fileName,
+    taskId: item.taskId,
+    taskName: item.taskName,
+    taskSceneName: item.taskSceneName,
+    taskPricePointsPerMinute:
+      item.taskPricePointsPerMinute === null ||
+      item.taskPricePointsPerMinute === undefined
+        ? null
+        : Number(item.taskPricePointsPerMinute),
     finalScore: effective.finalScore,
     settlementRatio: effective.settlementRatio,
     effectiveDurationMs: effective.effectiveDurationMs,
     effectiveMinutes:
       Math.round((effective.effectiveDurationMs / 60_000) * 100) / 100,
+    invalidDurationMs:
+      adjustment?.nextInvalidDurationMs !== undefined
+        ? Number(adjustment.nextInvalidDurationMs)
+        : (invalidDurationMs ?? 0),
     pointsPerMinute: Number(item.pointsPerMinute),
     points: effective.points,
     qualityRevision: item.qualityRevision,
     qualityReviewedAt: item.qualityReviewedAt?.getTime(),
+    adjusted: adjustment !== undefined,
+    adjustedAt: adjustment?.createdAt.getTime(),
   };
 }
 
 function publicCycle(
   cycle: PointCycleEntity,
   latestAdjustments = new Map<string, PointCycleAdjustmentEntity>(),
+  invalidBySubmission = new Map<string, number>(),
 ) {
   const items = cycle.items ?? [];
   const publicItems = items.map((item) =>
-    publicItem(item, latestAdjustments.get(item.id)),
+    publicItem(
+      item,
+      latestAdjustments.get(item.id),
+      invalidBySubmission.get(item.submissionId),
+    ),
   );
   const visibleSubmissionCount = items.length;
   const visibleEffectiveDurationMs = publicItems.reduce(
@@ -180,7 +224,15 @@ export class PointCyclesService {
       this.dataSource.manager,
       cycles.flatMap((cycle) => (cycle.items ?? []).map((item) => item.id)),
     );
-    return cycles.map((cycle) => publicCycle(cycle, latestAdjustments));
+    const invalidBySubmission = await loadInvalidDurationBySubmission(
+      this.dataSource.manager,
+      cycles.flatMap((cycle) =>
+        (cycle.items ?? []).map((item) => item.submissionId),
+      ),
+    );
+    return cycles.map((cycle) =>
+      publicCycle(cycle, latestAdjustments, invalidBySubmission),
+    );
   }
 
   async get(actor: PublicUser, id: string) {
@@ -205,7 +257,11 @@ export class PointCyclesService {
       this.dataSource.manager,
       (cycle.items ?? []).map((item) => item.id),
     );
-    return publicCycle(cycle, latestAdjustments);
+    const invalidBySubmission = await loadInvalidDurationBySubmission(
+      this.dataSource.manager,
+      (cycle.items ?? []).map((item) => item.submissionId),
+    );
+    return publicCycle(cycle, latestAdjustments, invalidBySubmission);
   }
 
   async exportCsv(actor: PublicUser, id: string): Promise<string> {
@@ -220,6 +276,9 @@ export class PointCyclesService {
         "team_name",
         "owner_id",
         "owner_name",
+        "task_id",
+        "task_name",
+        "task_scene_name",
         "final_score",
         "settlement_ratio",
         "effective_minutes",
@@ -237,6 +296,9 @@ export class PointCyclesService {
         item.teamName,
         item.ownerId,
         item.ownerName,
+        item.taskId ?? "",
+        item.taskName ?? "",
+        item.taskSceneName ?? "",
         item.finalScore.toFixed(1),
         item.settlementRatio.toFixed(4),
         item.effectiveMinutes.toFixed(2),
@@ -249,6 +311,160 @@ export class PointCyclesService {
       ]),
     ];
     return csvDocument(rows);
+  }
+
+  /**
+   * 对已锁定周期中的单个视频条目进行人工积分调整。
+   * 管理员可调整最终评分和/或无效时长；结算系数与积分由服务端按周期快照规则重算，
+   * 调整记录完整保留 before/after 快照并写入审计。
+   */
+  async adjustItem(
+    actor: PublicUser,
+    cycleId: string,
+    itemId: string,
+    input: AdjustPointCycleItemDto,
+  ) {
+    this.policy.requireCreate(actor);
+    const reason = input.reason.trim();
+    if (!reason) {
+      throw new PointCycleFailure("VALIDATION", "请填写调整原因", 400);
+    }
+    return this.dataSource.transaction(async (manager) => {
+      const cycle = await manager.getRepository(PointCycleEntity).findOne({
+        where: { id: cycleId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!cycle) {
+        throw new PointCycleFailure("NOT_FOUND", "积分周期不存在", 404);
+      }
+      const item = await manager.getRepository(PointCycleItemEntity).findOne({
+        where: { id: itemId, cycleId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!item) {
+        throw new PointCycleFailure("NOT_FOUND", "周期条目不存在", 404);
+      }
+      const quality = await manager
+        .getRepository(VideoQualityResultEntity)
+        .findOne({ where: { submissionId: item.submissionId } });
+      if (!quality) {
+        throw new PointCycleFailure(
+          "VALIDATION",
+          "该条目的质检结果不存在，无法调整",
+          409,
+        );
+      }
+
+      const adjustments = await loadLatestPointCycleAdjustments(manager, [
+        itemId,
+      ]);
+      const latest = adjustments.get(itemId);
+      const previous = effectiveItemValues(item, latest);
+      const previousInvalidMs = Number(
+        latest?.nextInvalidDurationMs ??
+          quality.manualInvalidDurationMs ??
+          quality.invalidDurationMs ??
+          0,
+      );
+      const durationMs = previous.effectiveDurationMs + previousInvalidMs;
+
+      const nextFinalScore =
+        input.nextFinalScore === undefined
+          ? previous.finalScore
+          : input.nextFinalScore;
+      const nextInvalidMs =
+        input.nextInvalidDurationMs === undefined
+          ? previousInvalidMs
+          : input.nextInvalidDurationMs;
+      const nextEffectiveMs = Math.max(0, durationMs - nextInvalidMs);
+
+      if (
+        nextFinalScore === previous.finalScore &&
+        nextInvalidMs === previousInvalidMs
+      ) {
+        throw new PointCycleFailure(
+          "VALIDATION",
+          "评分与无效时长均未变化，无需调整",
+          400,
+        );
+      }
+
+      const passThreshold = Number(
+        quality.qualityRuleSnapshot?.passThreshold ?? 60,
+      );
+      const nextRatio = settlementRatioForScore({
+        score: nextFinalScore,
+        passThreshold,
+        coefficientBands: cycle.pointRuleSnapshot?.coefficientBands ?? [],
+      });
+      const nextPoints = pointsForRule({
+        pointsPerMinute: Number(item.pointsPerMinute),
+        effectiveDurationMs: nextEffectiveMs,
+        settlementRatio: nextRatio,
+      });
+      const previousPoints = Number(previous.points);
+
+      const adjustment = await manager
+        .getRepository(PointCycleAdjustmentEntity)
+        .save({
+          id: `PCA-${randomUUID()}`,
+          pointCycleItemId: itemId,
+          submissionId: item.submissionId,
+          previousFinalScore: decimal(previous.finalScore, 1),
+          nextFinalScore: decimal(nextFinalScore, 1),
+          previousSettlementRatio: decimal(previous.settlementRatio, 4),
+          nextSettlementRatio: decimal(nextRatio, 4),
+          previousInvalidDurationMs: String(previousInvalidMs),
+          nextInvalidDurationMs: String(nextInvalidMs),
+          previousEffectiveDurationMs: String(previous.effectiveDurationMs),
+          nextEffectiveDurationMs: String(nextEffectiveMs),
+          previousPoints: decimal(previousPoints, 2),
+          nextPoints: decimal(nextPoints, 2),
+          pointsDelta: decimal(nextPoints - previousPoints, 2),
+          reason,
+          createdByAccountId: actor.id,
+          createdByName: actor.displayName,
+        });
+
+      await this.audit.record(
+        manager,
+        actor,
+        "point_cycle_adjust",
+        { id: cycle.id, name: cycle.businessDate },
+        `调整周期 ${cycle.businessDate} 条目「${item.fileName}」积分：${decimal(previousPoints, 2)} → ${decimal(nextPoints, 2)}`,
+        {
+          submissionId: item.submissionId,
+          previousFinalScore: previous.finalScore,
+          previousPoints: previousPoints,
+        },
+        {
+          submissionId: item.submissionId,
+          nextFinalScore,
+          nextPoints,
+          reason,
+        },
+      );
+
+      const reloaded = await manager
+        .getRepository(PointCycleEntity)
+        .createQueryBuilder("cycle")
+        .leftJoinAndSelect("cycle.items", "item")
+        .where("cycle.id = :cycleId", { cycleId })
+        .orderBy("item.teamName", "ASC")
+        .addOrderBy("item.ownerName", "ASC")
+        .addOrderBy("item.fileName", "ASC")
+        .getOneOrFail();
+      const allAdjustments = await loadLatestPointCycleAdjustments(
+        manager,
+        (reloaded.items ?? []).map((entry) => entry.id),
+      );
+      const invalidBySubmission = await loadInvalidDurationBySubmission(
+        manager,
+        (reloaded.items ?? []).map((entry) => entry.submissionId),
+      );
+      void adjustment;
+      return publicCycle(reloaded, allAdjustments, invalidBySubmission);
+    });
   }
 
   async create(actor: PublicUser, businessDate = todayIsoDate()) {
@@ -295,6 +511,10 @@ export class PointCyclesService {
           teamId: candidate.submission.teamId,
           teamName: candidate.submission.team?.name ?? "",
           fileName: candidate.submission.originalFileName,
+          taskId: candidate.submission.taskId,
+          taskName: candidate.taskName,
+          taskSceneName: candidate.submission.taskSceneName,
+          taskPricePointsPerMinute: candidate.submission.taskPricePointsPerMinute,
           finalScore: decimal(candidate.finalScore, 1),
           settlementRatio: decimal(candidate.settlementRatio, 4),
           effectiveDurationMs: String(candidate.effectiveDurationMs),
@@ -326,7 +546,11 @@ export class PointCyclesService {
         .addOrderBy("item.ownerName", "ASC")
         .addOrderBy("item.fileName", "ASC")
         .getOneOrFail();
-      return publicCycle(locked);
+      const invalidBySubmission = await loadInvalidDurationBySubmission(
+        manager,
+        (locked.items ?? []).map((entry) => entry.submissionId),
+      );
+      return publicCycle(locked, undefined, invalidBySubmission);
     });
   }
 
@@ -414,6 +638,22 @@ export class PointCyclesService {
     }
 
     const submissions = await query.getMany();
+    const taskIds = [
+      ...new Set(
+        submissions
+          .map((submission) => submission.taskId)
+          .filter((id): id is string => id !== null),
+      ),
+    ];
+    const taskTitles = new Map(
+      taskIds.length === 0
+        ? []
+        : (
+            await manager
+              .getRepository(CollectionTaskEntity)
+              .findBy({ id: In(taskIds) })
+          ).map((task) => [task.id, task.title]),
+    );
     const legacyRuleIds = [
       ...new Set(
         submissions.flatMap((submission) => {
@@ -478,13 +718,21 @@ export class PointCyclesService {
               0,
           ) + invalidDurationMs;
       const effectiveDurationMs = Math.max(0, durationMs - invalidDurationMs);
+      // 单价优先级：任务快照单价 > 团队单价 > 全局默认积分
+      const taskPrice =
+        submission.taskPricePointsPerMinute === null ||
+        submission.taskPricePointsPerMinute === undefined
+          ? null
+          : Number(submission.taskPricePointsPerMinute);
       const teamPointsPerMinute = Number(
         submission.team?.unitPricePerMinute ?? 0,
       );
       const pointsPerMinute =
-        teamPointsPerMinute > 0
-          ? teamPointsPerMinute
-          : Number(pointRule.defaultPointsPerMinute);
+        taskPrice !== null && taskPrice > 0
+          ? taskPrice
+          : teamPointsPerMinute > 0
+            ? teamPointsPerMinute
+            : Number(pointRule.defaultPointsPerMinute);
       const points = pointsForRule({
         pointsPerMinute,
         effectiveDurationMs,
@@ -501,6 +749,9 @@ export class PointCyclesService {
           effectiveDurationMs,
           pointsPerMinute,
           points,
+          taskName: submission.taskId
+            ? taskTitles.get(submission.taskId) ?? null
+            : null,
         },
       ];
     });

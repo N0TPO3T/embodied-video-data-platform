@@ -69,6 +69,7 @@ export function TeamSubmissionsPage() {
       status,
       page,
       pageSize: PAGE_SIZE,
+      includeThumbnails: true,
     })
       .then((result) => {
         if (!active) return;

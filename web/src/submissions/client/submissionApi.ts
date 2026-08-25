@@ -163,6 +163,7 @@ export type SearchSubmissionsInput = {
   status?: string;
   page?: number;
   pageSize?: number;
+  includeThumbnails?: boolean;
 };
 
 export type LoadAllSubmissionsInput = Omit<
@@ -184,6 +185,7 @@ function buildSubmissionSearchParams(
   const params = new URLSearchParams();
   if (input.q?.trim()) params.set("q", input.q.trim());
   if (input.status && input.status !== "all") params.set("status", input.status);
+  if (input.includeThumbnails) params.set("includeThumbnails", "1");
   if (options.includePagination !== false && input.page !== undefined) {
     params.set("page", String(input.page));
   }

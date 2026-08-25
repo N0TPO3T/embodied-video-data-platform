@@ -4,6 +4,7 @@ import { TypeOrmModule } from "@nestjs/typeorm";
 import { AiQualityModule } from "../ai-quality/ai-quality.module.js";
 import { AuditModule } from "../audit/audit.module.js";
 import { AuthModule } from "../auth/auth.module.js";
+import { CollectionTaskEntity } from "../database/entities/collection-task.entity.js";
 import { JobOutboxEntity } from "../database/entities/job-outbox.entity.js";
 import { SubmissionDuplicateCandidateEntity } from "../database/entities/submission-duplicate-candidate.entity.js";
 import { SubmissionEntity } from "../database/entities/submission.entity.js";
@@ -24,6 +25,7 @@ import { SubmissionsService } from "./submissions.service.js";
       SubmissionDuplicateCandidateEntity,
       JobOutboxEntity,
       VideoQualityResultEntity,
+      CollectionTaskEntity,
     ]),
     AuditModule,
     AuthModule,

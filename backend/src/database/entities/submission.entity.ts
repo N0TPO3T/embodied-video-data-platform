@@ -94,6 +94,33 @@ export class SubmissionEntity {
   @Column({ name: "is_test_data", type: "boolean", default: false })
   isTestData = false;
 
+  /** 所属采集任务；历史提交为 null（无任务模式） */
+  @Index("idx_submissions_task_id")
+  @Column({ name: "task_id", type: "varchar", length: 64, nullable: true })
+  taskId: string | null = null;
+
+  /** 提交时锁定的任务版本号（后续任务修改不影响已提交数据） */
+  @Column({ name: "task_revision", type: "integer", nullable: true })
+  taskRevision: number | null = null;
+
+  /** 快照：任务场景名 */
+  @Column({ name: "task_scene_name", type: "varchar", length: 120, nullable: true })
+  taskSceneName: string | null = null;
+
+  /** 快照：AI 规范化后的任务要求（AI 质检使用） */
+  @Column({ name: "task_requirements_snapshot", type: "jsonb", nullable: true })
+  taskRequirementsSnapshot: unknown | null = null;
+
+  /** 快照：任务单价（每分钟积分，结算使用）；空则回退全局默认 */
+  @Column({
+    name: "task_price_points_per_minute",
+    type: "numeric",
+    precision: 10,
+    scale: 2,
+    nullable: true,
+  })
+  taskPricePointsPerMinute: string | null = null;
+
   @Column({ name: "asset_status", type: "varchar", length: 24, default: "active" })
   assetStatus: SubmissionAssetStatus = "active";
 

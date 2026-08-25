@@ -12,6 +12,7 @@ import { OperationsModule } from "./operations/operations.module.js";
 import { PointsModule } from "./points/points.module.js";
 import { PublicSiteModule } from "./public-site/public-site.module.js";
 import { SubmissionsModule } from "./submissions/submissions.module.js";
+import { TasksModule } from "./tasks/tasks.module.js";
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { SubmissionsModule } from "./submissions/submissions.module.js";
     AiQualityModule,
     PublicSiteModule,
     HealthModule,
+    TasksModule,
   ],
 })
 export class AppModule {}

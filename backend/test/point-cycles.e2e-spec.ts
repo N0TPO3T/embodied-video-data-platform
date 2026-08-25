@@ -309,7 +309,7 @@ describe("point cycle API", () => {
         systemPrompt: "point cycle prompt",
         contentSha256: "f".repeat(64),
         promptVersion: "qwen_video_qc_prompt_v1",
-        ruleVersion: "video_qc_v1",
+        ruleVersion: "video_qc_v2",
         outputSchema: "video_qc_result_v1",
         initialModel: "qwen3.7-plus",
         reviewModel: "qwen3.7-flash",
@@ -789,7 +789,7 @@ describe("point cycle API", () => {
     const adjustedRow = exported.text
       .split("\n")
       .find((row) => row.includes("SUB-PC-01,kitchen-a.mp4"));
-    expect(adjustedRow?.split(",").slice(8, 13)).toEqual([
+    expect(adjustedRow?.split(",").slice(11, 16)).toEqual([
       "92.0",
       "0.5000",
       "2.00",
@@ -824,7 +824,7 @@ describe("point cycle API", () => {
         .split("\n")
         .find((row) => row.includes("SUB-PC-01,kitchen-a.mp4"))
         ?.split(",")
-        .slice(8, 13),
+        .slice(11, 16),
     ).toEqual(["92.0", "0.5000", "2.00", "12.0000", "12.00"]);
 
     const leaderGet = await request(app.getHttpServer())
@@ -884,7 +884,7 @@ describe("point cycle API", () => {
         .split("\n")
         .find((row) => row.includes("SUB-PC-01,kitchen-a.mp4"))
         ?.split(",")
-        .slice(8, 13),
+        .slice(11, 16),
     ).toEqual(["92.0", "0.5000", "2.00", "12.0000", "12.00"]);
 
     const otherCookie = await login("point-other");

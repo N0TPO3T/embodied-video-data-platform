@@ -249,6 +249,7 @@ describe("review workflows", () => {
       status: "unsettled",
       page: 1,
       pageSize: 20,
+      includeThumbnails: true,
     });
     expect(screen.getByText("团队质检结果已连接后端")).toBeVisible();
     expect(screen.getByRole("region", { name: "最终质检结果" })).toBeVisible();

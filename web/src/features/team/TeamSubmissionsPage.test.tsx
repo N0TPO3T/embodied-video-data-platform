@@ -120,6 +120,7 @@ describe("TeamSubmissionsPage", () => {
       status: "all",
       page: 1,
       pageSize: 20,
+      includeThumbnails: true,
     });
   });
 
@@ -136,6 +137,7 @@ describe("TeamSubmissionsPage", () => {
         status: "passed",
         page: 1,
         pageSize: 20,
+        includeThumbnails: true,
       }),
     );
     expect(screen.getByRole("link", { name: "导出团队数据" })).toHaveAttribute(
@@ -150,6 +152,7 @@ describe("TeamSubmissionsPage", () => {
         status: "passed",
         page: 2,
         pageSize: 20,
+        includeThumbnails: true,
       }),
     );
   });

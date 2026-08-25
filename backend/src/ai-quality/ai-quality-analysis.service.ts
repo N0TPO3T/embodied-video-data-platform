@@ -34,6 +34,7 @@ import {
   settlementRatioForScore,
   type QualityRuleSnapshot,
 } from "../rules/rule-calculator.js";
+import { applyServerTaskCompliance } from "../video-quality/video-qc-rule-engine.js";
 import { videoQualityPromptPath } from "./ai-quality.config.js";
 import { AiQualityPromptService } from "./ai-quality-prompt.service.js";
 import {
@@ -46,6 +47,7 @@ import { InventoryService } from "./inventory.service.js";
 import { ScarcityConfigService } from "./scarcity-config.service.js";
 import {
   evaluationSystemPrompt,
+  parseTaskRequirementsSnapshot,
   promptContentSha256,
 } from "./evaluation-context.js";
 
@@ -497,10 +499,14 @@ export class AiQualityAnalysisService {
         }
         const qualitySnapshot = qualityRuleSnapshot(context.qualityRule);
         const labelsSnapshot = labelSetSnapshot(context.labelSet);
+        const taskSnapshot = submission.taskRequirementsSnapshot
+          ? parseTaskRequirementsSnapshot(submission.taskRequirementsSnapshot)
+          : null;
         const systemPromptSnapshot = evaluationSystemPrompt({
           basePrompt: context.activePrompt.systemPrompt,
           qualityRule: qualitySnapshot,
           labelSet: labelsSnapshot,
+          taskRequirements: taskSnapshot,
         });
         result = repository.create({
           submissionId,
@@ -604,9 +610,13 @@ export class AiQualityAnalysisService {
         lock: { mode: "pessimistic_write" },
       });
       if (!result) throw new Error("AI 质检运行记录不存在");
-      const status = resultStatus(normalized);
+      // 任务符合度由服务端按条目复算并覆盖 D4（仅当提交携带任务要求快照且模型输出 task_compliance 时）
+      const taskApplied = normalized.taskCompliance
+        ? applyServerTaskCompliance(normalized, normalized.taskCompliance)
+        : normalized;
+      const status = resultStatus(taskApplied);
       const qualityRule = await this.qualityRuleForResult(manager, result);
-      const finalScore = normalized.finalScore ?? 0;
+      const finalScore = taskApplied.finalScore ?? 0;
       const passed =
         status === "scored"
           ? passesQualityRule(finalScore, qualityRule.passThreshold)
@@ -622,32 +632,32 @@ export class AiQualityAnalysisService {
           : status === "hard_reject"
             ? 0
             : null;
-      const persistedNormalized = { ...normalized, settlementRatio };
+      const persistedNormalized = { ...taskApplied, settlementRatio };
       result.status = status;
       result.progressStage = "completed";
       result.progressUpdatedAt = new Date();
       result.stuckReason = null;
-      result.modelRuns = normalized.modelRuns as unknown as Array<
+      result.modelRuns = taskApplied.modelRuns as unknown as Array<
         Record<string, unknown>
       >;
-      result.finalScore = decimal(normalized.finalScore, 1);
-      result.rawTotalScore = decimal(normalized.rawTotalScore, 1);
+      result.finalScore = decimal(taskApplied.finalScore, 1);
+      result.rawTotalScore = decimal(taskApplied.rawTotalScore, 1);
       result.settlementRatio = decimal(settlementRatio, 4);
       result.passed = passed;
-      result.invalidDurationMs = String(normalized.invalidDurationMs);
-      result.billableDurationMs = String(normalized.billableDurationMs);
-      result.summary = normalized.summary;
-      result.recommendations = normalized.recommendations;
-      result.deductions = normalized.deductions as unknown as Array<
+      result.invalidDurationMs = String(taskApplied.invalidDurationMs);
+      result.billableDurationMs = String(taskApplied.billableDurationMs);
+      result.summary = taskApplied.summary;
+      result.recommendations = taskApplied.recommendations;
+      result.deductions = taskApplied.deductions as unknown as Array<
         Record<string, unknown>
       >;
-      result.reviewRequired = normalized.reviewRequired;
-      result.reviewReasons = normalized.reviewReasons;
+      result.reviewRequired = taskApplied.reviewRequired;
+      result.reviewReasons = taskApplied.reviewReasons;
       result.normalizedResult = persistedNormalized as unknown as Record<
         string,
         unknown
       >;
-      result.rawModelResult = normalized.rawModelResult as unknown as Record<
+      result.rawModelResult = taskApplied.rawModelResult as unknown as Record<
         string,
         unknown
       >;
@@ -660,7 +670,7 @@ export class AiQualityAnalysisService {
           processingStatus: "completed",
           failureCode: null,
           failureMessage: null,
-          ...(containsSensitiveRisk(normalized)
+          ...(containsSensitiveRisk(taskApplied)
             ? {
                 assetStatus: "quarantined" as const,
                 quarantineReason: "AI 命中敏感或隐私风险",

@@ -17,9 +17,9 @@ afterEach(async () => {
 });
 
 const VALID_MANIFEST = {
-  promptVersion: "qwen_video_qc_prompt_v3",
-  ruleVersion: "video_qc_v1",
-  outputSchema: "video_qc_v1",
+  promptVersion: "qwen_video_qc_prompt_v4",
+  ruleVersion: "video_qc_v2",
+  outputSchema: "video_qc_v2",
   initialModel: "qwen3.7-plus",
   reviewModel: "qwen3.7-flash",
   files: {
@@ -29,9 +29,9 @@ const VALID_MANIFEST = {
 };
 
 const VALID_OUTPUT_EXAMPLE = {
-  schema_version: "video_qc_v1",
-  rule_version: "video_qc_v1",
-  prompt_version: "qwen_video_qc_prompt_v3",
+  schema_version: "video_qc_v2",
+  rule_version: "video_qc_v2",
+  prompt_version: "qwen_video_qc_prompt_v4",
   task_id: "",
   evaluation_status: "completed",
   hard_reject: { triggered: false, reasons: [], candidates: [] },
@@ -66,23 +66,23 @@ async function makePromptDirectory(
 }
 
 describe("video quality prompt loader", () => {
-  it("loads the committed V1 prompt directory from its manifest", async () => {
+  it("loads the committed framework v2 prompt directory from its manifest", async () => {
     const prompt = await loadVideoQualityPrompt(
       resolve(
         process.cwd(),
-        "../docs/quality/prompts/qwen-video-ai-quality-prompt-v1/manifest.json",
+        "../docs/quality/prompts/qwen-video-ai-quality-framework-v2/manifest.json",
       ),
     );
 
-    expect(prompt.promptVersion).toBe("qwen_video_qc_prompt_v3");
-    expect(prompt.ruleVersion).toBe("video_qc_v1");
-    expect(prompt.outputSchema).toBe("video_qc_v1");
+    expect(prompt.promptVersion).toBe("qwen_video_qc_prompt_v4");
+    expect(prompt.ruleVersion).toBe("video_qc_v2");
+    expect(prompt.outputSchema).toBe("video_qc_v2");
     expect(prompt.initialModel).toBe("qwen3.7-plus");
     expect(prompt.reviewModel).toBe("qwen3.7-flash");
     expect(prompt.systemPrompt).toContain("具身视频数据质量评估器");
     expect(prompt.systemPrompt).toContain("简体中文");
     expect(prompt.systemPrompt).not.toContain("## 用户输入模板");
-    expect(prompt.outputExample.schema_version).toBe("video_qc_v1");
+    expect(prompt.outputExample.schema_version).toBe("video_qc_v2");
     expect(prompt.outputExample).toHaveProperty("hard_reject.triggered", false);
     expect(prompt.outputExample).toHaveProperty("dimensions.D5");
     expect(prompt.contentSha256).toMatch(/^[a-f0-9]{64}$/u);
@@ -91,7 +91,7 @@ describe("video quality prompt loader", () => {
   it("accepts a directory path and resolves its manifest.json", async () => {
     const directory = await makePromptDirectory();
     const prompt = await loadVideoQualityPrompt(directory);
-    expect(prompt.promptVersion).toBe("qwen_video_qc_prompt_v3");
+    expect(prompt.promptVersion).toBe("qwen_video_qc_prompt_v4");
     expect(prompt.systemPrompt).toContain("system prompt");
   });
 
@@ -120,7 +120,7 @@ describe("video quality prompt loader", () => {
     const directory = await makePromptDirectory({
       manifest: {
         ...VALID_MANIFEST,
-        promptVersion: "qwen_video_qc_prompt_v3",
+        promptVersion: "qwen_video_qc_prompt_v99",
         ruleVersion: "video_qc_v2",
       },
       systemPrompt: "system prompt",

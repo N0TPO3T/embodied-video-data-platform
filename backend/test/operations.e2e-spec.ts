@@ -199,7 +199,7 @@ describe("operations API", () => {
         systemPrompt: "ops prompt",
         contentSha256: "f".repeat(64),
         promptVersion: "qwen_video_qc_prompt_v1",
-        ruleVersion: "video_qc_v1",
+        ruleVersion: "video_qc_v2",
         outputSchema: "video_qc_result_v1",
         initialModel: "qwen3.7-plus",
         reviewModel: "qwen3.7-flash",
@@ -647,6 +647,11 @@ describe("operations API", () => {
     expect(
       admin.body.navigationBadges.find(
         (badge: { path: string }) => badge.path === "/admin/settlements",
+      ),
+    ).toBeUndefined();
+    expect(
+      admin.body.navigationBadges.find(
+        (badge: { path: string }) => badge.path === "/admin/audit",
       ),
     ).toBeUndefined();
     expect(admin.body.notifications).toEqual(

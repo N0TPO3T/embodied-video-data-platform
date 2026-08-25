@@ -67,6 +67,7 @@ services:
       PORT: 4000
       EVDP_ALLOW_LOCAL_DEFAULT_PASSWORDS: "true"
       EVDP_AUTO_RECLAIM_WORKER_TIMEOUTS: "true"
+      VIDEO_QUALITY_PROMPT_PATH: /quality/prompts/qwen-video-ai-quality-framework-v2/manifest.json
     ports:
       - "127.0.0.1:4000:4000"
     read_only: true
@@ -121,7 +122,7 @@ services:
       NODE_ENV: production
       AI_QUALITY_CONCURRENCY: 3
       AI_QUALITY_MODEL_TIMEOUT_MS: 600000
-      VIDEO_QUALITY_PROMPT_PATH: /quality/prompts/qwen-video-ai-quality-prompt-v1/manifest.json
+      VIDEO_QUALITY_PROMPT_PATH: /quality/prompts/qwen-video-ai-quality-framework-v2/manifest.json
     read_only: true
     tmpfs:
       - /tmp:size=3221225472,mode=1777
@@ -146,7 +147,7 @@ services:
       NODE_ENV: production
       QUALITY_LAB_HOST: 0.0.0.0
       QUALITY_LAB_PORT: 4010
-      VIDEO_QUALITY_PROMPT_PATH: /quality/prompts/qwen-video-ai-quality-prompt-v1/manifest.json
+      VIDEO_QUALITY_PROMPT_PATH: /quality/prompts/qwen-video-ai-quality-framework-v2/manifest.json
       QUALITY_LAB_HISTORY_PATH: /data/quality-lab/jobs.json
       QUALITY_LAB_HISTORY_RETENTION_DAYS: 30
     ports:

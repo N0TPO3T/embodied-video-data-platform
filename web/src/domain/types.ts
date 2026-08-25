@@ -78,6 +78,7 @@ export interface Submission {
   invalidSeconds: number;
   sizeMb: number;
   resolution: string;
+  thumbnailUrl?: string;
   processingStatus: ProcessingStatus;
   pipelineStage?: ProcessingPipelineStage;
   qualityStatus: QualityStatus;
@@ -160,6 +161,18 @@ export interface Submission {
       task_summary?: string;
       confidence?: number | null;
     };
+    taskCompliance?: {
+      scene_match: { matched: boolean; confidence: number; note?: string };
+      items: Array<{
+        requirement: string;
+        type: "hard" | "soft";
+        result: "met" | "partial" | "unmet";
+        confidence: number;
+        evidence_timestamps_ms: number[];
+      }>;
+      compliance_ratio: number | null;
+      review_required: boolean;
+    };
     billingObservations?: {
       candidate_invalid_segments: Array<{
         reason_code: string;
@@ -180,6 +193,12 @@ export interface Submission {
     };
   };
   settlementStatus: SettlementStatus;
+  task?: {
+    taskId: string;
+    revision: number | null;
+    sceneName: string;
+    pricePointsPerMinute: number | null;
+  } | null;
   createdAt: string;
   completedAt?: string;
   tags: string[];

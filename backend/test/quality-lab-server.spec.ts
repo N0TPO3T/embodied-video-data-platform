@@ -35,9 +35,9 @@ function environment(
 
 function result(videoId: string): NormalizedVideoQcResultV1 {
   return {
-    schemaVersion: "video_qc_v1",
-    ruleVersion: "video_qc_v1",
-    promptVersion: "qwen_video_qc_prompt_v3",
+    schemaVersion: "video_qc_v2",
+    ruleVersion: "video_qc_v2",
+    promptVersion: "qwen_video_qc_prompt_v4",
     videoId,
     evaluationStatus: "scored",
     dimensions: {} as NormalizedVideoQcResultV1["dimensions"],
@@ -50,6 +50,7 @@ function result(videoId: string): NormalizedVideoQcResultV1 {
     invalidSegments: [],
     hardVeto: { triggered: false, reasons: [], candidates: [] },
     detectedTask: { task_id: "", task_summary: "test", confidence: null },
+    taskCompliance: null,
     deductions: [],
     recommendations: [],
     summary: "test",
@@ -111,11 +112,11 @@ describe("quality lab environment", () => {
 describe("quality lab server", () => {
   it("exposes versioned prompts and locks each job to its creation revision", async () => {
     const committedPrompt: LoadedVideoQualityPrompt = {
-      systemPrompt: "video_qc_v1 初始规则，返回 JSON。",
-      outputExample: { schema_version: "video_qc_v1" },
-      promptVersion: "qwen_video_qc_prompt_v3",
-      ruleVersion: "video_qc_v1",
-      outputSchema: "video_qc_v1",
+      systemPrompt: "video_qc_v2 初始规则，返回 JSON。",
+      outputExample: { schema_version: "video_qc_v2" },
+      promptVersion: "qwen_video_qc_prompt_v4",
+      ruleVersion: "video_qc_v2",
+      outputSchema: "video_qc_v2",
       initialModel: "qwen3.7-plus",
       reviewModel: "qwen3.7-flash",
       contentSha256: "a".repeat(64),
@@ -143,7 +144,7 @@ describe("quality lab server", () => {
       .expect(202);
     await request(app)
       .put("/api/prompt")
-      .send({ systemPrompt: "video_qc_v1 第二版规则，返回 JSON。" })
+      .send({ systemPrompt: "video_qc_v2 第二版规则，返回 JSON。" })
       .expect(200)
       .expect(({ body }) => expect(body.prompt.revision).toBe(2));
     const second = await request(app)
@@ -167,11 +168,11 @@ describe("quality lab server", () => {
 
   it("rejects invalid prompt updates without changing the active revision", async () => {
     const committedPrompt: LoadedVideoQualityPrompt = {
-      systemPrompt: "video_qc_v1 初始规则，返回 JSON。",
+      systemPrompt: "video_qc_v2 初始规则，返回 JSON。",
       outputExample: {},
-      promptVersion: "qwen_video_qc_prompt_v3",
-      ruleVersion: "video_qc_v1",
-      outputSchema: "video_qc_v1",
+      promptVersion: "qwen_video_qc_prompt_v4",
+      ruleVersion: "video_qc_v2",
+      outputSchema: "video_qc_v2",
       initialModel: "qwen3.7-plus",
       reviewModel: "qwen3.7-flash",
       contentSha256: "a".repeat(64),

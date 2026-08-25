@@ -50,9 +50,9 @@ function evidence(): PreparedVideoEvidence {
 function raw(reviewRequired = false): RawVideoQcResultV1 {
   const confidence = reviewRequired ? 0.6 : 0.9;
   return {
-    schema_version: "video_qc_v1",
-    rule_version: "video_qc_v1",
-    prompt_version: "qwen_video_qc_prompt_v3",
+    schema_version: "video_qc_v2",
+    rule_version: "video_qc_v2",
+    prompt_version: "qwen_video_qc_prompt_v4",
     task_id: "LAB-1",
     evaluation_status: reviewRequired ? "review_pending" : "completed",
     input_status: {

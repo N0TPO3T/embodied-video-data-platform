@@ -39,8 +39,8 @@ function normalizeSystemPrompt(value: string): string {
   if (prompt.length > 100_000) {
     throw new Error("系统提示词不能超过 100000 个字符");
   }
-  if (!/video_qc_v1/u.test(prompt) || !/JSON/iu.test(prompt)) {
-    throw new Error("系统提示词必须保留 video_qc_v1 和 JSON 结构化输出约束");
+  if (!/video_qc_v2/u.test(prompt) || !/JSON/iu.test(prompt)) {
+    throw new Error("系统提示词必须保留 video_qc_v2 和 JSON 结构化输出约束");
   }
   return prompt;
 }

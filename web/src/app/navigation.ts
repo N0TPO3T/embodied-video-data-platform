@@ -4,6 +4,7 @@ import {
   BarChart3,
   CircleDollarSign,
   ClipboardCheck,
+  ClipboardList,
   Compass,
   Cpu,
   Database,
@@ -37,6 +38,7 @@ export const roleHome: Record<Role, string> = {
 export const navigationByRole: Record<Role, NavigationItem[]> = {
   collector: [
     { label: "我的工作台", path: "/collector", icon: LayoutDashboard },
+    { label: "任务大厅", path: "/collector/tasks", icon: ClipboardList },
     { label: "上传视频", path: "/collector/upload", icon: Upload },
     { label: "我的数据", path: "/collector/submissions", icon: Files },
     { label: "质检结果", path: "/collector/quality", icon: BadgeCheck },
@@ -55,6 +57,7 @@ export const navigationByRole: Record<Role, NavigationItem[]> = {
   ],
   admin: [
     { label: "运营总览", path: "/admin", icon: LayoutDashboard },
+    { label: "任务管理", path: "/admin/tasks", icon: ClipboardList },
     { label: "数据提交", path: "/admin/submissions", icon: Database },
     { label: "AI 任务", path: "/admin/ai", icon: Cpu },
     { label: "质量复核", path: "/admin/review", icon: ShieldCheck },

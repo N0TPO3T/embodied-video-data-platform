@@ -348,7 +348,6 @@ export class OperationsService {
       addBadge("/admin/ai", aiEvents);
       addBadge("/admin/review", reviewPending);
       addBadge("/admin/settlements", unsettledEligible);
-      addBadge("/admin/audit", recentAudits);
       addNotification(
         `admin-ai-${aiEvents}`,
         "AI 队列需要关注",

@@ -14,7 +14,7 @@ import {
   Min,
   ValidateNested,
 } from "class-validator";
-import { Type } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 
 export const MAX_UPLOAD_SIZE_BYTES = 2 * 1024 * 1024 * 1024;
 
@@ -43,6 +43,13 @@ export class CreateUploadDto {
 
   @IsBoolean()
   sensitiveContentConfirmed!: boolean;
+
+  @IsString()
+  @MaxLength(64, { message: "任务编号无效" })
+  taskId!: string;
+
+  @IsBoolean()
+  taskRequirementsConfirmed!: boolean;
 }
 
 export class PresignPartsDto {
@@ -204,4 +211,9 @@ export class ListSubmissionsQueryDto {
   @Min(1)
   @Max(100)
   pageSize?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  @Transform(({ value }) => value === true || value === "true" || value === "1")
+  includeThumbnails?: boolean;
 }

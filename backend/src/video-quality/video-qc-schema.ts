@@ -55,6 +55,31 @@ const durationSegmentSchema = z
   })
   .strict();
 
+const taskComplianceSchema = z
+  .object({
+    scene_match: z
+      .object({
+        matched: z.boolean(),
+        confidence: boundedCoefficient,
+        note: z.string().optional(),
+      })
+      .strict(),
+    items: z.array(
+      z
+        .object({
+          requirement: z.string().min(1),
+          type: z.enum(["hard", "soft"]),
+          result: z.enum(["met", "partial", "unmet"]),
+          confidence: boundedCoefficient,
+          evidence_timestamps_ms: z.array(nonNegativeTime),
+        })
+        .strict(),
+    ),
+    compliance_ratio: z.number().finite().min(0).max(1).nullable(),
+    review_required: z.boolean(),
+  })
+  .strict();
+
 export const rawVideoQcResultSchema = z
   .object({
     schema_version: z.literal(VIDEO_QC_RESULT_SCHEMA),
@@ -123,6 +148,7 @@ export const rawVideoQcResultSchema = z
       })
       .strict()
       .optional(),
+    task_compliance: taskComplianceSchema.optional().nullable(),
   })
   .strict();
 
@@ -141,7 +167,7 @@ export function parseRawVideoQcResult(value: unknown): RawVideoQcResultV1 {
     const issues = parsed.error.issues.map(
       (issue) => `${issue.path.join(".") || "result"}: ${issue.message}`,
     );
-    throw new VideoQcSchemaError("模型结果不符合 video_qc_v1", issues);
+    throw new VideoQcSchemaError("模型结果不符合 video_qc_v2", issues);
   }
   return parsed.data as RawVideoQcResultV1;
 }

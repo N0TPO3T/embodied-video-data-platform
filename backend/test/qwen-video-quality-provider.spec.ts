@@ -21,9 +21,9 @@ const keys: DimensionKey[] = [
 
 function rawResult(): RawVideoQcResultV1 {
   return {
-    schema_version: "video_qc_v1",
-    rule_version: "video_qc_v1",
-    prompt_version: "qwen_video_qc_prompt_v3",
+    schema_version: "video_qc_v2",
+    rule_version: "video_qc_v2",
+    prompt_version: "qwen_video_qc_prompt_v4",
     task_id: "LAB-1",
     evaluation_status: "completed",
     input_status: {
@@ -88,9 +88,9 @@ function response(
 const prompt: LoadedVideoQualityPrompt = {
   systemPrompt: "system prompt",
   outputExample: rawResult() as unknown as Record<string, unknown>,
-  promptVersion: "qwen_video_qc_prompt_v3",
-  ruleVersion: "video_qc_v1",
-  outputSchema: "video_qc_v1",
+  promptVersion: "qwen_video_qc_prompt_v4",
+  ruleVersion: "video_qc_v2",
+  outputSchema: "video_qc_v2",
   initialModel: "qwen3.7-plus",
   reviewModel: "qwen3.7-flash",
   contentSha256: "c".repeat(64),
@@ -261,7 +261,7 @@ describe("Qwen video quality provider", () => {
     expect(
       (await provider(fencedFetch).analyze({ input, frames: frames() })).raw
         .schema_version,
-    ).toBe("video_qc_v1");
+    ).toBe("video_qc_v2");
 
     const repairFetch = vi
       .fn<typeof fetch>()
@@ -278,7 +278,7 @@ describe("Qwen video quality provider", () => {
     ) as Record<string, any>;
     expect(repairBody.model).toBe("qwen3.7-plus");
     expect(repairBody.messages.at(-1).content[0].text).toContain(
-      "video_qc_v1",
+      "video_qc_v2",
     );
     expect(repairBody.messages.at(-1).content[0].text).toContain(
       '"hard_reject"',
@@ -317,7 +317,7 @@ describe("Qwen video quality provider", () => {
     });
 
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(result.raw.schema_version).toBe("video_qc_v1");
+    expect(result.raw.schema_version).toBe("video_qc_v2");
   });
 
   it("preserves model-provided dimension metrics", async () => {

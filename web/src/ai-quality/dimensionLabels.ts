@@ -2,7 +2,7 @@ export const DIMENSION_LABELS: Record<string, string> = {
   first_person_and_composition: "第一人称与构图",
   hand_forearm_object_integrity: "手部、前臂与对象",
   frame_and_video_quality: "视频与帧质量",
-  task_authenticity_completeness: "任务真实性与完整度",
+  task_authenticity_completeness: "任务符合度与真实性",
   task_value_uniqueness: "任务价值与独特性",
 };
 
