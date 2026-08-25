@@ -65,9 +65,9 @@ class TestStorage implements ObjectStoragePort {
 
 function scored(videoId: string): NormalizedVideoQcResultV1 {
   return {
-    schemaVersion: "video_qc_v1",
-    ruleVersion: "video_qc_v1",
-    promptVersion: "qwen_video_qc_prompt_v3",
+    schemaVersion: "video_qc_v2",
+    ruleVersion: "video_qc_v2",
+    promptVersion: "qwen_video_qc_prompt_v4",
     videoId,
     evaluationStatus: "scored",
     dimensions: {} as NormalizedVideoQcResultV1["dimensions"],
@@ -80,6 +80,7 @@ function scored(videoId: string): NormalizedVideoQcResultV1 {
     invalidSegments: [],
     hardVeto: { triggered: false, reasons: [], candidates: [] },
     detectedTask: { task_id: "task", task_summary: "完成桌面整理", confidence: null },
+    taskCompliance: null,
     deductions: [],
     recommendations: ["保持当前拍摄角度"],
     summary: "视频质量合格",

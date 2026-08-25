@@ -76,9 +76,9 @@ function rawAt(
     rawDimensionKeys.map((key) => [key, dimension(coefficient)]),
   ) as RawVideoQcResultV1["dimensions"];
   return {
-    schema_version: "video_qc_v1",
-    rule_version: "video_qc_v1",
-    prompt_version: "qwen_video_qc_prompt_v3",
+    schema_version: "video_qc_v2",
+    rule_version: "video_qc_v2",
+    prompt_version: "qwen_video_qc_prompt_v4",
     task_id: "LAB-1",
     evaluation_status: status,
     input_status: {
@@ -128,7 +128,7 @@ function normalize(raw: RawVideoQcResultV1, sourceEvidence = evidence()) {
   });
 }
 
-describe("video_qc_v1 rule engine", () => {
+describe("video_qc_v2 rule engine", () => {
   it("maps exact score boundaries to the confirmed four bands", () => {
     expect(normalize(rawAt(80)).settlementRatio).toBe(1);
     expect(normalize(rawAt(60)).settlementRatio).toBe(0.7);

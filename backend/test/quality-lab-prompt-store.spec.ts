@@ -9,11 +9,11 @@ import type { LoadedVideoQualityPrompt } from "../src/video-quality/prompt-loade
 
 const directories: string[] = [];
 const committedPrompt: LoadedVideoQualityPrompt = {
-  systemPrompt: "video_qc_v1 请用中文输出合法 JSON。",
-  outputExample: { schema_version: "video_qc_v1" },
-  promptVersion: "qwen_video_qc_prompt_v3",
-  ruleVersion: "video_qc_v1",
-  outputSchema: "video_qc_v1",
+  systemPrompt: "video_qc_v2 请用中文输出合法 JSON。",
+  outputExample: { schema_version: "video_qc_v2" },
+  promptVersion: "qwen_video_qc_prompt_v4",
+  ruleVersion: "video_qc_v2",
+  outputSchema: "video_qc_v2",
   initialModel: "qwen3.7-plus",
   reviewModel: "qwen3.7-flash",
   contentSha256: "a".repeat(64),
@@ -39,13 +39,13 @@ describe("quality lab prompt store", () => {
     });
 
     expect(store.getCurrent()).toMatchObject({ revision: 1, initialModel: "qwen3.7-plus" });
-    const updated = store.update("video_qc_v1 新规则，请返回 JSON。");
-    expect(updated).toMatchObject({ revision: 2, systemPrompt: "video_qc_v1 新规则，请返回 JSON。" });
+    const updated = store.update("video_qc_v2 新规则，请返回 JSON。");
+    expect(updated).toMatchObject({ revision: 2, systemPrompt: "video_qc_v2 新规则，请返回 JSON。" });
 
     const restored = new QualityLabPromptStore({ committedPrompt, persistencePath });
     expect(restored.getCurrent()).toMatchObject({
       revision: 2,
-      systemPrompt: "video_qc_v1 新规则，请返回 JSON。",
+      systemPrompt: "video_qc_v2 新规则，请返回 JSON。",
       reviewModel: "qwen3.7-flash",
     });
   });
@@ -53,6 +53,6 @@ describe("quality lab prompt store", () => {
   it("rejects empty or contract-breaking prompts", () => {
     const store = new QualityLabPromptStore({ committedPrompt });
     expect(() => store.update(" ")).toThrow("不能为空");
-    expect(() => store.update("只输出中文")).toThrow("video_qc_v1");
+    expect(() => store.update("只输出中文")).toThrow("video_qc_v2");
   });
 });

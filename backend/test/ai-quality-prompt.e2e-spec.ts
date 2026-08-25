@@ -26,13 +26,13 @@ const WEB_ORIGIN = "http://localhost:3000";
 const PASSWORD = "Valid-test-password-2026";
 const PROMPT_PATH = fileURLToPath(
   new URL(
-    "../../docs/quality/prompts/qwen-video-ai-quality-prompt-v1/manifest.json",
+    "../../docs/quality/prompts/qwen-video-ai-quality-framework-v2/manifest.json",
     import.meta.url,
   ),
 );
 const SYSTEM_PROMPT_PATH = fileURLToPath(
   new URL(
-    "../../docs/quality/prompts/qwen-video-ai-quality-prompt-v1/system.txt",
+    "../../docs/quality/prompts/qwen-video-ai-quality-framework-v2/system.txt",
     import.meta.url,
   ),
 );
@@ -126,9 +126,9 @@ describe("AI quality prompt API", () => {
     expect(response.headers["cache-control"]).toContain("no-store");
     expect(response.body.prompt).toMatchObject({
       revision: 1,
-      promptVersion: "qwen_video_qc_prompt_v3",
-      ruleVersion: "video_qc_v1",
-      outputSchema: "video_qc_v1",
+      promptVersion: "qwen_video_qc_prompt_v4",
+      ruleVersion: "video_qc_v2",
+      outputSchema: "video_qc_v2",
       initialModel: "qwen3.7-plus",
       reviewModel: "qwen3.7-flash",
       createdByName: "系统初始化",

@@ -44,6 +44,36 @@ vi.mock("../../points/client/pointCycleApi", async (importOriginal) => {
   };
 });
 
+const taskApi = vi.hoisted(() => ({
+  listTasksForCollector: vi.fn(),
+}));
+
+vi.mock("../../tasks/client/taskApi", () => ({
+  listTasksForCollector: taskApi.listTasksForCollector,
+  taskErrorMessage: (error: unknown) =>
+    error instanceof Error ? error.message : "操作失败，请重试",
+}));
+
+const publishedTask = {
+  id: "TASK-1",
+  title: "厨房数据采集",
+  description: "拍摄厨房场景操作视频",
+  sceneName: "家庭厨房",
+  sceneLabelId: "SCENE-001",
+  normalizedRequirements: {
+    scene_description: "家庭厨房场景，第一人称双手操作。",
+    requirements: [
+      { type: "hard", content: "必须全程第一人称视角拍摄" },
+      { type: "soft", content: "光线充足画面清晰" },
+    ],
+    quality_notes: [],
+  },
+  pricePointsPerMinute: 15.5,
+  status: "published",
+  revision: 1,
+  publishedAt: Date.now(),
+};
+
 function backendSubmission(
   overrides: Partial<BackendSubmission> = {},
 ): BackendSubmission {
@@ -127,8 +157,7 @@ beforeEach(() => {
     expiresAt: Date.now() + 600_000,
     contentType: "video/mp4",
     fileName: "kitchen_breakfast_0803.mov",
-    source: "web_preview",
-    hls: {
+    source: "web_preview",    hls: {
       url: "/api/v1/submissions/SUB-001/preview/hls/master.m3u8",
       contentType: "application/vnd.apple.mpegurl",
       qualities: [{ quality: "720p", width: 1280, height: 720 }],
@@ -165,6 +194,8 @@ beforeEach(() => {
     createdByName: "管理员",
     createdAt: 1,
   });
+  taskApi.listTasksForCollector.mockReset();
+  taskApi.listTasksForCollector.mockResolvedValue([publishedTask]);
   vi.mocked(uploadVideo).mockImplementation(async (file, options) => {
     options?.onProgress?.(100);
     return {
@@ -255,6 +286,25 @@ async function confirmUploadAuthorization(user: ReturnType<typeof userEvent.setu
   );
 }
 
+async function selectUploadTask(user: ReturnType<typeof userEvent.setup>) {
+  await user.selectOptions(
+    await screen.findByLabelText(/任务（场景）/),
+    "TASK-1",
+  );
+  await user.click(
+    screen.getByLabelText(
+      "我已阅读并理解该任务的采集要求，本次视频符合任务要求",
+    ),
+  );
+}
+
+async function confirmAllUploadRequirements(
+  user: ReturnType<typeof userEvent.setup>,
+) {
+  await selectUploadTask(user);
+  await confirmUploadAuthorization(user);
+}
+
 describe("collector journey", () => {
   it("rejects unsupported upload formats without creating a submission", async () => {
     const user = userEvent.setup({ applyAccept: false });
@@ -277,11 +327,10 @@ describe("collector journey", () => {
     });
     Object.defineProperty(oversized, "size", { value: 2 * 1024 ** 3 + 1 });
 
-    await confirmUploadAuthorization(user);
-    await user.upload(screen.getByLabelText("选择视频文件"), oversized);
-
-    expect(screen.getByText("单个视频不能超过 2 GiB")).toBeVisible();
-    expect(screen.queryByText("oversized.mp4")).not.toBeInTheDocument();
+      await confirmAllUploadRequirements(user);
+      await user.upload(screen.getByLabelText("选择视频文件"), oversized);
+      expect(screen.getByText("单个视频不能超过 2 GiB")).toBeVisible();
+      expect(screen.queryByText("oversized.mp4")).not.toBeInTheDocument();
     expect(uploadVideo).not.toHaveBeenCalled();
   });
 
@@ -289,7 +338,7 @@ describe("collector journey", () => {
     const user = userEvent.setup();
     renderCollector("/collector/upload");
 
-    await confirmUploadAuthorization(user);
+    await confirmAllUploadRequirements(user);
     await user.upload(screen.getByLabelText("选择视频文件"), [
       new File(["a"], "kitchen.mov", { type: "video/quicktime" }),
       new File(["b"], "cleaning.mp4", { type: "video/mp4" }),
@@ -306,6 +355,10 @@ describe("collector journey", () => {
           privacyConfirmed: true,
           sensitiveContentConfirmed: true,
         },
+        task: {
+          id: "TASK-1",
+          requirementsConfirmed: true,
+        },
       }),
     );
     expect(
@@ -321,11 +374,20 @@ describe("collector journey", () => {
       screen.getByRole("button", { name: /请先完成上方三项授权确认/ }),
     ).toBeDisabled();
 
+    // 未选择任务时给出明确提示
     await user.upload(
       screen.getByLabelText("选择视频文件"),
       new File(["a"], "kitchen.mp4", { type: "video/mp4" }),
     );
+    expect(screen.getByText("请先选择采集任务")).toBeVisible();
+    expect(uploadVideo).not.toHaveBeenCalled();
 
+    // 已选任务但未确认授权时仍阻断
+    await selectUploadTask(user);
+    await user.upload(
+      screen.getByLabelText("选择视频文件"),
+      new File(["a"], "kitchen.mp4", { type: "video/mp4" }),
+    );
     expect(
       screen.getByText("上传前请先确认数据授权、隐私规范和敏感内容处理要求"),
     ).toBeVisible();
@@ -413,7 +475,7 @@ describe("collector journey", () => {
     ]);
     renderCollector("/collector/upload");
 
-    await confirmUploadAuthorization(user);
+    await confirmAllUploadRequirements(user);
     await user.upload(
       screen.getByLabelText("选择视频文件"),
       new File(["abcdefghij"], "pause-test.mp4", { type: "video/mp4" }),

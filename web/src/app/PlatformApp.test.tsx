@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AccountPublic } from "../auth/contracts";
@@ -130,6 +130,18 @@ describe("platform routing", () => {
     expect(screen.queryByText("提现审核")).not.toBeInTheDocument();
   });
 
+  it("keeps the rendered page in sync with browser history", () => {
+    renderPlatform("/admin", "admin");
+    expect(screen.getByRole("heading", { name: "运营总览" })).toBeVisible();
+
+    act(() => {
+      window.history.pushState({}, "", "/admin/settlements");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+
+    expect(screen.getByRole("heading", { name: "积分规则" })).toBeVisible();
+  });
+
   it.each(["admin", "leader", "collector"] as const)(
     "renders the shared account profile for an authenticated %s",
     (role) => {
@@ -145,12 +157,38 @@ describe("platform routing", () => {
 
   it("opens notifications and clears the unread state", async () => {
     const user = userEvent.setup();
+    operationsApi.getStatus.mockResolvedValueOnce({
+      generatedAt: 1,
+      unreadCount: 1,
+      summary: {
+        processingSubmissions: 0,
+        failedSubmissions: 1,
+        reviewPending: 0,
+        unsettledEligible: 0,
+        pendingJobs: 0,
+        failedJobs: 0,
+        workerAlerts: 0,
+        recentAudits: 0,
+      },
+      navigationBadges: [],
+      notifications: [
+        {
+          id: "admin-submissions-1",
+          title: "有提交处理失败",
+          detail: "1 条视频需要处理。",
+          tone: "danger",
+          path: "/admin/submissions",
+          count: 1,
+          createdAt: 1,
+        },
+      ],
+    });
     renderPlatform("/admin", "admin");
 
     await user.click(
-      screen.getByRole("button", { name: "通知，3 条未读" }),
+      await screen.findByRole("button", { name: "通知，1 条未读" }),
     );
-    expect(screen.getByText("AI 质检任务处理异常")).toBeVisible();
+    expect(screen.getByText("有提交处理失败")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "全部标为已读" }));
 
     expect(screen.getByRole("button", { name: "通知，无未读" })).toBeVisible();

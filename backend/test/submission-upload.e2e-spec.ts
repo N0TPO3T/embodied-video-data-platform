@@ -12,6 +12,7 @@ import {
   identityEntities,
 } from "../src/database/data-source.js";
 import { AuditLogEntity } from "../src/database/entities/audit-log.entity.js";
+import { CollectionTaskEntity } from "../src/database/entities/collection-task.entity.js";
 import { JobOutboxEntity } from "../src/database/entities/job-outbox.entity.js";
 import { MediaMetadataEntity } from "../src/database/entities/media-metadata.entity.js";
 import { MediaSegmentEntity } from "../src/database/entities/media-segment.entity.js";
@@ -215,6 +216,28 @@ describe("submission multipart upload API", () => {
         status: "active",
       },
     ]);
+    await dataSource.getRepository(CollectionTaskEntity).save([
+      {
+        id: "TASK-UPLOAD-01",
+        title: "上传测试任务",
+        description: "上传链路测试任务",
+        sceneName: "测试场景",
+        sceneLabelId: null,
+        rawRequirements: "第一人称拍摄",
+        normalizedRequirements: {
+          scene_description: "测试场景",
+          requirements: [{ type: "hard", content: "必须第一人称拍摄" }],
+          quality_notes: [],
+        },
+        normalizationStatus: "ready",
+        pricePointsPerMinute: "15.00",
+        status: "published",
+        revision: 1,
+        createdByAccountId: "U-UPLOAD-ADMIN",
+        createdByName: "上传管理员",
+        publishedAt: new Date(),
+      },
+    ]);
 
     storage = new RecordingObjectStorage();
     const moduleRef = await Test.createTestingModule({
@@ -258,6 +281,8 @@ describe("submission multipart upload API", () => {
         dataUsageAuthorized: true,
         privacyConfirmed: true,
         sensitiveContentConfirmed: true,
+        taskId: "TASK-UPLOAD-01",
+        taskRequirementsConfirmed: true,
       })
       .expect(201);
 
@@ -316,6 +341,8 @@ describe("submission multipart upload API", () => {
         dataUsageAuthorized: true,
         privacyConfirmed: true,
         sensitiveContentConfirmed: true,
+        taskId: "TASK-UPLOAD-01",
+        taskRequirementsConfirmed: true,
       })
       .expect(409);
     expect(duplicate.body).toMatchObject({
@@ -344,6 +371,8 @@ describe("submission multipart upload API", () => {
         dataUsageAuthorized: true,
         privacyConfirmed: false,
         sensitiveContentConfirmed: true,
+        taskId: "TASK-UPLOAD-01",
+        taskRequirementsConfirmed: true,
       })
       .expect(400);
 
@@ -367,6 +396,8 @@ describe("submission multipart upload API", () => {
         dataUsageAuthorized: true,
         privacyConfirmed: true,
         sensitiveContentConfirmed: true,
+        taskId: "TASK-UPLOAD-01",
+        taskRequirementsConfirmed: true,
       })
       .expect(400);
 
@@ -387,6 +418,8 @@ describe("submission multipart upload API", () => {
       dataUsageAuthorized: true,
       privacyConfirmed: true,
       sensitiveContentConfirmed: true,
+      taskId: "TASK-UPLOAD-01",
+      taskRequirementsConfirmed: true,
     };
     const responses = await Promise.all([
       request(app.getHttpServer())
@@ -436,7 +469,7 @@ describe("submission multipart upload API", () => {
         systemPrompt: "test prompt",
         contentSha256: "c".repeat(64),
         promptVersion: "qwen_video_qc_prompt_v1",
-        ruleVersion: "video_qc_v1",
+        ruleVersion: "video_qc_v2",
         outputSchema: "video_qc_result_v1",
         initialModel: "qwen3.7-plus",
         reviewModel: "qwen3.7-flash",
@@ -1496,6 +1529,8 @@ describe("submission multipart upload API", () => {
         dataUsageAuthorized: true,
         privacyConfirmed: true,
         sensitiveContentConfirmed: true,
+        taskId: "TASK-UPLOAD-01",
+        taskRequirementsConfirmed: true,
       })
       .expect(201);
     const id = created.body.submission.id as string;
