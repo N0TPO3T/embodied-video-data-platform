@@ -3,6 +3,7 @@ import "reflect-metadata";
 import { DataSource } from "typeorm";
 
 import { AuditLogEntity } from "./entities/audit-log.entity.js";
+import { CollectionTaskEntity } from "./entities/collection-task.entity.js";
 import { DeliveryArchiveTaskEntity } from "./entities/delivery-archive-task.entity.js";
 import { DeliveryPackageEntity } from "./entities/delivery-package.entity.js";
 import { DeliveryPackageItemEntity } from "./entities/delivery-package-item.entity.js";
@@ -27,6 +28,7 @@ import { VideoQualityResultEntity } from "./entities/video-quality-result.entity
 import { WorkerHeartbeatEntity } from "./entities/worker-heartbeat.entity.js";
 import { AiQuality2026081200003 } from "./migrations/202608120003-ai-quality.js";
 import { AiQualityProgressStuck2026081700001 } from "./migrations/202608170001-ai-quality-progress-stuck.js";
+import { CollectionTasks2026082400001 } from "./migrations/202608240001-collection-tasks.js";
 import { ScarcityConfigAndMediaScene2026081900001 } from "./migrations/202608190001-scarcity-config-and-media-scene.js";
 import { DeliveryPackages2026081300006 } from "./migrations/202608130006-delivery-packages.js";
 import { DeliveryArchiveTasks2026081300020 } from "./migrations/202608130020-delivery-archive-tasks.js";
@@ -78,6 +80,7 @@ export const identityEntities = [
   DeliveryArchiveTaskEntity,
   PublicSiteSnapshotEntity,
   ScarcityConfigEntity,
+  CollectionTaskEntity,
 ];
 
 export function createDataSource(
@@ -119,6 +122,7 @@ export function createDataSource(
       UploadCompletingStatus2026081300026,
       AiQualityProgressStuck2026081700001,
       ScarcityConfigAndMediaScene2026081900001,
+      CollectionTasks2026082400001,
     ],
     synchronize: false,
     logging: false,

@@ -60,6 +60,28 @@ export class PointCycleItemEntity {
   @Column({ name: "file_name", type: "varchar", length: 255 })
   fileName!: string;
 
+  /** 快照：所属任务 id（无任务历史提交为 null） */
+  @Column({ name: "task_id", type: "varchar", length: 64, nullable: true })
+  taskId: string | null = null;
+
+  /** 快照：任务标题 */
+  @Column({ name: "task_name", type: "varchar", length: 120, nullable: true })
+  taskName: string | null = null;
+
+  /** 快照：任务场景名 */
+  @Column({ name: "task_scene_name", type: "varchar", length: 120, nullable: true })
+  taskSceneName: string | null = null;
+
+  /** 快照：任务单价（每分钟积分）；空表示按全局默认积分规则 */
+  @Column({
+    name: "price_points_per_minute",
+    type: "numeric",
+    precision: 10,
+    scale: 2,
+    nullable: true,
+  })
+  taskPricePointsPerMinute: string | null = null;
+
   @Column({ name: "final_score", type: "numeric", precision: 6, scale: 1 })
   finalScore!: string;
 
