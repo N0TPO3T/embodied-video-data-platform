@@ -167,12 +167,17 @@ export class LabelSetService {
       const labels = current.labels.map((label) =>
         label.id === updatedLabel.id ? updatedLabel : label,
       );
+      const latest = await repository
+        .createQueryBuilder("labelSet")
+        .select("MAX(labelSet.revision)", "max")
+        .getRawOne<{ max: string | null }>();
+      const nextRevision = Number(latest?.max ?? 0) + 1;
       current.active = false;
       await repository.save(current);
       const next = await repository.save({
         id: `LSV-${randomUUID()}`,
-        revision: current.revision + 1,
-        version: `LABELS-REV-${current.revision + 1}`,
+        revision: nextRevision,
+        version: `LABELS-REV-${nextRevision}`,
         labels,
         active: true,
         createdByAccountId: actor.id,
@@ -235,12 +240,17 @@ export class LabelSetService {
         enabled: input.enabled ?? true,
       };
       const labels = [...current.labels, label];
+      const latest = await repository
+        .createQueryBuilder("labelSet")
+        .select("MAX(labelSet.revision)", "max")
+        .getRawOne<{ max: string | null }>();
+      const nextRevision = Number(latest?.max ?? 0) + 1;
       current.active = false;
       await repository.save(current);
       const next = await repository.save({
         id: `LSV-${randomUUID()}`,
-        revision: current.revision + 1,
-        version: `LABELS-REV-${current.revision + 1}`,
+        revision: nextRevision,
+        version: `LABELS-REV-${nextRevision}`,
         labels,
         active: true,
         createdByAccountId: actor.id,
@@ -280,12 +290,17 @@ export class LabelSetService {
         throw new IdentityFailure("NOT_FOUND", "标签不存在", 404);
       }
       const labels = current.labels.filter((label) => label.id !== id);
+      const latest = await repository
+        .createQueryBuilder("labelSet")
+        .select("MAX(labelSet.revision)", "max")
+        .getRawOne<{ max: string | null }>();
+      const nextRevision = Number(latest?.max ?? 0) + 1;
       current.active = false;
       await repository.save(current);
       const next = await repository.save({
         id: `LSV-${randomUUID()}`,
-        revision: current.revision + 1,
-        version: `LABELS-REV-${current.revision + 1}`,
+        revision: nextRevision,
+        version: `LABELS-REV-${nextRevision}`,
         labels,
         active: true,
         createdByAccountId: actor.id,
