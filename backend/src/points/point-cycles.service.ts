@@ -7,6 +7,7 @@ import { DataSource, In, Repository, type EntityManager } from "typeorm";
 import { AuditService } from "../audit/audit.service.js";
 import type { PublicUser } from "../auth/auth.types.js";
 import { csvDocument } from "../csv/csv.js";
+import { CollectionTaskEntity } from "../database/entities/collection-task.entity.js";
 import { MediaMetadataEntity } from "../database/entities/media-metadata.entity.js";
 import { PointCycleAdjustmentEntity } from "../database/entities/point-cycle-adjustment.entity.js";
 import { PointCycleEntity } from "../database/entities/point-cycle.entity.js";
@@ -58,6 +59,7 @@ type Candidate = {
   effectiveDurationMs: number;
   pointsPerMinute: number;
   points: number;
+  taskName: string | null;
 };
 
 function decimal(value: number, digits: number): string {
@@ -103,6 +105,14 @@ function publicItem(
     teamId: item.teamId,
     teamName: item.teamName,
     fileName: item.fileName,
+    taskId: item.taskId,
+    taskName: item.taskName,
+    taskSceneName: item.taskSceneName,
+    taskPricePointsPerMinute:
+      item.taskPricePointsPerMinute === null ||
+      item.taskPricePointsPerMinute === undefined
+        ? null
+        : Number(item.taskPricePointsPerMinute),
     finalScore: effective.finalScore,
     settlementRatio: effective.settlementRatio,
     effectiveDurationMs: effective.effectiveDurationMs,
@@ -266,6 +276,9 @@ export class PointCyclesService {
         "team_name",
         "owner_id",
         "owner_name",
+        "task_id",
+        "task_name",
+        "task_scene_name",
         "final_score",
         "settlement_ratio",
         "effective_minutes",
@@ -283,6 +296,9 @@ export class PointCyclesService {
         item.teamName,
         item.ownerId,
         item.ownerName,
+        item.taskId ?? "",
+        item.taskName ?? "",
+        item.taskSceneName ?? "",
         item.finalScore.toFixed(1),
         item.settlementRatio.toFixed(4),
         item.effectiveMinutes.toFixed(2),
@@ -495,6 +511,10 @@ export class PointCyclesService {
           teamId: candidate.submission.teamId,
           teamName: candidate.submission.team?.name ?? "",
           fileName: candidate.submission.originalFileName,
+          taskId: candidate.submission.taskId,
+          taskName: candidate.taskName,
+          taskSceneName: candidate.submission.taskSceneName,
+          taskPricePointsPerMinute: candidate.submission.taskPricePointsPerMinute,
           finalScore: decimal(candidate.finalScore, 1),
           settlementRatio: decimal(candidate.settlementRatio, 4),
           effectiveDurationMs: String(candidate.effectiveDurationMs),
@@ -618,6 +638,22 @@ export class PointCyclesService {
     }
 
     const submissions = await query.getMany();
+    const taskIds = [
+      ...new Set(
+        submissions
+          .map((submission) => submission.taskId)
+          .filter((id): id is string => id !== null),
+      ),
+    ];
+    const taskTitles = new Map(
+      taskIds.length === 0
+        ? []
+        : (
+            await manager
+              .getRepository(CollectionTaskEntity)
+              .findBy({ id: In(taskIds) })
+          ).map((task) => [task.id, task.title]),
+    );
     const legacyRuleIds = [
       ...new Set(
         submissions.flatMap((submission) => {
@@ -682,13 +718,21 @@ export class PointCyclesService {
               0,
           ) + invalidDurationMs;
       const effectiveDurationMs = Math.max(0, durationMs - invalidDurationMs);
+      // 单价优先级：任务快照单价 > 团队单价 > 全局默认积分
+      const taskPrice =
+        submission.taskPricePointsPerMinute === null ||
+        submission.taskPricePointsPerMinute === undefined
+          ? null
+          : Number(submission.taskPricePointsPerMinute);
       const teamPointsPerMinute = Number(
         submission.team?.unitPricePerMinute ?? 0,
       );
       const pointsPerMinute =
-        teamPointsPerMinute > 0
-          ? teamPointsPerMinute
-          : Number(pointRule.defaultPointsPerMinute);
+        taskPrice !== null && taskPrice > 0
+          ? taskPrice
+          : teamPointsPerMinute > 0
+            ? teamPointsPerMinute
+            : Number(pointRule.defaultPointsPerMinute);
       const points = pointsForRule({
         pointsPerMinute,
         effectiveDurationMs,
@@ -705,6 +749,9 @@ export class PointCyclesService {
           effectiveDurationMs,
           pointsPerMinute,
           points,
+          taskName: submission.taskId
+            ? taskTitles.get(submission.taskId) ?? null
+            : null,
         },
       ];
     });

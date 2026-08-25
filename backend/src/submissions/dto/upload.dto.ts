@@ -43,6 +43,13 @@ export class CreateUploadDto {
 
   @IsBoolean()
   sensitiveContentConfirmed!: boolean;
+
+  @IsString()
+  @MaxLength(64, { message: "任务编号无效" })
+  taskId!: string;
+
+  @IsBoolean()
+  taskRequirementsConfirmed!: boolean;
 }
 
 export class PresignPartsDto {

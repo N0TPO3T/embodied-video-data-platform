@@ -8,11 +8,16 @@ import { Brackets, DataSource, EntityManager, Repository } from "typeorm";
 
 import { AuditService } from "../audit/audit.service.js";
 import { AiQualityPromptService } from "../ai-quality/ai-quality-prompt.service.js";
-import { evaluationSystemPrompt, promptContentSha256 } from "../ai-quality/evaluation-context.js";
+import {
+  evaluationSystemPrompt,
+  parseTaskRequirementsSnapshot,
+  promptContentSha256,
+} from "../ai-quality/evaluation-context.js";
 import { LabelSetService } from "../ai-quality/label-set.service.js";
 import { QualityRuleService } from "../ai-quality/quality-rule.service.js";
 import type { PublicUser } from "../auth/auth.types.js";
 import { AuditLogEntity } from "../database/entities/audit-log.entity.js";
+import { CollectionTaskEntity } from "../database/entities/collection-task.entity.js";
 import { csvDocument } from "../csv/csv.js";
 import { JobOutboxEntity } from "../database/entities/job-outbox.entity.js";
 import { DeliveryPackageItemEntity } from "../database/entities/delivery-package-item.entity.js";
@@ -349,6 +354,19 @@ function publicSubmission(submission: SubmissionEntity) {
       uploadPolicyVersion: submission.uploadPolicyVersion,
       confirmedAt: submission.authorizationConfirmedAt?.getTime(),
     },
+    task: submission.taskId
+      ? {
+          taskId: submission.taskId,
+          revision: submission.taskRevision,
+          sceneName: submission.taskSceneName ?? "",
+          requirements: submission.taskRequirementsSnapshot ?? undefined,
+          pricePointsPerMinute:
+            submission.taskPricePointsPerMinute === null ||
+            submission.taskPricePointsPerMinute === undefined
+              ? null
+              : Number(submission.taskPricePointsPerMinute),
+        }
+      : null,
     settlementStatus: pointCycleItems.length > 0 ? "settled" : "unsettled",
     duplicateCandidates: duplicateCandidates
       .filter((candidate) => candidate.status === "candidate")
@@ -483,6 +501,14 @@ function publicSubmission(submission: SubmissionEntity) {
                   reasons: Array<string | Record<string, unknown>>;
                 })
               : undefined,
+          taskCompliance:
+            quality.normalizedResult &&
+            typeof quality.normalizedResult.taskCompliance === "object"
+              ? (quality.normalizedResult.taskCompliance as Record<
+                  string,
+                  unknown
+                >)
+              : undefined,
           billingObservations:
             quality.rawModelResult &&
             typeof quality.rawModelResult.billing_observations === "object"
@@ -509,6 +535,8 @@ export class SubmissionsService {
   constructor(
     @InjectRepository(SubmissionEntity)
     private readonly submissions: Repository<SubmissionEntity>,
+    @InjectRepository(CollectionTaskEntity)
+    private readonly tasks: Repository<CollectionTaskEntity>,
     private readonly dataSource: DataSource,
     private readonly policy: SubmissionsPolicy,
     private readonly audit: AuditService,
@@ -532,6 +560,32 @@ export class SubmissionsService {
         400,
       );
     }
+    if (!input.taskRequirementsConfirmed) {
+      throw new SubmissionFailure(
+        "TASK_REQUIREMENTS_NOT_CONFIRMED",
+        "上传前必须确认已阅读并理解任务要求",
+        400,
+      );
+    }
+    const task = await this.tasks.findOneBy({ id: input.taskId });
+    if (!task) {
+      throw new SubmissionFailure("TASK_NOT_FOUND", "采集任务不存在", 404);
+    }
+    if (task.status !== "published") {
+      throw new SubmissionFailure(
+        "TASK_NOT_ACCEPTING",
+        "该采集任务当前不接受提交",
+        409,
+      );
+    }
+    if (task.normalizationStatus !== "ready" || !task.normalizedRequirements) {
+      throw new SubmissionFailure(
+        "TASK_REQUIREMENTS_NOT_READY",
+        "采集任务要求尚未就绪",
+        409,
+      );
+    }
+    const taskRequirements = task.normalizedRequirements;
     const extension = extname(input.fileName).toLocaleLowerCase("en-US");
     const expectedExtension =
       input.contentType === "video/mp4" ? ".mp4" : ".mov";
@@ -593,6 +647,18 @@ export class SubmissionsService {
           uploadStatus: "uploading",
           processingStatus: "uploading",
           isTestData: false,
+          // 任务关联与快照：锁定任务版本、场景名、规范化要求与单价，
+          // 后续任务修改不影响本提交的 AI 质检与结算。
+          taskId: task.id,
+          taskRevision: task.revision,
+          taskSceneName: task.sceneName,
+          taskRequirementsSnapshot: {
+            scene_name: task.sceneName,
+            scene_description: taskRequirements.scene_description,
+            requirements: taskRequirements.requirements,
+            quality_notes: taskRequirements.quality_notes ?? [],
+          },
+          taskPricePointsPerMinute: task.pricePointsPerMinute,
           dataUsageAuthorized: true,
           privacyConfirmed: true,
           sensitiveContentConfirmed: true,
@@ -1513,7 +1579,8 @@ export class SubmissionsService {
         quality.stuckReason = null;
         quality.startedAt = null;
         quality.completedAt = null;
-        // 重跑使用当前生效的提示词/规则/标签快照（例如提示词升级后重跑可识别新场景分类）。
+        // 重跑使用当前生效的提示词/规则/标签快照（例如提示词升级后重跑可识别新场景分类）；
+        // 任务要求沿用提交时锁定的快照，保证判定基准一致。
         const [activePrompt, qualityRule, labelSet] = await Promise.all([
           this.prompts.getActive(),
           this.qualityRules.ensureDefault(),
@@ -1521,10 +1588,14 @@ export class SubmissionsService {
         ]);
         const ruleSnapshot = qualityRuleSnapshot(qualityRule);
         const labelsSnapshot = labelSetSnapshot(labelSet);
+        const taskSnapshot = submission.taskRequirementsSnapshot
+          ? parseTaskRequirementsSnapshot(submission.taskRequirementsSnapshot)
+          : null;
         const systemPromptSnapshot = evaluationSystemPrompt({
           basePrompt: activePrompt.systemPrompt,
           qualityRule: ruleSnapshot,
           labelSet: labelsSnapshot,
+          taskRequirements: taskSnapshot,
         });
         quality.promptVersionId = activePrompt.id;
         quality.promptRevision = activePrompt.revision;
