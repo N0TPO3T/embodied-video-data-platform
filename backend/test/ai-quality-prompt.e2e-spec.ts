@@ -11,6 +11,7 @@ import type { DataSource } from "typeorm";
 import { AiQualityModule } from "../src/ai-quality/ai-quality.module.js";
 import { AuthModule } from "../src/auth/auth.module.js";
 import { AuditLogEntity } from "../src/database/entities/audit-log.entity.js";
+import { CollectionTaskEntity } from "../src/database/entities/collection-task.entity.js";
 import { createDataSource, identityEntities } from "../src/database/data-source.js";
 import { UserEntity } from "../src/database/entities/user.entity.js";
 import { TeamEntity } from "../src/database/entities/team.entity.js";
@@ -247,6 +248,17 @@ describe("AI quality prompt API", () => {
         }),
       ]),
     );
+    await dataSource.getRepository(CollectionTaskEntity).save({
+      id: "TASK-LABEL-RENAME",
+      title: "标签编号同步任务",
+      description: "验证修改标签编号时同步更新关联任务",
+      sceneName: "家庭厨房",
+      sceneLabelId: "SCENE-001",
+      rawRequirements: "保持画面稳定",
+      status: "draft",
+      createdByAccountId: "U-PROMPT-ADMIN",
+      createdByName: "提示词管理员",
+    });
 
     const updated = await request(app.getHttpServer())
       .put("/api/v1/ai-quality/labels/SCENE-001")
@@ -254,6 +266,7 @@ describe("AI quality prompt API", () => {
       .set("Cookie", adminCookie)
       .send({
         id: "IGNORED-BODY-ID",
+        nextId: "SCENE-101",
         name: "家庭烹饪",
         enabled: false,
       })
@@ -265,7 +278,7 @@ describe("AI quality prompt API", () => {
     expect(updated.body.labelSet.labels).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: "SCENE-001",
+          id: "SCENE-101",
           name: "家庭烹饪",
           enabled: false,
         }),
@@ -276,11 +289,17 @@ describe("AI quality prompt API", () => {
       .getRepository(LabelSetVersionEntity)
       .find({ order: { revision: "ASC" } });
     expect(labelSets.map((item) => item.active)).toEqual([false, true]);
+    expect(
+      await dataSource
+        .getRepository(CollectionTaskEntity)
+        .findOneByOrFail({ id: "TASK-LABEL-RENAME" }),
+    ).toMatchObject({ sceneLabelId: "SCENE-101" });
 
     const audit = await dataSource.getRepository(AuditLogEntity).findOneByOrFail({
       action: "label_set_update",
     });
     expect(audit.summary).toContain("家庭烹饪");
+    expect(audit.summary).toContain("SCENE-101");
 
     await request(app.getHttpServer())
       .get("/api/v1/ai-quality/label-set")

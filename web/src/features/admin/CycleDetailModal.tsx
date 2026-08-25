@@ -31,6 +31,7 @@ export function CycleDetailModal({
       <Modal
         open={open}
         title={`周期明细 · ${cycle.businessDate}`}
+        className="cycle-detail-modal"
         onClose={onClose}
         returnFocusRef={returnFocusRef}
       >
@@ -49,7 +50,19 @@ export function CycleDetailModal({
             <tbody>
               {(cycle.items ?? []).map((item) => (
                 <tr key={item.id}>
-                  <td><strong>{item.fileName}</strong></td>
+                  <td>
+                    <div className="cycle-video-cell">
+                      {item.thumbnail ? (
+                        <img src={item.thumbnail.url} alt={`${item.fileName} 缩略图`} loading="lazy" />
+                      ) : (
+                        <span className="cycle-video-placeholder" aria-hidden="true">视频</span>
+                      )}
+                      <span className="stack-cell">
+                        <strong>{item.fileName}</strong>
+                        <small>{item.submissionId}</small>
+                      </span>
+                    </div>
+                  </td>
                   <td>
                     {item.taskName ? (
                       <span className="stack-cell">

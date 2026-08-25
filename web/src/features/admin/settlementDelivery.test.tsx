@@ -448,6 +448,14 @@ describe("delivery package actions", () => {
           teamId: "TEAM-01",
           teamName: "团队1",
           fileName: "kitchen-task.mp4",
+          taskId: "TASK-01",
+          taskName: "家庭厨房清洁",
+          taskSceneName: "厨房",
+          thumbnail: {
+            url: "http://minio.local/previews/SUB-1/thumbnail.jpg",
+            expiresAt: 1_786_209_000_000,
+            contentType: "image/jpeg" as const,
+          },
           finalScore: 85,
           settlementRatio: 1,
           effectiveDurationMs: 60_000,
@@ -478,6 +486,13 @@ describe("delivery package actions", () => {
 
     await user.click(await screen.findByRole("button", { name: "查看条目" }));
     expect(screen.getByText("kitchen-task.mp4")).toBeVisible();
+    expect(screen.getByText("家庭厨房清洁")).toBeVisible();
+    expect(
+      screen.getByRole("img", { name: "kitchen-task.mp4 缩略图" }),
+    ).toHaveAttribute(
+      "src",
+      "http://minio.local/previews/SUB-1/thumbnail.jpg",
+    );
     await user.click(screen.getByRole("button", { name: "调整" }));
     await user.clear(screen.getByLabelText("最终评分"));
     await user.type(screen.getByLabelText("最终评分"), "80");

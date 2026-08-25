@@ -32,13 +32,17 @@ TEST_DATABASE_URL=postgresql://evdp:evdp_local_postgres_password@127.0.0.1:55432
 
 ## 迁移发布顺序
 
-1. 备份 PostgreSQL 和 MinIO 对象。
-2. 在暂存或本地副本执行 `cd backend && pnpm migration:run`。
-3. 执行后端类型检查、测试和构建。
-4. 执行 Web 类型检查、测试、构建和渲染冒烟。
-5. 部署 API，新进程启动前再次执行迁移。
-6. 部署 Worker，确认媒体 Worker 和 AI Worker 心跳正常。
-7. 部署 Web，确认 `/api/v1/health/ready`、登录、上传创建、预览链接和交付清单。
+1. 确定发布标签、完整 Git SHA 和 UTC 构建时间，并写入服务器的
+   `/srv/evdp/.deploy-version.env`；该文件不提交到仓库。后续 Compose 命令统一添加
+   `--env-file .env --env-file .deploy-version.env`。
+2. 备份 PostgreSQL 和 MinIO 对象。
+3. 在暂存或本地副本执行 `cd backend && pnpm migration:run`。
+4. 执行后端类型检查、测试和构建。
+5. 执行 Web 类型检查、测试、构建和渲染冒烟。
+6. 从同一提交统一构建并部署 API、两个 Worker 和 Web：
+   `docker compose --env-file .env --env-file .deploy-version.env -f compose.yaml -f compose.prod.yaml build api media-worker ai-quality-worker web`，随后以同样参数执行 `up -d --force-recreate`。
+7. 确认 `/api/v1/health/version` 返回本次发布标签和 Git SHA。
+8. 确认 `/api/v1/health/ready`、登录、上传创建、预览链接和交付清单。
 
 回滚原则：
 

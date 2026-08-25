@@ -195,6 +195,7 @@ export interface Submission {
   settlementStatus: SettlementStatus;
   task?: {
     taskId: string;
+    title?: string;
     revision: number | null;
     sceneName: string;
     pricePointsPerMinute: number | null;

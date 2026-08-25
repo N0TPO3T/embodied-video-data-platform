@@ -11,6 +11,22 @@ import { DataSource } from "typeorm";
 export class HealthController {
   constructor(private readonly dataSource: DataSource) {}
 
+  @Get("version")
+  @Header("cache-control", "no-store")
+  version(): {
+    service: "evdp-api";
+    version: string;
+    revision: string;
+    builtAt: string;
+  } {
+    return {
+      service: "evdp-api",
+      version: process.env.EVDP_RELEASE_VERSION?.trim() || "dev",
+      revision: process.env.EVDP_GIT_SHA?.trim() || "unknown",
+      builtAt: process.env.EVDP_BUILD_TIME?.trim() || "unknown",
+    };
+  }
+
   @Get("live")
   @Header("cache-control", "no-store")
   live(): { status: "ok"; service: "evdp-api" } {

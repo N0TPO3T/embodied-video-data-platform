@@ -9,6 +9,7 @@ import { PointRuleVersionEntity } from "../database/entities/point-rule-version.
 import { SubmissionDuplicateCandidateEntity } from "../database/entities/submission-duplicate-candidate.entity.js";
 import { AllowedOriginGuard } from "../http/allowed-origin.guard.js";
 import { SecurityModule } from "../security/security.module.js";
+import { StorageModule } from "../storage/storage.module.js";
 import { PointCycleFailureFilter } from "./point-cycle-failure.filter.js";
 import { PointCyclesController } from "./point-cycles.controller.js";
 import { PointCyclesPolicy } from "./point-cycles.policy.js";
@@ -26,6 +27,7 @@ import { PointRulesService } from "./point-rules.service.js";
     AuthModule,
     AuditModule,
     SecurityModule,
+    StorageModule,
   ],
   controllers: [PointCyclesController],
   providers: [

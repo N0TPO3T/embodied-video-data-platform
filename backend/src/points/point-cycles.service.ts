@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { DataSource, In, Repository, type EntityManager } from "typeorm";
 
@@ -18,6 +18,10 @@ import { SubmissionDuplicateCandidateEntity } from "../database/entities/submiss
 import { SubmissionEntity } from "../database/entities/submission.entity.js";
 import { VideoQualityResultEntity } from "../database/entities/video-quality-result.entity.js";
 import {
+  OBJECT_STORAGE,
+  type ObjectStoragePort,
+} from "../storage/object-storage.port.js";
+import {
   pointRuleSnapshot,
   pointsForRule,
   settlementRatioForScore,
@@ -27,6 +31,14 @@ import { AdjustPointCycleItemDto } from "./dto/point-cycle.dto.js";
 import { PointCycleFailure } from "./point-cycle-failure.js";
 import { PointCyclesPolicy } from "./point-cycles.policy.js";
 import { PointRulesService } from "./point-rules.service.js";
+
+const POINT_CYCLE_THUMBNAIL_TTL_SECONDS = 10 * 60;
+
+type PointCycleThumbnail = {
+  url: string;
+  expiresAt: number;
+  contentType: "image/jpeg";
+};
 
 /** 批量读取各提交的原始无效时长（人工覆盖优先，其次质检结果） */
 async function loadInvalidDurationBySubmission(
@@ -95,6 +107,7 @@ function publicItem(
   item: PointCycleItemEntity,
   adjustment?: PointCycleAdjustmentEntity,
   invalidDurationMs?: number,
+  thumbnail?: PointCycleThumbnail,
 ) {
   const effective = effectiveItemValues(item, adjustment);
   return {
@@ -128,6 +141,7 @@ function publicItem(
     qualityReviewedAt: item.qualityReviewedAt?.getTime(),
     adjusted: adjustment !== undefined,
     adjustedAt: adjustment?.createdAt.getTime(),
+    ...(thumbnail ? { thumbnail } : {}),
   };
 }
 
@@ -135,6 +149,7 @@ function publicCycle(
   cycle: PointCycleEntity,
   latestAdjustments = new Map<string, PointCycleAdjustmentEntity>(),
   invalidBySubmission = new Map<string, number>(),
+  thumbnails = new Map<string, PointCycleThumbnail>(),
 ) {
   const items = cycle.items ?? [];
   const publicItems = items.map((item) =>
@@ -142,6 +157,7 @@ function publicCycle(
       item,
       latestAdjustments.get(item.id),
       invalidBySubmission.get(item.submissionId),
+      thumbnails.get(item.submissionId),
     ),
   );
   const visibleSubmissionCount = items.length;
@@ -191,6 +207,8 @@ export class PointCyclesService {
     private readonly policy: PointCyclesPolicy,
     private readonly audit: AuditService,
     private readonly pointRules: PointRulesService,
+    @Inject(OBJECT_STORAGE)
+    private readonly storage: ObjectStoragePort,
   ) {}
 
   async preview(actor: PublicUser) {
@@ -230,8 +248,10 @@ export class PointCyclesService {
         (cycle.items ?? []).map((item) => item.submissionId),
       ),
     );
-    return cycles.map((cycle) =>
-      publicCycle(cycle, latestAdjustments, invalidBySubmission),
+    return Promise.all(
+      cycles.map((cycle) =>
+        this.withThumbnails(cycle, latestAdjustments, invalidBySubmission),
+      ),
     );
   }
 
@@ -261,7 +281,7 @@ export class PointCyclesService {
       this.dataSource.manager,
       (cycle.items ?? []).map((item) => item.submissionId),
     );
-    return publicCycle(cycle, latestAdjustments, invalidBySubmission);
+    return this.withThumbnails(cycle, latestAdjustments, invalidBySubmission);
   }
 
   async exportCsv(actor: PublicUser, id: string): Promise<string> {
@@ -463,7 +483,12 @@ export class PointCyclesService {
         (reloaded.items ?? []).map((entry) => entry.submissionId),
       );
       void adjustment;
-      return publicCycle(reloaded, allAdjustments, invalidBySubmission);
+      return this.withThumbnails(
+        reloaded,
+        allAdjustments,
+        invalidBySubmission,
+        manager,
+      );
     });
   }
 
@@ -550,8 +575,52 @@ export class PointCyclesService {
         manager,
         (locked.items ?? []).map((entry) => entry.submissionId),
       );
-      return publicCycle(locked, undefined, invalidBySubmission);
+      return this.withThumbnails(
+        locked,
+        undefined,
+        invalidBySubmission,
+        manager,
+      );
     });
+  }
+
+  private async withThumbnails(
+    cycle: PointCycleEntity,
+    latestAdjustments = new Map<string, PointCycleAdjustmentEntity>(),
+    invalidBySubmission = new Map<string, number>(),
+    manager: EntityManager = this.dataSource.manager,
+  ) {
+    const submissionIds = (cycle.items ?? []).map((item) => item.submissionId);
+    const metadata = submissionIds.length
+      ? await manager
+          .getRepository(MediaMetadataEntity)
+          .findBy({ submissionId: In([...new Set(submissionIds)]) })
+      : [];
+    const thumbnails = new Map<string, PointCycleThumbnail>();
+    await Promise.all(
+      metadata.map(async (item) => {
+        if (!item.thumbnailObjectKey) return;
+        try {
+          const signed = await this.storage.presignDownloadObject({
+            objectKey: item.thumbnailObjectKey,
+            expiresInSeconds: POINT_CYCLE_THUMBNAIL_TTL_SECONDS,
+          });
+          thumbnails.set(item.submissionId, {
+            url: signed.url,
+            expiresAt: signed.expiresAt.getTime(),
+            contentType: "image/jpeg",
+          });
+        } catch {
+          // 单个缩略图不可用时保留条目文字信息，不阻断整个周期明细。
+        }
+      }),
+    );
+    return publicCycle(
+      cycle,
+      latestAdjustments,
+      invalidBySubmission,
+      thumbnails,
+    );
   }
 
   private async loadCandidates(

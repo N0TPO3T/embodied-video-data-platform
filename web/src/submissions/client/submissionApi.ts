@@ -161,6 +161,7 @@ export async function listSubmissions(): Promise<BackendSubmission[]> {
 export type SearchSubmissionsInput = {
   q?: string;
   status?: string;
+  taskId?: string;
   page?: number;
   pageSize?: number;
   includeThumbnails?: boolean;
@@ -185,6 +186,7 @@ function buildSubmissionSearchParams(
   const params = new URLSearchParams();
   if (input.q?.trim()) params.set("q", input.q.trim());
   if (input.status && input.status !== "all") params.set("status", input.status);
+  if (input.taskId && input.taskId !== "all") params.set("taskId", input.taskId);
   if (input.includeThumbnails) params.set("includeThumbnails", "1");
   if (options.includePagination !== false && input.page !== undefined) {
     params.set("page", String(input.page));
@@ -211,6 +213,7 @@ export async function searchSubmissions(
   const result = await requestJson<{
     submissions: BackendSubmission[];
     pagination?: BackendSubmissionListResult["pagination"];
+    taskSources?: BackendSubmissionListResult["taskSources"];
   }>(`/submissions${suffix ? `?${suffix}` : ""}`);
   return {
     submissions: result.submissions,
@@ -221,6 +224,7 @@ export async function searchSubmissions(
         total: result.submissions.length,
         totalPages: 1,
       },
+    taskSources: result.taskSources ?? [],
   };
 }
 

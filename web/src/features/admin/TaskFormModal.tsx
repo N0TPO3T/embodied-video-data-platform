@@ -125,93 +125,123 @@ export function TaskFormModal({
     <Modal
       open={open}
       title={mode === "create" ? "创建采集任务" : "编辑采集任务"}
+      className="task-form-modal"
       onClose={close}
       returnFocusRef={returnFocusRef}
       initialFocusRef={firstInputRef}
     >
       <form className="modal-form" onSubmit={submit}>
-        <div className="form-grid">
-          <label>
-            <span>任务标题</span>
-            <input
-              ref={firstInputRef}
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder="例如：厨房做饭场景数据采集"
-              required
-              maxLength={120}
-            />
+        <p className="task-form-intro">
+          先清楚说明采集目标与原始要求，保存后再使用 AI 规范化并确认，最后发布给数采人员。
+        </p>
+        <section className="task-form-section">
+          <div className="task-form-section-title">
+            <span>1</span>
+            <div><strong>基础信息</strong><small>用于任务大厅识别和归类</small></div>
+          </div>
+          <div className="task-form-two-column">
+            <label className="form-label">
+              <span>任务标题 <em>必填</em></span>
+              <input
+                ref={firstInputRef}
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="例如：厨房做饭场景数据采集"
+                required
+                maxLength={120}
+              />
+              <small className="field-counter">{title.length}/120</small>
+            </label>
+            <label className="form-label task-scene-field">
+              <span>场景名称 <em>必填</em></span>
+              <input
+                value={sceneName}
+                onChange={(event) => {
+                  setSceneName(event.target.value);
+                  activeSuggestionRef.current = false;
+                }}
+                onBlur={() => {
+                  activeSuggestionRef.current = false;
+                }}
+                placeholder="例如：家庭厨房"
+                required
+                maxLength={120}
+                list={undefined}
+              />
+              <small className="field-help">可选择已有标签；新场景发布时自动加入字典</small>
+              {sceneName.trim() && filteredSceneOptions.length > 0 && (
+                <ul className="suggestion-list">
+                  {filteredSceneOptions.slice(0, 8).map((name) => (
+                    <li key={name}>
+                      <button
+                        type="button"
+                        onClick={() => pickScene(name)}
+                        onMouseDown={(event) => {
+                          activeSuggestionRef.current = true;
+                          event.preventDefault();
+                        }}
+                      >
+                        {name}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </label>
+          </div>
+        </section>
+        <section className="task-form-section">
+          <div className="task-form-section-title">
+            <span>2</span>
+            <div><strong>采集说明与要求</strong><small>这些内容会直接影响数采理解与 AI 质检</small></div>
+          </div>
+          <div className="task-form-grid">
+            <label className="form-label">
+              <span>面向数采人员的任务说明</span>
+              <textarea
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                placeholder="说明采集目标、拍摄方式、完成标准和常见误区"
+                rows={4}
+                maxLength={20000}
+              />
+            </label>
+            <label className="form-label">
+              <span>原始任务要求 <em>必填</em></span>
+              <textarea
+                value={rawRequirements}
+                onChange={(event) => setRawRequirements(event.target.value)}
+                placeholder="建议分条填写，例如：\n1. 必须使用第一人称视角；\n2. 双手与主要操作对象全程可见；\n3. 不得出现人脸、门牌号等隐私信息。"
+                rows={7}
+                required
+                maxLength={20000}
+              />
+              <small className="field-help">保存后可通过“规范化”整理成硬性要求与一般要求</small>
+            </label>
+          </div>
+        </section>
+        <section className="task-form-section task-form-price-section">
+          <div className="task-form-section-title">
+            <span>3</span>
+            <div><strong>计分方式</strong><small>不填写时沿用平台全局规则</small></div>
+          </div>
+          <label className="form-label task-price-field">
+            <span>每分钟积分单价</span>
+            <div className="input-with-suffix">
+              <input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                max="10000"
+                step="0.01"
+                value={price}
+                onChange={(event) => setPrice(event.target.value)}
+                placeholder="例如：15.5"
+              />
+              <span>分 / 分钟</span>
+            </div>
           </label>
-          <label>
-            <span>场景名称（支持从标签字典补全，全新场景发布时自动加入字典）</span>
-            <input
-              value={sceneName}
-              onChange={(event) => {
-                setSceneName(event.target.value);
-                activeSuggestionRef.current = false;
-              }}
-              onBlur={() => {
-                activeSuggestionRef.current = false;
-              }}
-              placeholder="例如：家庭厨房"
-              required
-              maxLength={120}
-              list={undefined}
-            />
-            {sceneName.trim() && filteredSceneOptions.length > 0 && (
-              <ul className="suggestion-list">
-                {filteredSceneOptions.slice(0, 8).map((name) => (
-                  <li key={name}>
-                    <button
-                      type="button"
-                      onClick={() => pickScene(name)}
-                      onMouseDown={(event) => {
-                        activeSuggestionRef.current = true;
-                        event.preventDefault();
-                      }}
-                    >
-                      {name}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </label>
-          <label>
-            <span>任务说明（展示给数采人员）</span>
-            <textarea
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              placeholder="采集目标、拍摄方式等面向采集者的说明"
-              rows={3}
-              maxLength={20000}
-            />
-          </label>
-          <label>
-            <span>任务要求（自由填写，保存后可用 AI 规范化）</span>
-            <textarea
-              value={rawRequirements}
-              onChange={(event) => setRawRequirements(event.target.value)}
-              placeholder="例如：视频必须是第一人称视角，画面中必须出现双手操作，光线要充足，不能出现人脸和门牌号等隐私信息……"
-              rows={6}
-              required
-              maxLength={20000}
-            />
-          </label>
-          <label>
-            <span>每分钟积分单价（留空回退全局默认）</span>
-            <input
-              type="number"
-              inputMode="decimal"
-              min="0"
-              max="10000"
-              step="0.01"
-              value={price}
-              onChange={(event) => setPrice(event.target.value)}
-              placeholder="例如：15.5"
-            />
-          </label>
-        </div>
+        </section>
         {error && <p className="form-error">{error}</p>}
         <div className="modal-actions">
           <button type="button" className="button button-secondary" onClick={close}>

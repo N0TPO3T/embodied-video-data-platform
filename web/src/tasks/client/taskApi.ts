@@ -123,6 +123,10 @@ export async function updateTask(
   }).then(taskFrom);
 }
 
+export async function deleteTask(id: string): Promise<void> {
+  await requestJson<void>(`tasks/${id}`, { method: "DELETE" });
+}
+
 /** AI 规范化预览（不落库） */
 export async function normalizeTaskRequirements(
   id: string,

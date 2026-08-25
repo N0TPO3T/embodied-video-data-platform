@@ -1,10 +1,18 @@
 "use client";
 
-import { ClipboardList, CircleDollarSign, PauseCircle } from "lucide-react";
-import { useEffect, useState } from "react";
+import {
+  ArrowRight,
+  CheckCircle2,
+  CircleDollarSign,
+  ClipboardList,
+  PauseCircle,
+  Search,
+  ShieldCheck,
+} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { StatusBadge } from "../../components/StatusBadge";
 import { useInteractions } from "../../interactions/InteractionContext";
-import { listTasksForCollector, taskErrorMessage } from "../../tasks/client/taskApi";
+import { listTasksForCollector } from "../../tasks/client/taskApi";
 import type { CollectionTaskForCollector } from "../../tasks/contracts";
 
 const SELECTED_TASK_STORAGE_KEY = "evdp:selectedTaskId";
@@ -15,6 +23,8 @@ export function TaskHallPage({ navigate }: { navigate(path: string): void }) {
   const [mode, setMode] = useState<"loading" | "live" | "unavailable">(
     "loading",
   );
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState<"all" | "published" | "paused">("all");
 
   useEffect(() => {
     let active = true;
@@ -42,8 +52,21 @@ export function TaskHallPage({ navigate }: { navigate(path: string): void }) {
     navigate("/collector/upload");
   }
 
+  const filteredTasks = useMemo(() => {
+    const term = query.trim().toLowerCase();
+    return tasks.filter((task) => {
+      if (status !== "all" && task.status !== status) return false;
+      if (!term) return true;
+      const content = `${task.title} ${task.sceneName} ${task.description} ${task.normalizedRequirements?.scene_description ?? ""}`.toLowerCase();
+      return content.includes(term);
+    });
+  }, [query, status, tasks]);
+
+  const availableCount = tasks.filter((task) => task.status === "published").length;
+  const pausedCount = tasks.length - availableCount;
+
   return (
-    <div className="page">
+    <div className="page-stack">
       <div className="page-heading">
         <div>
           <p className="page-kicker">众包采集入口</p>
@@ -51,6 +74,48 @@ export function TaskHallPage({ navigate }: { navigate(path: string): void }) {
           <span>选择正在进行的采集任务，按任务要求拍摄并提交视频</span>
         </div>
       </div>
+
+      {mode === "live" && tasks.length > 0 && (
+        <>
+          <section className="task-hall-summary" aria-label="任务概览">
+            <div className="task-hall-summary-copy">
+              <span className="task-hall-summary-icon"><ClipboardList size={22} /></span>
+              <div>
+                <strong>找到适合的任务，先读要求再拍摄</strong>
+                <p>进行中的任务可立即提交；暂停任务仍可查看，但暂不能上传。</p>
+              </div>
+            </div>
+            <div className="task-hall-stats">
+              <span><strong>{availableCount}</strong><small>可提交</small></span>
+              <span><strong>{pausedCount}</strong><small>已暂停</small></span>
+              <span><strong>{tasks.length}</strong><small>全部任务</small></span>
+            </div>
+          </section>
+          <div className="task-hall-toolbar">
+            <label className="search-field task-hall-search">
+              <Search size={16} />
+              <input
+                aria-label="搜索任务"
+                value={query}
+                placeholder="搜索任务名称或场景"
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </label>
+            <div className="segmented-control" aria-label="任务状态筛选">
+              {(["all", "published", "paused"] as const).map((value) => (
+                <button
+                  type="button"
+                  key={value}
+                  className={status === value ? "active" : ""}
+                  onClick={() => setStatus(value)}
+                >
+                  {value === "all" ? "全部" : value === "published" ? "可提交" : "暂停中"}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
 
       {mode === "unavailable" ? (
         <div className="empty-state">
@@ -68,14 +133,20 @@ export function TaskHallPage({ navigate }: { navigate(path: string): void }) {
           <strong>暂无进行中的任务</strong>
           <span>管理员发布任务后即可在此查看并提交</span>
         </div>
+      ) : filteredTasks.length === 0 ? (
+        <div className="empty-state">
+          <Search size={26} />
+          <strong>没有匹配的任务</strong>
+          <span>换个关键词或状态再试</span>
+        </div>
       ) : (
         <div className="task-hall-grid">
-          {tasks.map((task) => (
+          {filteredTasks.map((task) => (
             <article className="content-card task-card" key={task.id}>
               <div className="task-card-head">
                 <div>
+                  <p className="task-card-eyebrow">场景：{task.sceneName}</p>
                   <h2>{task.title}</h2>
-                  <p className="task-scene">场景：{task.sceneName}</p>
                 </div>
                 <StatusBadge
                   label={task.status === "paused" ? "已暂停" : "进行中"}
@@ -87,31 +158,35 @@ export function TaskHallPage({ navigate }: { navigate(path: string): void }) {
                   (task.description || "（任务未提供说明）")}
               </p>
               {task.normalizedRequirements?.requirements.length ? (
-                <ul className="task-req-list">
-                  {task.normalizedRequirements.requirements
-                    .slice(0, 5)
-                    .map((item, index) => (
-                      <li key={`${item.type}-${index}`}>
-                        <span className={`req-badge ${item.type}`}>
-                          {item.type === "hard" ? "硬性" : "一般"}
-                        </span>
-                        {item.content}
+                <div className="task-requirement-block">
+                  <div className="task-requirement-heading">
+                    <span><ShieldCheck size={14} />拍摄要求</span>
+                    <em>共 {task.normalizedRequirements.requirements.length} 条</em>
+                  </div>
+                  <ul className="task-req-list">
+                    {task.normalizedRequirements.requirements
+                      .slice(0, 4)
+                      .map((item, index) => (
+                        <li key={`${item.type}-${index}`}>
+                          <span className={`req-badge ${item.type}`}>
+                            {item.type === "hard" ? "硬性" : "一般"}
+                          </span>
+                          <span>{item.content}</span>
+                        </li>
+                      ))}
+                    {task.normalizedRequirements.requirements.length > 4 && (
+                      <li className="req-more">
+                        进入提交页可查看全部要求
                       </li>
-                    ))}
-                  {task.normalizedRequirements.requirements.length > 5 && (
-                    <li className="req-more">
-                      等共 {task.normalizedRequirements.requirements.length} 条要求
-                    </li>
-                  )}
-                </ul>
+                    )}
+                  </ul>
+                </div>
               ) : null}
               <div className="task-card-foot">
-                <span className="task-price">
-                  <CircleDollarSign size={15} />
-                  {task.pricePointsPerMinute !== null
-                    ? `${task.pricePointsPerMinute} 分/分钟`
-                    : "按全局规则计分"}
-                </span>
+                <div className="task-price">
+                  <CircleDollarSign size={16} />
+                  <span><strong>{task.pricePointsPerMinute !== null ? `${task.pricePointsPerMinute} 分/分钟` : "按全局规则计分"}</strong><small>通过质检后计入积分</small></span>
+                </div>
                 <button
                   type="button"
                   className="button button-primary button-small"
@@ -124,10 +199,16 @@ export function TaskHallPage({ navigate }: { navigate(path: string): void }) {
                       已暂停
                     </>
                   ) : (
-                    "去采集"
+                    <>
+                      去采集
+                      <ArrowRight size={14} />
+                    </>
                   )}
                 </button>
               </div>
+              {task.status === "published" && (
+                <span className="task-card-ready"><CheckCircle2 size={13} />当前可提交</span>
+              )}
             </article>
           ))}
         </div>

@@ -1,4 +1,6 @@
 .DS_Store
+._*
+.codex-artifacts/
 node_modules
 .pnpm-store/
 dist/
@@ -6,6 +8,7 @@ coverage/
 .vite/
 *.tsbuildinfo
 .env
+.deploy-version.env
 .env.*
 !.env.example
 backend/node_modules/

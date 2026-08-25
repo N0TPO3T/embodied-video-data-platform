@@ -134,13 +134,18 @@ describe("administrator rule configuration", () => {
     });
     promptApi.updateLabel
       .mockReset()
-      .mockImplementation(async (input) => ({
-        ...currentLabelSet,
-        revision: 2,
-        labels: currentLabelSet.labels.map((label) =>
-          label.id === input.id ? { ...label, ...input } : label,
-        ),
-      }));
+      .mockImplementation(async (input) => {
+        const { nextId, ...changes } = input;
+        return {
+          ...currentLabelSet,
+          revision: 2,
+          labels: currentLabelSet.labels.map((label) =>
+            label.id === input.id
+              ? { ...label, ...changes, id: nextId ?? label.id }
+              : label,
+          ),
+        };
+      });
   });
 
   it("publishes a new active rule version", async () => {
@@ -174,12 +179,14 @@ describe("administrator rule configuration", () => {
     expect(promptApi.getRule).toHaveBeenCalled();
   });
 
-  it("edits a label name and enabled state", async () => {
+  it("edits a label number, name and enabled state", async () => {
     const user = userEvent.setup();
     renderAdmin("/admin/rules");
 
     const row = (await screen.findByText("后端厨房")).closest("tr")!;
     await user.click(within(row).getByRole("button", { name: "编辑" }));
+    await user.clear(screen.getByLabelText("标签编号"));
+    await user.type(screen.getByLabelText("标签编号"), "SCENE-101");
     await user.clear(screen.getByLabelText("标签名称"));
     await user.type(screen.getByLabelText("标签名称"), "家庭烹饪");
     await user.click(screen.getByLabelText("启用标签"));
@@ -187,6 +194,7 @@ describe("administrator rule configuration", () => {
 
     expect(promptApi.updateLabel).toHaveBeenCalledWith({
       id: "SCENE-001",
+      nextId: "SCENE-101",
       name: "家庭烹饪",
       enabled: false,
     });
@@ -194,6 +202,25 @@ describe("administrator rule configuration", () => {
     const updatedRow = screen.getByText("家庭烹饪").closest("tr")!;
     expect(within(updatedRow).getByText("停用")).toBeVisible();
     expect(screen.getByText("标签已更新")).toBeVisible();
+  });
+
+  it("toggles a label directly from the table", async () => {
+    const user = userEvent.setup();
+    renderAdmin("/admin/rules");
+
+    await user.click(
+      await screen.findByRole("button", { name: "停用标签 后端厨房" }),
+    );
+
+    expect(promptApi.updateLabel).toHaveBeenCalledWith({
+      id: "SCENE-001",
+      nextId: "SCENE-001",
+      name: "后端厨房",
+      enabled: false,
+    });
+    const updatedRow = screen.getByText("后端厨房").closest("tr")!;
+    expect(within(updatedRow).getByText("停用")).toBeVisible();
+    expect(screen.getByText("标签已停用")).toBeVisible();
   });
 
   it("publishes a versioned AI system prompt for future jobs", async () => {

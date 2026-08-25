@@ -141,6 +141,7 @@ type SubmissionListStatus =
 type SubmissionListQuery = {
   q?: string;
   status?: string;
+  taskId?: string;
   page?: number;
   pageSize?: number;
   includeThumbnails?: boolean;
@@ -276,6 +277,11 @@ function reviewAuditActionLabel(action: string): string {
 }
 
 function publicSubmission(submission: SubmissionEntity) {
+  const collectionTask = (
+    submission as SubmissionEntity & {
+      collectionTask?: CollectionTaskEntity | null;
+    }
+  ).collectionTask;
   const metadata = (
     submission as SubmissionEntity & {
       metadata?: MediaMetadataEntity | null;
@@ -357,6 +363,7 @@ function publicSubmission(submission: SubmissionEntity) {
     task: submission.taskId
       ? {
           taskId: submission.taskId,
+          title: collectionTask?.title ?? undefined,
           revision: submission.taskRevision,
           sceneName: submission.taskSceneName ?? "",
           requirements: submission.taskRequirementsSnapshot ?? undefined,
@@ -899,7 +906,8 @@ export class SubmissionsService {
     const paged = input.page !== undefined || input.pageSize !== undefined;
     const status = listStatus(input.status);
     const q = input.q?.trim();
-    const idQuery = this.createListIdQuery(actor, status, q);
+    const taskId = input.taskId?.trim();
+    const idQuery = this.createListIdQuery(actor, status, q, taskId);
     const total = await idQuery.getCount();
     if (paged) {
       idQuery.skip((page - 1) * pageSize).take(pageSize);
@@ -916,6 +924,7 @@ export class SubmissionsService {
           string,
           { url: string; expiresAt: number; contentType: string }
         >();
+    const taskSources = await this.listTaskSources(actor);
     return {
       submissions: ids.flatMap((id) => {
         const submission = ordered.get(id);
@@ -930,6 +939,7 @@ export class SubmissionsService {
         total,
         totalPages: paged ? Math.max(1, Math.ceil(total / pageSize)) : 1,
       },
+      taskSources,
     };
   }
 
@@ -2143,11 +2153,17 @@ export class SubmissionsService {
     actor: PublicUser,
     status: SubmissionListStatus,
     q: string | undefined,
+    taskId?: string,
   ) {
     const idQuery = this.submissions
       .createQueryBuilder("submission")
       .leftJoin("submission.owner", "owner")
       .leftJoin("submission.team", "team")
+      .leftJoin(
+        CollectionTaskEntity,
+        "collectionTask",
+        "collectionTask.id = submission.taskId",
+      )
       .leftJoin(
         VideoQualityResultEntity,
         "quality",
@@ -2168,7 +2184,7 @@ export class SubmissionsService {
       .addSelect("submission.createdAt", "created_at")
       .distinct(true);
     this.applyListScope(idQuery, actor);
-    this.applyListFilters(idQuery, status, q);
+    this.applyListFilters(idQuery, status, q, taskId);
     return idQuery
       .orderBy("submission.createdAt", "DESC")
       .addOrderBy("submission.id", "DESC");
@@ -2178,6 +2194,7 @@ export class SubmissionsService {
     query: ReturnType<Repository<SubmissionEntity>["createQueryBuilder"]>,
     status: SubmissionListStatus,
     search: string | undefined,
+    taskId?: string,
   ): void {
     if (search) {
       const term = `%${escapeLike(search).toLowerCase()}%`;
@@ -2196,9 +2213,23 @@ export class SubmissionsService {
             })
             .orWhere("LOWER(team.name) LIKE :search ESCAPE '\\'", {
               search: term,
-            });
+            })
+            .orWhere(
+              "LOWER(COALESCE(submission.taskSceneName, '')) LIKE :search ESCAPE '\\'",
+              { search: term },
+            )
+            .orWhere(
+              "LOWER(COALESCE(collectionTask.title, '')) LIKE :search ESCAPE '\\'",
+              { search: term },
+            );
         }),
       );
+    }
+
+    if (taskId === "__none__") {
+      query.andWhere("submission.taskId IS NULL");
+    } else if (taskId) {
+      query.andWhere("submission.taskId = :taskId", { taskId });
     }
 
     if (status === "all") return;
@@ -2311,6 +2342,45 @@ export class SubmissionsService {
     query.andWhere("submission.processingStatus = :status", { status });
   }
 
+  private async listTaskSources(actor: PublicUser): Promise<
+    Array<{ taskId: string; title: string; sceneName: string }>
+  > {
+    const query = this.submissions
+      .createQueryBuilder("submission")
+      .leftJoin(
+        CollectionTaskEntity,
+        "collectionTask",
+        "collectionTask.id = submission.taskId",
+      )
+      .select("submission.taskId", "task_id")
+      .addSelect("submission.taskSceneName", "scene_name")
+      .addSelect("collectionTask.title", "task_title")
+      .where("submission.taskId IS NOT NULL")
+      .distinct(true);
+    this.applyListScope(query, actor);
+    const rows = await query.getRawMany<{
+      task_id: string;
+      scene_name: string | null;
+      task_title: string | null;
+    }>();
+    const sources = new Map<
+      string,
+      { taskId: string; title: string; sceneName: string }
+    >();
+    for (const row of rows) {
+      if (!row.task_id || sources.has(row.task_id)) continue;
+      const sceneName = row.scene_name?.trim() || "未命名场景";
+      sources.set(row.task_id, {
+        taskId: row.task_id,
+        title: row.task_title?.trim() || sceneName,
+        sceneName,
+      });
+    }
+    return [...sources.values()].sort((left, right) =>
+      left.title.localeCompare(right.title, "zh-CN"),
+    );
+  }
+
   private async findDetailedByIds(
     ids: string[],
   ): Promise<SubmissionEntity[]> {
@@ -2319,6 +2389,12 @@ export class SubmissionsService {
       .createQueryBuilder("submission")
       .leftJoinAndSelect("submission.owner", "owner")
       .leftJoinAndSelect("submission.team", "team")
+      .leftJoinAndMapOne(
+        "submission.collectionTask",
+        CollectionTaskEntity,
+        "collectionTask",
+        "collectionTask.id = submission.taskId",
+      )
       .leftJoinAndMapOne(
         "submission.metadata",
         MediaMetadataEntity,

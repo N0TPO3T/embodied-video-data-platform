@@ -2,13 +2,11 @@
 
 import {
   Building2,
-  Search,
   ShieldCheck,
-  UserCog,
   UserRoundPlus,
   Users,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import * as accountApi from "../../auth/client/accountApi";
 import { useIdentity } from "../../auth/client/IdentityContext";
 import type {
@@ -19,37 +17,21 @@ import type {
   UpdateTeamInput,
   UpdateAccountInput,
 } from "../../auth/contracts";
-import { StatusBadge } from "../../components/StatusBadge";
-import type { AccountStatus, Role } from "../../domain/types";
 import { useInteractions } from "../../interactions/InteractionContext";
+import { AccountDeleteModal } from "./AccountDeleteModal";
 import { AccountStatusModal } from "./AccountStatusModal";
 import { AssignTeamLeaderModal } from "./AssignTeamLeaderModal";
 import { ResetPasswordModal } from "./ResetPasswordModal";
 import { TeamFormModal } from "./TeamFormModal";
 import { UserFormModal } from "./UserFormModal";
-
-const roleLabel: Record<Role, string> = {
-  collector: "数采人员",
-  leader: "团长",
-  admin: "平台管理员",
-};
-
-function formatUpdatedAt(timestamp: number): string {
-  return new Intl.DateTimeFormat("zh-CN", {
-    timeZone: "Asia/Shanghai",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(timestamp);
-}
+import { OrganizationHierarchy } from "./OrganizationHierarchy";
 
 export function UsersTeamsPage() {
   const {
     accounts,
     currentAccount,
     teams,
+    removeAccount,
     upsertAccount,
     upsertTeam,
   } = useIdentity();
@@ -58,33 +40,14 @@ export function UsersTeamsPage() {
   const [editTarget, setEditTarget] = useState<AccountPublic>();
   const [resetTarget, setResetTarget] = useState<AccountPublic>();
   const [statusTarget, setStatusTarget] = useState<AccountPublic>();
+  const [deleteTarget, setDeleteTarget] = useState<AccountPublic>();
   const [createTeamOpen, setCreateTeamOpen] = useState(false);
   const [editTeamTarget, setEditTeamTarget] = useState<TeamPublic>();
   const [leaderTeamTarget, setLeaderTeamTarget] = useState<TeamPublic>();
-  const [search, setSearch] = useState("");
-  const [roleFilter, setRoleFilter] = useState<Role | "all">("all");
-  const [statusFilter, setStatusFilter] = useState<
-    AccountStatus | "all"
-  >("all");
   const createTriggerRef = useRef<HTMLButtonElement>(null);
   const actionTriggerRef = useRef<HTMLButtonElement>(null);
   const createTeamTriggerRef = useRef<HTMLButtonElement>(null);
   const teamActionTriggerRef = useRef<HTMLButtonElement>(null);
-
-  const filteredAccounts = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return accounts.filter((account) => {
-      const matchesSearch =
-        !query ||
-        account.displayName.toLowerCase().includes(query) ||
-        account.username.toLowerCase().includes(query);
-      const matchesRole =
-        roleFilter === "all" || account.role === roleFilter;
-      const matchesStatus =
-        statusFilter === "all" || account.status === statusFilter;
-      return matchesSearch && matchesRole && matchesStatus;
-    });
-  }, [accounts, roleFilter, search, statusFilter]);
 
   async function create(input: CreateAccountInput) {
     const account = await accountApi.createAccount(input);
@@ -182,258 +145,35 @@ export function UsersTeamsPage() {
         </div>
       </div>
 
-      <section className="content-card table-card">
-        <div className="card-heading">
-          <div>
-            <h2>团队列表</h2>
-            <p>维护团队状态、积分规则和团长人选</p>
-          </div>
-        </div>
-        <div className="table-scroll">
-          <table className="data-table team-management-table">
-            <thead>
-              <tr>
-                <th>团队</th>
-                <th>团长</th>
-                <th>成员数</th>
-                <th>每分钟积分</th>
-                <th>状态</th>
-                <th>更新时间</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {teams.map((team) => {
-                const members = accounts.filter(
-                  (account) => account.teamId === team.id,
-                );
-                const leaders = members.filter(
-                  (account) => account.role === "leader",
-                );
-                return (
-                  <tr key={team.id}>
-                    <td>
-                      <div className="member-cell">
-                        <span><Building2 size={14} /></span>
-                        <div>
-                          <strong>{team.name}</strong>
-                          <small>{team.id}</small>
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      {leaders.length > 0
-                        ? `${leaders.map((leader) => leader.displayName).join(" / ")}${leaders.length > 1 ? "（待统一）" : ""}`
-                        : "待指定"}
-                    </td>
-                    <td>{members.length} 人</td>
-                    <td>{team.unitPricePerMinute} 分/分钟</td>
-                    <td>
-                      <StatusBadge
-                        label={team.status === "active" ? "已启用" : "已停用"}
-                        tone={team.status === "active" ? "success" : "neutral"}
-                      />
-                    </td>
-                    <td>{formatUpdatedAt(team.updatedAt)}</td>
-                    <td>
-                      <div className="account-row-actions">
-                        <button
-                          className="table-action"
-                          onClick={(event) => {
-                            teamActionTriggerRef.current = event.currentTarget;
-                            setEditTeamTarget(team);
-                          }}
-                        >
-                          编辑团队
-                        </button>
-                        <button
-                          className="table-action"
-                          disabled={
-                            team.status === "disabled" ||
-                            !members.some(
-                              (account) => account.status === "active",
-                            )
-                          }
-                          title={
-                            team.status === "disabled"
-                              ? "请先启用团队"
-                              : !members.some(
-                                    (account) => account.status === "active",
-                                  )
-                                ? "请先启用团队成员账号"
-                                : undefined
-                          }
-                          onClick={(event) => {
-                            teamActionTriggerRef.current = event.currentTarget;
-                            setLeaderTeamTarget(team);
-                          }}
-                        >
-                          <UserCog size={13} />
-                          指定团长
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          {teams.length === 0 && (
-            <div className="empty-state">
-              <strong>还没有团队</strong>
-              <span>先创建团队，再添加团长和数采人员账号</span>
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section className="content-card table-card">
-        <div className="card-heading">
-          <div>
-            <h2>账号列表</h2>
-            <p>账号状态、角色权限与团队归属</p>
-          </div>
-        </div>
-        <div className="filter-bar account-filter-bar">
-          <label className="search-field">
-            <Search size={15} />
-            <span className="sr-only">搜索账号</span>
-            <input
-              aria-label="搜索账号"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="搜索显示名称或用户名"
-            />
-          </label>
-          <select
-            aria-label="角色筛选"
-            value={roleFilter}
-            onChange={(event) =>
-              setRoleFilter(event.target.value as Role | "all")
-            }
-          >
-            <option value="all">全部角色</option>
-            <option value="admin">管理员</option>
-            <option value="leader">团长</option>
-            <option value="collector">数采人员</option>
-          </select>
-          <select
-            aria-label="状态筛选"
-            value={statusFilter}
-            onChange={(event) =>
-              setStatusFilter(
-                event.target.value as AccountStatus | "all",
-              )
-            }
-          >
-            <option value="all">全部状态</option>
-            <option value="active">已启用</option>
-            <option value="disabled">已停用</option>
-          </select>
-          <span className="filter-count">
-            共 {filteredAccounts.length} 个账号
-          </span>
-        </div>
-        <div className="table-scroll">
-          <table className="data-table account-table">
-            <thead>
-              <tr>
-                <th>账号</th>
-                <th>用户名</th>
-                <th>角色</th>
-                <th>所属团队</th>
-                <th>状态</th>
-                <th>更新时间</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredAccounts.map((account) => (
-                <tr key={account.id}>
-                  <td>
-                    <div className="member-cell">
-                      <span>{account.displayName.slice(0, 1)}</span>
-                      <div>
-                        <strong>{account.displayName}</strong>
-                        <small>{account.id}</small>
-                      </div>
-                    </div>
-                  </td>
-                  <td>{account.username}</td>
-                  <td>{roleLabel[account.role]}</td>
-                  <td>
-                    {teams.find(
-                      (team) => team.id === account.teamId,
-                    )?.name ?? "平台"}
-                  </td>
-                  <td>
-                    <StatusBadge
-                      label={
-                        account.status === "active"
-                          ? "已启用"
-                          : "已停用"
-                      }
-                      tone={
-                        account.status === "active"
-                          ? "success"
-                          : "neutral"
-                      }
-                    />
-                  </td>
-                  <td>{formatUpdatedAt(account.updatedAt)}</td>
-                  <td>
-                    <div className="account-row-actions">
-                      <button
-                        className="table-action"
-                        onClick={(event) => {
-                          rememberActionTrigger(event.currentTarget);
-                          setEditTarget(account);
-                        }}
-                      >
-                        编辑
-                      </button>
-                      <button
-                        className="table-action"
-                        onClick={(event) => {
-                          rememberActionTrigger(event.currentTarget);
-                          setResetTarget(account);
-                        }}
-                      >
-                        重置密码
-                      </button>
-                      <button
-                        className="table-action"
-                        disabled={
-                          account.id === currentAccount.id &&
-                          account.status === "active"
-                        }
-                        title={
-                          account.id === currentAccount.id &&
-                          account.status === "active"
-                            ? "不能停用当前登录账号"
-                            : undefined
-                        }
-                        onClick={(event) => {
-                          rememberActionTrigger(event.currentTarget);
-                          setStatusTarget(account);
-                        }}
-                      >
-                        {account.status === "active" ? "停用" : "启用"}
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {filteredAccounts.length === 0 && (
-            <div className="empty-state">
-              <strong>没有匹配账号</strong>
-              <span>请调整搜索词或筛选条件</span>
-            </div>
-          )}
-        </div>
-      </section>
+      <OrganizationHierarchy
+        accounts={accounts}
+        teams={teams}
+        currentAccountId={currentAccount.id}
+        onEditTeam={(team, button) => {
+          teamActionTriggerRef.current = button;
+          setEditTeamTarget(team);
+        }}
+        onAssignLeader={(team, button) => {
+          teamActionTriggerRef.current = button;
+          setLeaderTeamTarget(team);
+        }}
+        onEditAccount={(account, button) => {
+          rememberActionTrigger(button);
+          setEditTarget(account);
+        }}
+        onResetPassword={(account, button) => {
+          rememberActionTrigger(button);
+          setResetTarget(account);
+        }}
+        onToggleStatus={(account, button) => {
+          rememberActionTrigger(button);
+          setStatusTarget(account);
+        }}
+        onDeleteAccount={(account, button) => {
+          rememberActionTrigger(button);
+          setDeleteTarget(account);
+        }}
+      />
 
       {createOpen && (
         <UserFormModal
@@ -527,6 +267,18 @@ export function UsersTeamsPage() {
               "success",
               nextStatus === "active" ? "账号已启用" : "账号已停用",
             );
+          }}
+        />
+      )}
+      {deleteTarget && (
+        <AccountDeleteModal
+          account={deleteTarget}
+          returnFocusRef={actionTriggerRef}
+          onClose={() => setDeleteTarget(undefined)}
+          onDelete={async () => {
+            await accountApi.deleteAccount(deleteTarget.id);
+            removeAccount(deleteTarget.id);
+            notify("success", "账号已永久删除");
           }}
         />
       )}

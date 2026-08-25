@@ -53,6 +53,7 @@ export function RuleFormModal({
   );
   const [description, setDescription] = useState("");
   const [labelName, setLabelName] = useState(label?.name ?? "");
+  const [labelId, setLabelId] = useState(label?.id ?? "");
   const [labelType, setLabelType] = useState<LabelConfig["type"]>(
     label?.type ?? "scene",
   );
@@ -87,9 +88,18 @@ export function RuleFormModal({
         setError("请输入 0 到 100 之间的通过阈值");
         return;
       }
-    } else if (!labelName.trim()) {
-      setError("请填写标签名称");
-      return;
+    } else {
+      if (!labelName.trim()) {
+        setError("请填写标签名称");
+        return;
+      }
+      if (
+        mode === "label" &&
+        !/^[A-Z0-9]+(?:-[A-Z0-9]+)*$/u.test(labelId.trim().toUpperCase())
+      ) {
+        setError("标签编号只能包含大写字母、数字和连字符");
+        return;
+      }
     }
     submittingRef.current = true;
     setSubmitting(true);
@@ -131,7 +141,12 @@ export function RuleFormModal({
         }
         notify("success", "标签已新增");
       } else if (label) {
-        const input = { id: label.id, name: labelName.trim(), enabled };
+        const input = {
+          id: label.id,
+          nextId: labelId.trim().toUpperCase(),
+          name: labelName.trim(),
+          enabled,
+        };
         try {
           const published = await updateQualityLabel(input);
           onLabelSetPublished?.(published);
@@ -180,9 +195,24 @@ export function RuleFormModal({
           </>
         ) : (
           <>
+            {mode === "label" && (
+              <label>
+                标签编号
+                <input
+                  ref={firstInputRef}
+                  aria-label="标签编号"
+                  maxLength={64}
+                  value={labelId}
+                  onChange={(event) => setLabelId(event.target.value.toUpperCase())}
+                  placeholder="SCENE-001"
+                  required
+                />
+                <small className="form-help">用于任务和标签体系关联，修改后会同步更新关联任务。</small>
+              </label>
+            )}
             <label>
               标签名称
-              <input ref={firstInputRef} value={labelName} onChange={(event) => setLabelName(event.target.value)} required />
+              <input ref={mode === "label" ? undefined : firstInputRef} value={labelName} onChange={(event) => setLabelName(event.target.value)} required />
             </label>
             {mode === "label-create" && (
               <label>

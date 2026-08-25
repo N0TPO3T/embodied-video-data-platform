@@ -3,6 +3,7 @@ import {
   IsIn,
   IsInt,
   IsOptional,
+  Matches,
   IsString,
   Max,
   MaxLength,
@@ -15,6 +16,15 @@ export class UpdateLabelDto {
   @MinLength(1)
   @MaxLength(64)
   id!: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(3)
+  @MaxLength(64)
+  @Matches(/^[A-Z0-9]+(?:-[A-Z0-9]+)*$/u, {
+    message: "标签编号只能包含大写字母、数字和连字符",
+  })
+  nextId?: string;
 
   @IsString()
   @MinLength(1)

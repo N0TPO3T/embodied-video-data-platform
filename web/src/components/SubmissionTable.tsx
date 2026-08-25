@@ -36,6 +36,7 @@ function formatDuration(seconds: number, item: Submission) {
 export function SubmissionTable({
   submissions,
   showOwner = false,
+  showTaskSource = false,
   actionLabel = "详情",
   onAction,
   renderActions,
@@ -43,6 +44,7 @@ export function SubmissionTable({
 }: {
   submissions: Submission[];
   showOwner?: boolean;
+  showTaskSource?: boolean;
   actionLabel?: string;
   onAction?(submission: Submission): void;
   renderActions?(submission: Submission): ReactNode;
@@ -51,11 +53,11 @@ export function SubmissionTable({
   if (loading) {
     return (
       <div className="table-scroll" aria-label="正在加载数据">
-        <table className="data-table">
+        <table className="data-table submission-table">
           <tbody>
             {Array.from({ length: 5 }, (_, index) => (
               <tr key={`skeleton-${index}`}>
-                <td colSpan={showOwner ? 7 : 6}>
+                <td colSpan={6 + Number(showOwner) + Number(showTaskSource)}>
                   <span className="skeleton-row" />
                 </td>
               </tr>
@@ -71,20 +73,37 @@ export function SubmissionTable({
 
   return (
     <div className="table-scroll">
-      <table className="data-table">
-        <thead><tr><th>视频提交</th>{showOwner && <th>成员 / 团队</th>}<th>场景与动作</th><th>时长</th><th>处理状态</th><th>质量评分</th><th /></tr></thead>
+      <table className="data-table submission-table">
+        <thead><tr><th>视频提交</th>{showOwner && <th>成员 / 团队</th>}{showTaskSource && <th>任务来源</th>}<th>场景与动作</th><th>时长</th><th>处理状态</th><th>质量评分</th><th /></tr></thead>
         <tbody>
           {submissions.map((item) => {
             const [label, tone] = processingBadge(item);
             return (
               <tr key={item.id}>
                 <td><div className="file-cell">{item.thumbnailUrl ? <img className="file-thumb" src={item.thumbnailUrl} alt={`${item.fileName} 缩略图`} loading="lazy" /> : <span><FileVideo size={17} /></span>}<div><strong>{item.fileName}</strong><small>{item.id} · {item.createdAt}</small>{item.assetStatus === "quarantined" && <em><ShieldAlert size={12} />敏感隔离</em>}{item.duplicateCandidates?.some((candidate) => candidate.status === "candidate") && <em className="warning-tag"><CopyCheck size={12} />疑似重复</em>}</div></div></td>
-                {showOwner && <td><div className="stack-cell"><strong>{item.ownerName}</strong><small>{item.teamName}</small></div></td>}
-                <td><div className="stack-cell">{item.task ? <><strong>{item.task.sceneName}</strong><small>任务 · {item.task.sceneName}</small></> : <><strong>{item.scene}</strong><small>{item.action}</small></>}</div></td>
-                <td>{formatDuration(item.durationSeconds, item)}</td>
-                <td><StatusBadge label={label} tone={tone} /></td>
-                <td><QualityScore score={item.finalScore} ratio={item.qualityResult?.settlementRatio} passed={item.qualityResult?.passed} /></td>
-                <td>{renderActions ? renderActions(item) : onAction && <button className="table-action" aria-label={actionLabel} onClick={() => onAction(item)}><Eye size={15} />{actionLabel}</button>}</td>
+                {showOwner && <td className="owner-cell"><div className="stack-cell"><strong>{item.ownerName}</strong><small>{item.teamName}</small></div></td>}
+                {showTaskSource && (
+                  <td className="task-source-cell">
+                    <div className="stack-cell">
+                      {item.task ? (
+                        <>
+                          <strong>{item.task.title || item.task.sceneName}</strong>
+                          <small>{item.task.taskId}</small>
+                        </>
+                      ) : (
+                        <>
+                          <strong>历史自由提交</strong>
+                          <small>未关联采集任务</small>
+                        </>
+                      )}
+                    </div>
+                  </td>
+                )}
+                <td className="submission-context-cell"><div className="stack-cell">{item.task ? <><strong>{item.task.sceneName}</strong><small>任务 · {item.task.sceneName}</small></> : <><strong>{item.scene}</strong><small>{item.action}</small></>}</div></td>
+                <td className="duration-cell">{formatDuration(item.durationSeconds, item)}</td>
+                <td className="status-cell"><StatusBadge label={label} tone={tone} /></td>
+                <td className="quality-cell"><QualityScore score={item.finalScore} ratio={item.qualityResult?.settlementRatio} passed={item.qualityResult?.passed} /></td>
+                <td className="table-actions-cell">{renderActions ? renderActions(item) : onAction && <button className="table-action" aria-label={actionLabel} onClick={() => onAction(item)}><Eye size={15} />{actionLabel}</button>}</td>
               </tr>
             );
           })}
