@@ -33,7 +33,7 @@ afterEach(() => {
 });
 
 describe("InteractionProvider", () => {
-  it("shows feedback and marks all seeded notifications as read", async () => {
+  it("starts without fabricated notifications and still shows feedback", async () => {
     const user = userEvent.setup();
     render(
       <InteractionProvider>
@@ -41,8 +41,8 @@ describe("InteractionProvider", () => {
       </InteractionProvider>,
     );
 
-    expect(screen.getByText("3 条未读")).toBeVisible();
-    expect(screen.getByText("团队质检结果已更新")).toBeVisible();
+    expect(screen.getByText("0 条未读")).toBeVisible();
+    expect(screen.queryByText("团队质检结果已更新")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "发送成功提示" }));
     expect(screen.getByText("操作已完成")).toBeVisible();
 

@@ -136,4 +136,45 @@ describe("DashboardShell", () => {
     await user.click(screen.getAllByRole("button", { name: "查看" })[0]!);
     expect(navigate).toHaveBeenCalledWith("/admin/review");
   });
+
+  it("highlights the parent navigation on detail pages and reports backend alerts", async () => {
+    render(
+      <IdentityProvider currentAccount={admin} accounts={[admin]} teams={[]}>
+        <DemoStoreProvider currentAccount={admin} accounts={[admin]}>
+          <InteractionProvider>
+            <DashboardShell
+              currentPath="/admin/review/SUB-001"
+              navigate={vi.fn()}
+              onLogout={vi.fn()}
+            >
+              <p>content</p>
+            </DashboardShell>
+          </InteractionProvider>
+        </DemoStoreProvider>
+      </IdentityProvider>,
+    );
+
+    expect(screen.getByRole("link", { name: /^质量复核/ })).toHaveClass(
+      "nav-link-active",
+    );
+    expect(await screen.findByText("系统有待处理异常")).toBeVisible();
+  });
+
+  it("does not claim the system is healthy when status cannot be read", async () => {
+    operationsApi.getStatus.mockRejectedValueOnce(new Error("offline"));
+    render(
+      <IdentityProvider currentAccount={admin} accounts={[admin]} teams={[]}>
+        <DemoStoreProvider currentAccount={admin} accounts={[admin]}>
+          <InteractionProvider>
+            <DashboardShell currentPath="/admin" navigate={vi.fn()} onLogout={vi.fn()}>
+              <p>content</p>
+            </DashboardShell>
+          </InteractionProvider>
+        </DemoStoreProvider>
+      </IdentityProvider>,
+    );
+
+    expect(await screen.findByText("暂时无法读取状态")).toBeVisible();
+    expect(screen.queryByText("系统运行正常")).not.toBeInTheDocument();
+  });
 });

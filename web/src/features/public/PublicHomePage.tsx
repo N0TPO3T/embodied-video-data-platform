@@ -151,7 +151,7 @@ export function PublicHomePage({ navigate }: { navigate(path: string): void }) {
         </section>
         <section className="public-cta"><div><span>{snapshot.config.ctaCopy}</span><h2>从真实任务出发，建立可持续的数据供给</h2></div><button className="button button-primary" onClick={() => navigate("/login")}>体验完整平台 <ArrowRight size={17} /></button></section>
       </main>
-      <footer className="public-footer"><BrandMark /><span>本地数据管理与 AI 质检平台</span></footer>
+      <footer className="public-footer"><BrandMark /><span>具身数据管理与 AI 质检平台</span></footer>
     </div>
   );
 }

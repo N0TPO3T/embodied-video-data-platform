@@ -257,14 +257,14 @@ export function CollectorDashboard({
         <aside className="content-card">
           <div className="card-heading">
             <div>
-              <h2>今日采集建议</h2>
-              <p>优先补充紧缺场景</p>
+              <h2>采集质量提醒</h2>
+              <p>提交前确认关键画面完整</p>
             </div>
           </div>
           <div className="recommend-list">
-            <div><em>01</em><span><strong>工作台组装</strong><small>紧缺度 92%</small></span></div>
-            <div><em>02</em><span><strong>户外园艺</strong><small>紧缺度 87%</small></span></div>
-            <div><em>03</em><span><strong>家庭收纳</strong><small>紧缺度 78%</small></span></div>
+            <div><em>01</em><span><strong>完整任务链</strong><small>从准备到收尾不要中断</small></span></div>
+            <div><em>02</em><span><strong>双手清晰可见</strong><small>避免操作对象被遮挡</small></span></div>
+            <div><em>03</em><span><strong>过程连续稳定</strong><small>减少晃动和无效停顿</small></span></div>
           </div>
         </aside>
       </div>

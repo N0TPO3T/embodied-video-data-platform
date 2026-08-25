@@ -40,10 +40,19 @@ describe("Modal", () => {
     await user.click(screen.getByRole("button", { name: "打开表单" }));
     expect(screen.getByRole("dialog", { name: "邀请成员" })).toBeVisible();
     expect(screen.getByLabelText("姓名")).toHaveFocus();
+    expect(document.body.style.overflow).toBe("hidden");
+
+    await user.tab();
+    expect(screen.getByRole("button", { name: "弹窗内按钮" })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "关闭邀请成员" })).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(screen.getByRole("button", { name: "弹窗内按钮" })).toHaveFocus();
 
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "打开表单" })).toHaveFocus();
+    expect(document.body.style.overflow).toBe("");
   });
 
   it("keeps content clicks inside and closes from the backdrop or close button", async () => {
