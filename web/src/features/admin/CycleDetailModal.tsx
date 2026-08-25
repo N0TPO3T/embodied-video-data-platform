@@ -44,12 +44,22 @@ export function CycleDetailModal({
         <div className="table-scroll">
           <table className="data-table">
             <thead>
-              <tr><th>视频</th><th>数采</th><th>团队</th><th>评分</th><th>比例</th><th>有效时长</th><th>无效时长</th><th>积分</th><th>状态</th><th /></tr>
+              <tr><th>视频</th><th>任务</th><th>数采</th><th>团队</th><th>评分</th><th>比例</th><th>有效时长</th><th>无效时长</th><th>积分</th><th>状态</th><th /></tr>
             </thead>
             <tbody>
               {(cycle.items ?? []).map((item) => (
                 <tr key={item.id}>
                   <td><strong>{item.fileName}</strong></td>
+                  <td>
+                    {item.taskName ? (
+                      <span className="stack-cell">
+                        <strong>{item.taskName}</strong>
+                        <small>{item.taskSceneName ?? ""}</small>
+                      </span>
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
+                  </td>
                   <td>{item.ownerName}</td>
                   <td>{item.teamName}</td>
                   <td>{item.finalScore.toFixed(1)}</td>
