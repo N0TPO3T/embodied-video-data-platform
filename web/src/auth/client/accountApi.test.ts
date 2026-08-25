@@ -7,6 +7,7 @@ import {
   createAccount,
   createTeam,
   changeOwnPassword,
+  deleteAccount,
   login,
   listAccountAudit,
   listAccounts,
@@ -107,6 +108,17 @@ describe("account API client", () => {
           newPassword: "new-password",
         }),
       }),
+    );
+  });
+
+  it("deletes an account using an encoded identifier", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(deleteAccount("U/ADMIN 02")).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/v1/accounts/U%2FADMIN%2002",
+      expect.objectContaining({ method: "DELETE", credentials: "include" }),
     );
   });
 

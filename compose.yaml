@@ -57,9 +57,14 @@ services:
     restart: unless-stopped
 
   api:
+    image: evdp-api:${EVDP_RELEASE_VERSION:-dev}
     build:
       context: ./backend
       target: api
+      args:
+        EVDP_RELEASE_VERSION: ${EVDP_RELEASE_VERSION:-dev}
+        EVDP_GIT_SHA: ${EVDP_GIT_SHA:-unknown}
+        EVDP_BUILD_TIME: ${EVDP_BUILD_TIME:-unknown}
     env_file:
       - .env
     environment:
@@ -94,9 +99,14 @@ services:
     restart: unless-stopped
 
   media-worker:
+    image: evdp-media-worker:${EVDP_RELEASE_VERSION:-dev}
     build:
       context: ./backend
       target: media-worker
+      args:
+        EVDP_RELEASE_VERSION: ${EVDP_RELEASE_VERSION:-dev}
+        EVDP_GIT_SHA: ${EVDP_GIT_SHA:-unknown}
+        EVDP_BUILD_TIME: ${EVDP_BUILD_TIME:-unknown}
     env_file:
       - .env
     environment:
@@ -112,10 +122,15 @@ services:
     restart: unless-stopped
 
   ai-quality-worker:
+    image: evdp-ai-quality-worker:${EVDP_RELEASE_VERSION:-dev}
     init: true
     build:
       context: ./backend
       target: ai-quality-worker
+      args:
+        EVDP_RELEASE_VERSION: ${EVDP_RELEASE_VERSION:-dev}
+        EVDP_GIT_SHA: ${EVDP_GIT_SHA:-unknown}
+        EVDP_BUILD_TIME: ${EVDP_BUILD_TIME:-unknown}
     env_file:
       - .env
     environment:
@@ -136,11 +151,16 @@ services:
     restart: unless-stopped
 
   ai-quality-lab:
+    image: evdp-ai-quality-lab:${EVDP_RELEASE_VERSION:-dev}
     profiles: ["ai-test"]
     init: true
     build:
       context: ./backend
       target: ai-quality-lab
+      args:
+        EVDP_RELEASE_VERSION: ${EVDP_RELEASE_VERSION:-dev}
+        EVDP_GIT_SHA: ${EVDP_GIT_SHA:-unknown}
+        EVDP_BUILD_TIME: ${EVDP_BUILD_TIME:-unknown}
     env_file:
       - .env
     environment:

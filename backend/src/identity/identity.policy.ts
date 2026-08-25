@@ -91,6 +91,17 @@ export class IdentityPolicy {
     );
   }
 
+  assertCanDelete(actor: PublicUser): void {
+    assertActive(actor);
+    if (actor.role !== "admin") {
+      throw new IdentityFailure(
+        "FORBIDDEN",
+        "仅管理员可删除账号",
+        403,
+      );
+    }
+  }
+
   assertCanUpdate(
     actor: PublicUser,
     target: ManageableAccount,

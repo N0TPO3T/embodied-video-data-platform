@@ -12,6 +12,7 @@ import {
   type CollectionTaskStatus,
   type NormalizedTaskRequirements,
 } from "../database/entities/collection-task.entity.js";
+import { SubmissionEntity } from "../database/entities/submission.entity.js";
 import { TaskFailure } from "./tasks.failure.js";
 import { TasksPolicy } from "./tasks.policy.js";
 import { RequirementNormalizerService } from "./requirement-normalizer.service.js";
@@ -100,6 +101,26 @@ function numericOrNull(value: string | null | undefined): number | null {
 }
 
 export { numericOrNull };
+
+export function assertTaskCanBeDeleted(
+  task: Pick<CollectionTaskEntity, "status">,
+  linkedSubmissionCount: number,
+): void {
+  if (task.status !== "draft") {
+    throw new TaskFailure(
+      "TASK_NOT_DELETABLE",
+      "只有尚未发布的草稿任务可以删除；已发布任务请使用关闭操作保留数据追溯",
+      409,
+    );
+  }
+  if (linkedSubmissionCount > 0) {
+    throw new TaskFailure(
+      "TASK_HAS_SUBMISSIONS",
+      "该任务已有提交数据，不能删除",
+      409,
+    );
+  }
+}
 
 const COLLECTOR_VISIBLE_STATUSES: CollectionTaskStatus[] = [
   "published",
@@ -282,6 +303,40 @@ export class TasksService {
       },
     );
     return publicTask(saved);
+  }
+
+  /** 管理员：仅删除尚未发布的草稿，避免破坏任务与已提交数据的追溯关系。 */
+  async delete(actor: PublicUser, id: string): Promise<void> {
+    this.policy.requireManage(actor);
+    await this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(CollectionTaskEntity);
+      const task = await repository.findOne({
+        where: { id },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!task) {
+        throw new TaskFailure("NOT_FOUND", "采集任务不存在", 404);
+      }
+      const linkedSubmissionCount = await manager
+        .getRepository(SubmissionEntity)
+        .countBy({ taskId: task.id });
+      assertTaskCanBeDeleted(task, linkedSubmissionCount);
+      await this.audit.record(
+        manager,
+        actor,
+        "task_delete",
+        { id: task.id, name: task.title },
+        `删除草稿采集任务 ${task.title}`,
+        {
+          id: task.id,
+          title: task.title,
+          sceneName: task.sceneName,
+          status: task.status,
+        },
+        null,
+      );
+      await repository.remove(task);
+    });
   }
 
   /** 管理员：AI 规范化预览（不落库，返回结果供确认） */

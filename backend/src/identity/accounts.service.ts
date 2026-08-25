@@ -37,6 +37,13 @@ function isUniqueFailure(error: unknown): boolean {
   );
 }
 
+function isForeignKeyFailure(error: unknown): boolean {
+  return (
+    error instanceof QueryFailedError &&
+    (error.driverError as { code?: string }).code === "23503"
+  );
+}
+
 function auditAccount(user: UserEntity): Record<string, unknown> {
   return {
     id: user.id,
@@ -327,6 +334,56 @@ export class AccountsService {
       );
       return toPublicUser(saved);
     });
+  }
+
+  async delete(actor: PublicUser, id: string): Promise<void> {
+    this.policy.assertCanDelete(actor);
+    try {
+      await this.dataSource.transaction(async (manager) => {
+        const users = manager.getRepository(UserEntity);
+        const target = await users.findOne({
+          where: { id },
+          lock: { mode: "pessimistic_write" },
+        });
+        if (!target) {
+          throw new IdentityFailure("NOT_FOUND", "账号不存在", 404);
+        }
+        if (actor.id === target.id) {
+          throw new IdentityFailure(
+            "VALIDATION",
+            "不能删除当前登录账号",
+            400,
+          );
+        }
+        if (target.status !== "disabled") {
+          throw new IdentityFailure(
+            "VALIDATION",
+            "请先停用账号，再执行删除",
+            400,
+          );
+        }
+        const before = auditAccount(target);
+        await users.delete({ id: target.id });
+        await this.audit.record(
+          manager,
+          actor,
+          "delete",
+          { id: target.id, name: target.displayName },
+          "删除未关联业务数据的账号",
+          before,
+          null,
+        );
+      });
+    } catch (error) {
+      if (isForeignKeyFailure(error)) {
+        throw new IdentityFailure(
+          "CONFLICT",
+          "该账号已有视频、任务、积分或配置记录，不能永久删除；请保持停用以保留历史数据",
+          409,
+        );
+      }
+      throw error;
+    }
   }
 
   private async assertRoleTeam(

@@ -21,6 +21,7 @@ vi.mock("../../auth/client/accountApi", async () => {
     assignTeamLeader: vi.fn(),
     resetAccountPassword: vi.fn(),
     setAccountStatus: vi.fn(),
+    deleteAccount: vi.fn(),
   };
 });
 
@@ -51,9 +52,12 @@ afterEach(() => {
   vi.mocked(accountApi.assignTeamLeader).mockReset();
   vi.mocked(accountApi.resetAccountPassword).mockReset();
   vi.mocked(accountApi.setAccountStatus).mockReset();
+  vi.mocked(accountApi.deleteAccount).mockReset();
 });
 
-function renderAdminAccounts() {
+function renderAdminAccounts(
+  accountList: AccountPublic[] = [adminAccount, collectorAccount],
+) {
   const teams = [
     {
       id: "TEAM-01",
@@ -68,12 +72,12 @@ function renderAdminAccounts() {
     <InteractionProvider>
       <IdentityProvider
         currentAccount={adminAccount}
-        accounts={[adminAccount, collectorAccount]}
+        accounts={accountList}
         teams={teams}
       >
         <DemoStoreProvider
           currentAccount={adminAccount}
-          accounts={[adminAccount, collectorAccount]}
+          accounts={accountList}
           teams={teams}
         >
           <UsersTeamsPage />
@@ -84,6 +88,25 @@ function renderAdminAccounts() {
 }
 
 describe("administrator account management", () => {
+  it("shows teams as expandable groups before their account rows", async () => {
+    const user = userEvent.setup();
+    renderAdminAccounts();
+
+    const toggle = screen.getByRole("button", {
+      name: "星火一队，收起账号",
+    });
+    const teamCard = toggle.closest("article")!;
+    expect(within(teamCard).getByText("待指定")).toBeVisible();
+    expect(within(teamCard).getByText("测试人员1")).toBeVisible();
+
+    await user.click(toggle);
+    expect(within(teamCard).queryByText("测试人员1")).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "星火一队，展开账号" }),
+    );
+    expect(within(teamCard).getByText("测试人员1")).toBeVisible();
+  });
+
   it("creates another administrator and updates the account list", async () => {
     const user = userEvent.setup();
     vi.mocked(accountApi.createAccount).mockResolvedValue({
@@ -180,6 +203,21 @@ describe("administrator account management", () => {
     expect(screen.getByText("账号已停用")).toBeVisible();
   });
 
+  it("permanently deletes a disabled account after username confirmation", async () => {
+    const user = userEvent.setup();
+    vi.mocked(accountApi.deleteAccount).mockResolvedValue();
+    renderAdminAccounts([{ ...adminAccount }, { ...collectorAccount, status: "disabled" }]);
+    const row = screen.getByText("测试人员1").closest("tr")!;
+
+    await user.click(within(row).getByRole("button", { name: "删除" }));
+    await user.type(screen.getByLabelText("确认用户名"), "ceshirenyuan1");
+    await user.click(screen.getByRole("button", { name: "永久删除账号" }));
+
+    expect(accountApi.deleteAccount).toHaveBeenCalledWith("U-COL-01");
+    expect(screen.queryByText("测试人员1")).not.toBeInTheDocument();
+    expect(screen.getByText("账号已永久删除")).toBeVisible();
+  });
+
   it("filters accounts by search, role, and status", async () => {
     const user = userEvent.setup();
     renderAdminAccounts();
@@ -226,8 +264,8 @@ describe("administrator account management", () => {
     });
     expect(screen.getAllByText("远山二队").length).toBeGreaterThan(0);
 
-    const teamRow = screen.getByText("TEAM-01").closest("tr")!;
-    await user.click(within(teamRow).getByRole("button", { name: "编辑团队" }));
+    const teamCard = screen.getByText(/TEAM-01/).closest("article")!;
+    await user.click(within(teamCard).getByRole("button", { name: "编辑团队" }));
     await user.clear(screen.getByLabelText("团队名称"));
     await user.type(screen.getByLabelText("团队名称"), "星火先锋队");
     await user.clear(screen.getByLabelText("每分钟积分"));
@@ -248,9 +286,9 @@ describe("administrator account management", () => {
       { ...collectorAccount, role: "leader" },
     ]);
     renderAdminAccounts();
-    const teamRow = screen.getByText("TEAM-01").closest("tr")!;
+    const teamCard = screen.getByText(/TEAM-01/).closest("article")!;
 
-    await user.click(within(teamRow).getByRole("button", { name: /指定团长/ }));
+    await user.click(within(teamCard).getByRole("button", { name: /指定团长/ }));
     await user.selectOptions(screen.getByLabelText("团长账号"), "U-COL-01");
     await user.click(screen.getByRole("button", { name: "确认指定" }));
 

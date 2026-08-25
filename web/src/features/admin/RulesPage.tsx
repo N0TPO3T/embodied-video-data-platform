@@ -7,6 +7,7 @@ import {
   getLabelSet,
   getQualityRule,
   getScarcityConfig,
+  updateQualityLabel,
 } from "../../ai-quality/client/aiQualityApi";
 import type { LabelSet, QualityRule, ScarcityConfig } from "../../ai-quality/contracts";
 import { StatusBadge } from "../../components/StatusBadge";
@@ -36,6 +37,7 @@ export function RulesPage() {
   const [scarcityOpen, setScarcityOpen] = useState(false);
   const [selectedLabel, setSelectedLabel] = useState<LabelConfig>();
   const [deletingLabelId, setDeletingLabelId] = useState<string>();
+  const [togglingLabelId, setTogglingLabelId] = useState<string>();
   const ruleTriggerRef = useRef<HTMLButtonElement>(null);
   const labelTriggerRef = useRef<HTMLButtonElement>(null);
   const labelCreateTriggerRef = useRef<HTMLButtonElement>(null);
@@ -108,6 +110,27 @@ export function RulesPage() {
     }
   }
 
+  async function handleToggleLabel(label: LabelConfig) {
+    setTogglingLabelId(label.id);
+    try {
+      const next = await updateQualityLabel({
+        id: label.id,
+        nextId: label.id,
+        name: label.name,
+        enabled: !label.enabled,
+      });
+      setLabelSet(next);
+      notify("success", label.enabled ? "标签已停用" : "标签已启用");
+    } catch (reason) {
+      notify(
+        "error",
+        reason instanceof Error ? reason.message : "状态更新失败，请重试",
+      );
+    } finally {
+      setTogglingLabelId(undefined);
+    }
+  }
+
   return (
     <div className="page-stack">
       <div className="page-heading">
@@ -125,7 +148,7 @@ export function RulesPage() {
         <div className="card-heading"><div><h2>核心标签</h2><p>场景、动作、对象和质量问题标签（AI 质检据此做任务分类）</p></div><button ref={labelCreateTriggerRef} className="button button-secondary" onClick={() => setLabelCreateOpen(true)}>新增标签</button></div>
         <div className="table-scroll"><table className="data-table"><thead><tr><th>编号</th><th>标签名称</th><th>类型</th><th>关联视频</th><th>状态</th><th/></tr></thead><tbody>
           {visibleLabels.map((label) => (
-            <tr key={label.id}><td>{label.id}</td><td><strong>{label.name}</strong></td><td>{typeLabel[label.type]}</td><td>{label.associationCount} 条</td><td><StatusBadge label={label.enabled ? "启用" : "停用"} tone={label.enabled ? "success" : "neutral"}/></td><td><span className="row-actions"><button className="table-action" onClick={(event) => { labelTriggerRef.current = event.currentTarget; setSelectedLabel(label); }}>编辑</button><button className="table-action table-action-danger" disabled={deletingLabelId === label.id} onClick={() => void handleDeleteLabel(label)}>{deletingLabelId === label.id ? "删除中…" : "删除"}</button></span></td></tr>
+            <tr key={label.id}><td><span className="mono">{label.id}</span></td><td><strong>{label.name}</strong></td><td>{typeLabel[label.type]}</td><td>{label.associationCount} 条</td><td><StatusBadge label={label.enabled ? "启用" : "停用"} tone={label.enabled ? "success" : "neutral"}/></td><td className="table-actions-cell"><span className="row-actions"><button className="table-action" disabled={togglingLabelId === label.id} aria-label={`${label.enabled ? "停用" : "启用"}标签 ${label.name}`} onClick={() => void handleToggleLabel(label)}>{togglingLabelId === label.id ? "处理中…" : label.enabled ? "停用" : "启用"}</button><button className="table-action" onClick={(event) => { labelTriggerRef.current = event.currentTarget; setSelectedLabel(label); }}>编辑</button><button className="table-action table-action-danger" disabled={deletingLabelId === label.id || togglingLabelId === label.id} onClick={() => void handleDeleteLabel(label)}>{deletingLabelId === label.id ? "删除中…" : "删除"}</button></span></td></tr>
           ))}
         </tbody></table></div>
       </section>

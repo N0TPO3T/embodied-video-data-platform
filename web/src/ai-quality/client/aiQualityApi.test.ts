@@ -150,6 +150,7 @@ describe("AI quality prompt API", () => {
     await expect(
       updateQualityLabel({
         id: "SCENE-001",
+        nextId: "SCENE-101",
         name: "家庭烹饪",
         enabled: false,
       }),
@@ -163,6 +164,7 @@ describe("AI quality prompt API", () => {
         cache: "no-store",
         body: JSON.stringify({
           id: "SCENE-001",
+          nextId: "SCENE-101",
           name: "家庭烹饪",
           enabled: false,
         }),

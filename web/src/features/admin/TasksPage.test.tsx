@@ -10,6 +10,7 @@ import { accountForRole, demoAccounts } from "../../test/accountFixtures";
 const taskApi = vi.hoisted(() => ({
   listManage: vi.fn(),
   create: vi.fn(),
+  delete: vi.fn(),
   update: vi.fn(),
   confirm: vi.fn(),
   publish: vi.fn(),
@@ -22,6 +23,7 @@ const taskApi = vi.hoisted(() => ({
 vi.mock("../../tasks/client/taskApi", () => ({
   listManageTasks: taskApi.listManage,
   createTask: taskApi.create,
+  deleteTask: taskApi.delete,
   updateTask: taskApi.update,
   confirmTaskRequirements: taskApi.confirm,
   publishTask: taskApi.publish,
@@ -152,6 +154,61 @@ describe("TasksPage", () => {
         pricePointsPerMinute: null,
       });
     });
+  });
+
+  it("opens the edit form with the selected task values", async () => {
+    const user = userEvent.setup();
+    taskApi.update.mockResolvedValue({ ...draftTask, title: "厨房采集更新版" });
+    renderAdmin();
+    await screen.findByText("厨房数据采集");
+
+    await user.click(screen.getAllByRole("button", { name: "编辑" })[0]!);
+    expect(screen.getByRole("heading", { name: "编辑采集任务" })).toBeInTheDocument();
+    const titleInput = screen.getByLabelText(/任务标题/);
+    expect(titleInput).toHaveValue("厨房数据采集");
+    expect(screen.getByLabelText(/场景名称/)).toHaveValue("家庭厨房");
+
+    await user.clear(titleInput);
+    await user.type(titleInput, "厨房采集更新版");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(taskApi.update).toHaveBeenCalledWith(
+        "TASK-draft1",
+        expect.objectContaining({ title: "厨房采集更新版" }),
+      );
+    });
+  });
+
+  it("deletes a draft task after explicit confirmation", async () => {
+    const user = userEvent.setup();
+    taskApi.delete.mockResolvedValue(undefined);
+    renderAdmin();
+    await screen.findByText("厨房数据采集");
+
+    await user.click(
+      screen.getByRole("button", { name: "删除任务 厨房数据采集" }),
+    );
+    expect(screen.getByRole("heading", { name: "删除草稿任务" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "确认删除" }));
+
+    await waitFor(() => {
+      expect(taskApi.delete).toHaveBeenCalledWith("TASK-draft1");
+    });
+    expect(screen.queryByText("厨房数据采集")).not.toBeInTheDocument();
+  });
+
+  it("clears an unfinished create form after closing it", async () => {
+    const user = userEvent.setup();
+    renderAdmin();
+    await screen.findByText("厨房数据采集");
+
+    await user.click(screen.getByRole("button", { name: "创建任务" }));
+    await user.type(screen.getByLabelText(/任务标题/), "未保存任务");
+    await user.click(screen.getByRole("button", { name: "取消" }));
+    await user.click(screen.getByRole("button", { name: "创建任务" }));
+
+    expect(screen.getByLabelText(/任务标题/)).toHaveValue("");
   });
 
   it("opens the normalize modal and confirms AI requirements", async () => {

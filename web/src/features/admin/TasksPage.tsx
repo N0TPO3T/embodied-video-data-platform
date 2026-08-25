@@ -1,18 +1,20 @@
 "use client";
 
 import {
+  AlertTriangle,
   ClipboardList,
-  CircleDollarSign,
   Pause,
   Play,
   Plus,
   RefreshCw,
   Search,
   Square,
+  Trash2,
   WandSparkles,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { StatusBadge } from "../../components/StatusBadge";
+import { Modal } from "../../components/Modal";
 import { useInteractions } from "../../interactions/InteractionContext";
 import type {
   CollectionTask,
@@ -25,6 +27,7 @@ import {
   closeTask,
   confirmTaskRequirements,
   createTask,
+  deleteTask,
   listManageTasks,
   pauseTask,
   publishTask,
@@ -74,6 +77,7 @@ export function TasksPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<CollectionTask>();
   const [normalizeTarget, setNormalizeTarget] = useState<CollectionTask>();
+  const [deleteTarget, setDeleteTarget] = useState<CollectionTask>();
   const [actingId, setActingId] = useState<string>();
   const createTriggerRef = useRef<HTMLButtonElement>(null);
   const actionTriggerRef = useRef<HTMLButtonElement>(null);
@@ -99,17 +103,20 @@ export function TasksPage() {
   );
 
   useEffect(() => {
-    void reload();
+    const timer = window.setTimeout(() => {
+      void reload();
+    }, 150);
+    return () => window.clearTimeout(timer);
   }, [reload]);
 
   function changeStatus(next: "all" | CollectionTaskStatus) {
     setStatusFilter(next);
-    void reload({ status: next, q: search, page: 1 });
+    setPage(1);
   }
 
   function changeSearch(value: string) {
     setSearch(value);
-    void reload({ status: statusFilter, q: value, page: 1 });
+    setPage(1);
   }
 
   async function handleCreate(input: CreateTaskInput) {
@@ -176,10 +183,28 @@ export function TasksPage() {
     await act(id, () => closeTask(id), "任务已关闭");
   }
 
+  async function removeDraft() {
+    if (!deleteTarget || actingId) return;
+    const target = deleteTarget;
+    setActingId(target.id);
+    try {
+      await deleteTask(target.id);
+      setTasks((current) => current.filter((item) => item.id !== target.id));
+      setTotal((current) => Math.max(0, current - 1));
+      setDeleteTarget(undefined);
+      notify("success", "草稿任务已删除");
+      if (tasks.length === 1 && page > 1) setPage((current) => current - 1);
+    } catch (reason) {
+      notify("error", taskErrorMessage(reason));
+    } finally {
+      setActingId(undefined);
+    }
+  }
+
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
-    <div className="page">
+    <div className="page-stack">
       <div className="page-heading">
         <div>
           <p className="page-kicker">采集任务管理</p>
@@ -243,7 +268,7 @@ export function TasksPage() {
             </div>
           </div>
           <div className="table-scroll">
-            <table className="data-table">
+            <table className="data-table task-management-table">
               <thead>
                 <tr>
                   <th>任务</th>
@@ -259,12 +284,12 @@ export function TasksPage() {
               <tbody>
                 {tasks.map((task) => (
                   <tr key={task.id}>
-                    <td>
+                    <td className="task-title-cell">
                       <strong>{task.title}</strong>
                       <small className="row-sub">{task.id}</small>
                     </td>
                     <td>{task.sceneName}</td>
-                    <td>
+                    <td className="nowrap-cell">
                       {task.pricePointsPerMinute !== null ? (
                         <span className="mono">
                           {task.pricePointsPerMinute} 分/分钟
@@ -273,13 +298,13 @@ export function TasksPage() {
                         <span className="muted">全局默认</span>
                       )}
                     </td>
-                    <td>
+                    <td className="status-cell">
                       <StatusBadge
                         label={statusLabel[task.status]}
                         tone={statusTone[task.status]}
                       />
                     </td>
-                    <td>
+                    <td className="nowrap-cell">
                       {task.normalizationStatus === "ready" ? (
                         <span className="ok-text">
                           {task.normalizedRequirements?.requirements.length ?? 0} 条
@@ -290,23 +315,29 @@ export function TasksPage() {
                         </span>
                       )}
                     </td>
-                    <td>V{task.revision}</td>
-                    <td>{formatTime(task.updatedAt)}</td>
-                    <td>
+                    <td className="nowrap-cell">V{task.revision}</td>
+                    <td className="nowrap-cell">{formatTime(task.updatedAt)}</td>
+                    <td className="table-actions-cell">
                       <span className="row-actions">
                         {task.status === "draft" && (
                           <>
                             <button
                               className="table-action"
                               disabled={actingId === task.id}
-                              onClick={() => setEditTarget(task)}
+                              onClick={(event) => {
+                                actionTriggerRef.current = event.currentTarget;
+                                setEditTarget(task);
+                              }}
                             >
                               编辑
                             </button>
                             <button
                               className="table-action"
                               disabled={actingId === task.id}
-                              onClick={() => setNormalizeTarget(task)}
+                              onClick={(event) => {
+                                actionTriggerRef.current = event.currentTarget;
+                                setNormalizeTarget(task);
+                              }}
                             >
                               <WandSparkles size={14} />
                               规范化
@@ -318,6 +349,18 @@ export function TasksPage() {
                             >
                               发布
                             </button>
+                            <button
+                              className="table-action danger"
+                              disabled={actingId === task.id}
+                              aria-label={`删除任务 ${task.title}`}
+                              onClick={(event) => {
+                                actionTriggerRef.current = event.currentTarget;
+                                setDeleteTarget(task);
+                              }}
+                            >
+                              <Trash2 size={14} />
+                              删除
+                            </button>
                           </>
                         )}
                         {task.status === "published" && (
@@ -325,7 +368,10 @@ export function TasksPage() {
                             <button
                               className="table-action"
                               disabled={actingId === task.id}
-                              onClick={() => setEditTarget(task)}
+                              onClick={(event) => {
+                                actionTriggerRef.current = event.currentTarget;
+                                setEditTarget(task);
+                              }}
                             >
                               编辑
                             </button>
@@ -352,7 +398,10 @@ export function TasksPage() {
                             <button
                               className="table-action"
                               disabled={actingId === task.id}
-                              onClick={() => setEditTarget(task)}
+                              onClick={(event) => {
+                                actionTriggerRef.current = event.currentTarget;
+                                setEditTarget(task);
+                              }}
                             >
                               编辑
                             </button>
@@ -398,7 +447,6 @@ export function TasksPage() {
                 disabled={page <= 1}
                 onClick={() => {
                   setPage(page - 1);
-                  void reload({ page: page - 1 });
                 }}
               >
                 上一页
@@ -411,7 +459,6 @@ export function TasksPage() {
                 disabled={page >= totalPages}
                 onClick={() => {
                   setPage(page + 1);
-                  void reload({ page: page + 1 });
                 }}
               >
                 下一页
@@ -421,23 +468,28 @@ export function TasksPage() {
         </section>
       )}
 
-      <TaskFormModal
-        open={createOpen}
-        mode="create"
-        onCreate={handleCreate}
-        onUpdate={handleUpdate}
-        onClose={() => setCreateOpen(false)}
-        returnFocusRef={createTriggerRef}
-      />
-      <TaskFormModal
-        open={editTarget !== undefined}
-        mode="edit"
-        task={editTarget}
-        onCreate={handleCreate}
-        onUpdate={handleUpdate}
-        onClose={() => setEditTarget(undefined)}
-        returnFocusRef={actionTriggerRef}
-      />
+      {createOpen && (
+        <TaskFormModal
+          open
+          mode="create"
+          onCreate={handleCreate}
+          onUpdate={handleUpdate}
+          onClose={() => setCreateOpen(false)}
+          returnFocusRef={createTriggerRef}
+        />
+      )}
+      {editTarget && (
+        <TaskFormModal
+          key={editTarget.id}
+          open
+          mode="edit"
+          task={editTarget}
+          onCreate={handleCreate}
+          onUpdate={handleUpdate}
+          onClose={() => setEditTarget(undefined)}
+          returnFocusRef={actionTriggerRef}
+        />
+      )}
       {normalizeTarget && (
         <TaskNormalizeModal
           open
@@ -446,6 +498,48 @@ export function TasksPage() {
           onClose={() => setNormalizeTarget(undefined)}
           returnFocusRef={actionTriggerRef}
         />
+      )}
+      {deleteTarget && (
+        <Modal
+          open
+          title="删除草稿任务"
+          className="task-delete-modal"
+          onClose={() => {
+            if (!actingId) setDeleteTarget(undefined);
+          }}
+          returnFocusRef={actionTriggerRef}
+        >
+          <div className="task-delete-content">
+            <span className="task-delete-icon" aria-hidden="true">
+              <AlertTriangle size={22} />
+            </span>
+            <div>
+              <strong>确认删除“{deleteTarget.title}”？</strong>
+              <p>
+                任务编号 {deleteTarget.id}。删除后无法恢复；已发布任务不会提供删除入口，以确保提交数据可追溯。
+              </p>
+            </div>
+          </div>
+          <div className="modal-actions">
+            <button
+              type="button"
+              className="button button-secondary"
+              disabled={actingId === deleteTarget.id}
+              onClick={() => setDeleteTarget(undefined)}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className="button button-danger"
+              disabled={actingId === deleteTarget.id}
+              onClick={() => void removeDraft()}
+            >
+              <Trash2 size={15} />
+              {actingId === deleteTarget.id ? "删除中…" : "确认删除"}
+            </button>
+          </div>
+        </Modal>
       )}
     </div>
   );

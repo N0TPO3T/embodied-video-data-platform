@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   Param,
@@ -88,5 +89,15 @@ export class AccountsController {
     @Body() input: SetAccountStatusDto,
   ) {
     return { account: await this.accounts.setStatus(actor, id, input) };
+  }
+
+  @Delete(":id")
+  @HttpCode(204)
+  @UseGuards(AllowedOriginGuard, SensitiveActionRateLimitGuard)
+  async delete(
+    @CurrentUser() actor: PublicUser,
+    @Param("id") id: string,
+  ): Promise<void> {
+    await this.accounts.delete(actor, id);
   }
 }

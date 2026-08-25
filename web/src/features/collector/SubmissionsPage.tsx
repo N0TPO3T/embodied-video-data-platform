@@ -35,13 +35,18 @@ function localFilter(
   query: string,
   status: string,
   qualityOnly: boolean,
+  taskId: string,
 ): Submission[] {
   const normalized = query.trim().toLowerCase();
   return submissions.filter((item) => {
     if (item.ownerId !== ownerId) return false;
     if (qualityOnly && !hasQualityResult(item)) return false;
+    if (taskId === "__none__" && item.task) return false;
+    if (taskId !== "all" && taskId !== "__none__" && item.task?.taskId !== taskId) {
+      return false;
+    }
     const text =
-      `${item.fileName} ${item.id} ${item.scene} ${item.action}`.toLowerCase();
+      `${item.fileName} ${item.id} ${item.scene} ${item.action} ${item.task?.title ?? ""} ${item.task?.sceneName ?? ""} ${item.task?.taskId ?? ""}`.toLowerCase();
     if (normalized && !text.includes(normalized)) return false;
     if (status === "all") return true;
     if (status === "passed" || status === "failed") {
@@ -67,9 +72,13 @@ export function SubmissionsPage({
   const { state, currentUser } = useDemoStore();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
+  const [taskId, setTaskId] = useState("all");
   const [page, setPage] = useState(1);
   const [mode, setMode] = useState<ListMode>("loading");
   const [submissions, setSubmissions] = useState<Submission[]>([]);
+  const [taskSources, setTaskSources] = useState<
+    Array<{ taskId: string; title: string; sceneName: string }>
+  >([]);
   const [pagination, setPagination] =
     useState<BackendSubmissionListPagination>({
       page: 1,
@@ -86,10 +95,12 @@ export function SubmissionsPage({
       page,
       pageSize: PAGE_SIZE,
       includeThumbnails: true,
+      ...(!qualityOnly && taskId !== "all" ? { taskId } : {}),
     })
       .then((result) => {
         if (!active) return;
         setSubmissions(result.submissions.map(backendSubmissionToDomain));
+        setTaskSources(result.taskSources ?? []);
         setPagination(result.pagination);
         setMode("live");
       })
@@ -101,6 +112,7 @@ export function SubmissionsPage({
           query,
           status,
           qualityOnly,
+          qualityOnly ? "all" : taskId,
         );
         const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
         const safePage = Math.min(page, totalPages);
@@ -112,12 +124,25 @@ export function SubmissionsPage({
           total: filtered.length,
           totalPages,
         });
+        const fallbackSources = new Map<
+          string,
+          { taskId: string; title: string; sceneName: string }
+        >();
+        for (const item of state.submissions) {
+          if (item.ownerId !== currentUser.id || !item.task) continue;
+          fallbackSources.set(item.task.taskId, {
+            taskId: item.task.taskId,
+            title: item.task.title || item.task.sceneName,
+            sceneName: item.task.sceneName,
+          });
+        }
+        setTaskSources([...fallbackSources.values()]);
         setMode("demo");
       });
     return () => {
       active = false;
     };
-  }, [currentUser.id, page, qualityOnly, query, state.submissions, status]);
+  }, [currentUser.id, page, qualityOnly, query, state.submissions, status, taskId]);
 
   const range = useMemo(() => {
     if (pagination.total === 0) return "0";
@@ -166,6 +191,16 @@ export function SubmissionsPage({
             setStatus(value);
             setPage(1);
           }}
+          taskId={qualityOnly ? undefined : taskId}
+          onTaskChange={
+            qualityOnly
+              ? undefined
+              : (value) => {
+                  setTaskId(value);
+                  setPage(1);
+                }
+          }
+          taskSources={taskSources}
         />
         <div className="table-summary">
           <span>
@@ -177,7 +212,12 @@ export function SubmissionsPage({
           </span>
           <span>数据范围：仅本人</span>
         </div>
-        <SubmissionTable submissions={submissions} loading={mode === "loading"} onAction={view} />
+        <SubmissionTable
+          submissions={submissions}
+          loading={mode === "loading"}
+          showTaskSource={!qualityOnly}
+          onAction={view}
+        />
         <div className="table-summary">
           <span>
             第 {pagination.page} / {pagination.totalPages} 页

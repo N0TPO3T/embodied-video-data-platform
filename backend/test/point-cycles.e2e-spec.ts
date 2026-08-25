@@ -52,7 +52,10 @@ class UnusedStorage implements ObjectStoragePort {
     return { partNumber: 1, url: "http://unused.local", expiresAt: new Date() };
   }
   async presignDownloadObject() {
-    return { url: "http://unused.local/download", expiresAt: new Date() };
+    return {
+      url: "http://unused.local/download",
+      expiresAt: new Date("2030-01-01T00:00:00.000Z"),
+    };
   }
   async deleteObject() {
     throw new Error("not used");
@@ -247,6 +250,7 @@ describe("point cycle API", () => {
         bitrate: "1000",
         sizeBytes: "1000",
         rawProbe: {},
+        thumbnailObjectKey: "previews/SUB-PC-01/thumbnail.jpg",
       },
       {
         submissionId: "SUB-PC-02",
@@ -658,6 +662,11 @@ describe("point cycle API", () => {
       expect.arrayContaining([
         expect.objectContaining({
           submissionId: firstSubmissionId,
+          thumbnail: {
+            url: "http://unused.local/download",
+            expiresAt: Date.parse("2030-01-01T00:00:00.000Z"),
+            contentType: "image/jpeg",
+          },
           finalScore: 80,
           settlementRatio: 0.5,
           effectiveDurationMs: 110000,

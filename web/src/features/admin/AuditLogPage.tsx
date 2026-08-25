@@ -34,6 +34,7 @@ const accountActionLabels: Record<KnownAccountAuditAction, string> = {
   change_password: "修改密码",
   enable: "启用账号",
   disable: "停用账号",
+  delete: "删除账号",
   local_identity_reconcile: "本地账号校准",
   team_create: "创建团队",
   team_update: "更新团队",

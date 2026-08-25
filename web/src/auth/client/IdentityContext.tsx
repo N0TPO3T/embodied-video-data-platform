@@ -14,6 +14,7 @@ type IdentityValue = {
   accounts: AccountPublic[];
   teams: TeamPublic[];
   upsertAccount(account: AccountPublic): void;
+  removeAccount(id: string): void;
   upsertTeam(team: TeamPublic): void;
 };
 
@@ -55,6 +56,8 @@ export function IdentityProvider({
         accounts,
         teams,
         upsertAccount,
+        removeAccount: (id) =>
+          setAccounts((items) => items.filter((item) => item.id !== id)),
         upsertTeam: (team) => setTeams((items) => upsert(items, team)),
       }}
     >

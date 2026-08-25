@@ -34,6 +34,7 @@ export type KnownAccountAuditAction =
   | "change_password"
   | "enable"
   | "disable"
+  | "delete"
   | "local_identity_reconcile"
   | "team_create"
   | "team_update"

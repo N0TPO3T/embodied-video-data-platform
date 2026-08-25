@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { Modal } from "../../components/Modal";
 import { useInteractions } from "../../interactions/InteractionContext";
 import type {
@@ -34,7 +34,7 @@ export function TaskNormalizeModal({
   const submittingRef = useRef(false);
   const firstRunRef = useRef(false);
 
-  async function runNormalize() {
+  const runNormalize = useCallback(async () => {
     if (loading) return;
     setLoading(true);
     setError("");
@@ -47,12 +47,16 @@ export function TaskNormalizeModal({
     } finally {
       setLoading(false);
     }
-  }
+  }, [loading, notify, task.id]);
 
-  if (!firstRunRef.current && open && !normalized) {
+  useEffect(() => {
+    if (!open || normalized || firstRunRef.current) return;
     firstRunRef.current = true;
-    void runNormalize();
-  }
+    const timer = window.setTimeout(() => {
+      void runNormalize();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [normalized, open, runNormalize]);
 
   function updateItem(index: number, values: Partial<NormalizedRequirementItem>) {
     setNormalized((current) => {
@@ -136,9 +140,10 @@ export function TaskNormalizeModal({
       open={open}
       title={`AI 要求规范化 · ${task.title}`}
       onClose={close}
+      className="normalize-modal"
       returnFocusRef={returnFocusRef}
     >
-      <div className="modal-body">
+      <div className="normalize-body">
         <p className="modal-hint">
           AI 已把自由填写的任务要求转换为可逐条判定的结构化要求，请核对并调整后确认。
           「硬性」要求不满足将触发否决或人工复核，「一般」要求仅影响评分。

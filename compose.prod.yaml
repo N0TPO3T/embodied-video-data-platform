@@ -11,10 +11,14 @@ services:
       NODE_ENV: production
 
   web:
+    image: evdp-web:${EVDP_RELEASE_VERSION:-dev}
     build:
       context: ./web
       args:
         NEXT_PUBLIC_API_BASE_URL: /api/v1
+        EVDP_RELEASE_VERSION: ${EVDP_RELEASE_VERSION:-dev}
+        EVDP_GIT_SHA: ${EVDP_GIT_SHA:-unknown}
+        EVDP_BUILD_TIME: ${EVDP_BUILD_TIME:-unknown}
     environment:
       BACKEND_INTERNAL_URL: http://api:4000/api/v1
       NODE_ENV: production

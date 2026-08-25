@@ -231,6 +231,7 @@ export function backendSubmissionToDomain(
     task: source.task
       ? {
           taskId: source.task.taskId,
+          title: source.task.title,
           revision: source.task.revision,
           sceneName: source.task.sceneName,
           pricePointsPerMinute: source.task.pricePointsPerMinute,

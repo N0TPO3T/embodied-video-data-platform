@@ -22,6 +22,11 @@ export type BackendPointCycleItem = {
   /** 是否被管理员人工调整过（最新调整生效后为 true） */
   adjusted?: boolean;
   adjustedAt?: number;
+  thumbnail?: {
+    url: string;
+    expiresAt: number;
+    contentType: "image/jpeg";
+  };
 };
 
 export type BackendPointCycle = {

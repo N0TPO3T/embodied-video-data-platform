@@ -185,6 +185,11 @@ export class ListSubmissionsQueryDto {
   q?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  taskId?: string;
+
+  @IsOptional()
   @IsIn([
     "all",
     "uploading",

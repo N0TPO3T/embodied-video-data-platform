@@ -61,7 +61,12 @@ export type RuleVersionInput = {
   passThreshold: number;
   description: string;
 };
-export type UpdateLabelInput = { id: string; name: string; enabled: boolean };
+export type UpdateLabelInput = {
+  id: string;
+  nextId?: string;
+  name: string;
+  enabled: boolean;
+};
 export type DeliveryPackageInput = { name: string };
 
 export class DemoStore {
@@ -299,11 +304,19 @@ export class DemoStore {
     const name = input.name.trim();
     if (!name) throw new Error("请填写标签名称");
 
-    const updated = { ...existing, name, enabled: input.enabled };
+    const nextId = input.nextId?.trim().toUpperCase() || existing.id;
+    if (
+      this.state.labels.some(
+        (label) => label.id === nextId && label.id !== existing.id,
+      )
+    ) {
+      throw new Error("标签编号已存在");
+    }
+    const updated = { ...existing, id: nextId, name, enabled: input.enabled };
     this.state = {
       ...this.state,
       labels: this.state.labels.map((label) =>
-        label.id === updated.id ? updated : label,
+        label.id === existing.id ? updated : label,
       ),
     };
     this.notify();

@@ -519,6 +519,41 @@ describe("collector journey", () => {
     expect(screen.queryByText("warehouse_packing_0803.mp4")).not.toBeInTheDocument();
   });
 
+  it("shows and filters by the submission task source", async () => {
+    const user = userEvent.setup();
+    vi.mocked(searchSubmissions).mockResolvedValue({
+      submissions: [
+        backendSubmission({
+          task: {
+            taskId: "TASK-1",
+            title: "厨房数据采集",
+            revision: 1,
+            sceneName: "家庭厨房",
+            pricePointsPerMinute: 15.5,
+          },
+        }),
+      ],
+      pagination: { page: 1, pageSize: 20, total: 1, totalPages: 1 },
+      taskSources: [
+        { taskId: "TASK-1", title: "厨房数据采集", sceneName: "家庭厨房" },
+      ],
+    });
+    renderCollector("/collector/submissions");
+
+    expect(await screen.findByRole("columnheader", { name: "任务来源" })).toBeVisible();
+    expect(screen.getAllByText("厨房数据采集").length).toBeGreaterThan(0);
+    await user.selectOptions(
+      screen.getByLabelText("任务来源筛选"),
+      "TASK-1",
+    );
+
+    await waitFor(() => {
+      expect(searchSubmissions).toHaveBeenLastCalledWith(
+        expect.objectContaining({ taskId: "TASK-1" }),
+      );
+    });
+  });
+
   it("loads reviewed submissions on the quality result page", async () => {
     renderCollector("/collector/quality");
 

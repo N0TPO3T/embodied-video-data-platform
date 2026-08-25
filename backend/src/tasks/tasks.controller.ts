@@ -1,7 +1,9 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
   Param,
   Patch,
   Post,
@@ -71,6 +73,16 @@ export class TasksController {
     @Body() input: UpdateTaskDto,
   ) {
     return { task: await this.tasks.update(actor, id, input) };
+  }
+
+  @Delete(":id")
+  @HttpCode(204)
+  @UseGuards(AllowedOriginGuard)
+  async delete(
+    @CurrentUser() actor: PublicUser,
+    @Param("id") id: string,
+  ): Promise<void> {
+    await this.tasks.delete(actor, id);
   }
 
   /** AI 规范化预览（不落库） */

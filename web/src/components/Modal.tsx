@@ -16,6 +16,7 @@ export function Modal({
   title,
   onClose,
   children,
+  className = "",
   returnFocusRef,
   initialFocusRef,
 }: {
@@ -23,6 +24,7 @@ export function Modal({
   title: string;
   onClose(): void;
   children: ReactNode;
+  className?: string;
   returnFocusRef?: RefObject<HTMLElement | null>;
   initialFocusRef?: RefObject<HTMLElement | null>;
 }) {
@@ -99,7 +101,7 @@ export function Modal({
     <div className="modal-backdrop" onMouseDown={closeFromBackdrop}>
       <section
         ref={dialogRef}
-        className="modal-card"
+        className={`modal-card ${className}`.trim()}
         role="dialog"
         tabIndex={-1}
         aria-modal="true"

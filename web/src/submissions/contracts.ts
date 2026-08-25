@@ -189,6 +189,7 @@ export type BackendSubmission = {
   };
   task?: {
     taskId: string;
+    title?: string;
     revision: number | null;
     sceneName: string;
     requirements?: unknown;
@@ -240,6 +241,11 @@ export type BackendSubmissionListPagination = {
 export type BackendSubmissionListResult = {
   submissions: BackendSubmission[];
   pagination: BackendSubmissionListPagination;
+  taskSources?: Array<{
+    taskId: string;
+    title: string;
+    sceneName: string;
+  }>;
 };
 
 export type ReviewSubmissionQualityInput = {

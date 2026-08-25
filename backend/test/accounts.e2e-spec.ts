@@ -149,6 +149,69 @@ describe("account and team API", () => {
     expect(log.actorAccountId).toBe("U-ADMIN");
   });
 
+  it("only permanently deletes disabled accounts without business history", async () => {
+    const cookie = await login("admin");
+    const created = await request(app.getHttpServer())
+      .post("/api/v1/accounts")
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", cookie)
+      .send({
+        displayName: "临时数采",
+        username: "temporary-collector",
+        password: TEST_PASSWORD,
+        role: "collector",
+        teamId: "TEAM-01",
+      })
+      .expect(201);
+    const accountId = created.body.account.id as string;
+
+    const active = await request(app.getHttpServer())
+      .delete(`/api/v1/accounts/${accountId}`)
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", cookie)
+      .expect(400);
+    expect(active.body.code).toBe("VALIDATION");
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/accounts/${accountId}/status`)
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", cookie)
+      .send({ status: "disabled" })
+      .expect(200);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/accounts/${accountId}`)
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", cookie)
+      .expect(204);
+
+    expect(
+      await dataSource.getRepository(UserEntity).findOneBy({ id: accountId }),
+    ).toBeNull();
+    expect(
+      await dataSource.getRepository(AuditLogEntity).findOneBy({
+        action: "delete",
+        targetAccountId: accountId,
+      }),
+    ).toMatchObject({
+      actorAccountId: "U-ADMIN",
+      summary: "删除未关联业务数据的账号",
+    });
+  });
+
+  it("reserves permanent account deletion for administrators", async () => {
+    await dataSource
+      .getRepository(UserEntity)
+      .update({ id: "U-OTHER" }, { status: "disabled" });
+    const leaderCookie = await login("leader");
+
+    const forbidden = await request(app.getHttpServer())
+      .delete("/api/v1/accounts/U-OTHER")
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", leaderCookie)
+      .expect(403);
+    expect(forbidden.body.code).toBe("FORBIDDEN");
+  });
+
   it("cleans expired sessions when a user logs in", async () => {
     const sessions = dataSource.getRepository(SessionEntity);
     await sessions.save([

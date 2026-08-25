@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { shapeNormalizedOutput } from "../src/tasks/requirement-normalizer.service.js";
-import { numericOrNull, publicTask } from "../src/tasks/tasks.service.js";
+import {
+  assertTaskCanBeDeleted,
+  numericOrNull,
+  publicTask,
+} from "../src/tasks/tasks.service.js";
 import { CollectionTaskEntity } from "../src/database/entities/collection-task.entity.js";
 
 describe("RequirementNormalizerService.shapeNormalizedOutput", () => {
@@ -69,6 +73,23 @@ describe("numericOrNull", () => {
     expect(numericOrNull(undefined)).toBeNull();
     expect(numericOrNull("")).toBeNull();
     expect(numericOrNull("abc")).toBeNull();
+  });
+});
+
+describe("assertTaskCanBeDeleted", () => {
+  it("allows an unused draft task to be deleted", () => {
+    expect(() =>
+      assertTaskCanBeDeleted({ status: "draft" }, 0),
+    ).not.toThrow();
+  });
+
+  it("keeps published tasks and linked data traceable", () => {
+    expect(() =>
+      assertTaskCanBeDeleted({ status: "published" }, 0),
+    ).toThrowError(/只有尚未发布的草稿任务可以删除/u);
+    expect(() =>
+      assertTaskCanBeDeleted({ status: "draft" }, 1),
+    ).toThrowError(/已有提交数据/u);
   });
 });
 

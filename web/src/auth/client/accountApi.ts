@@ -204,6 +204,12 @@ export async function setAccountStatus(
   return result.account;
 }
 
+export function deleteAccount(id: string): Promise<void> {
+  return requestJson(`/accounts/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
 export async function listAccountAudit(): Promise<AccountAuditLog[]> {
   const result = await searchAccountAudit();
   return result.logs;

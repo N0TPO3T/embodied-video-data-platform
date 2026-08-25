@@ -41,6 +41,25 @@ describe("health", () => {
     expect(response.headers["cache-control"]).toBe("no-store");
   });
 
+  it("reports non-sensitive release metadata", async () => {
+    vi.stubEnv("EVDP_RELEASE_VERSION", "v0.1.0");
+    vi.stubEnv("EVDP_GIT_SHA", "0123456789abcdef");
+    vi.stubEnv("EVDP_BUILD_TIME", "2026-08-25T08:00:00Z");
+
+    const response = await request(app.getHttpServer())
+      .get("/api/v1/health/version")
+      .expect(200);
+
+    expect(response.body).toEqual({
+      service: "evdp-api",
+      version: "v0.1.0",
+      revision: "0123456789abcdef",
+      builtAt: "2026-08-25T08:00:00Z",
+    });
+    expect(response.headers["cache-control"]).toBe("no-store");
+    vi.unstubAllEnvs();
+  });
+
   it("reports PostgreSQL readiness without exposing connection details", async () => {
     const response = await request(app.getHttpServer())
       .get("/api/v1/health/ready")

@@ -6,6 +6,7 @@ import { DataSource, Repository } from "typeorm";
 
 import { AuditService } from "../audit/audit.service.js";
 import type { PublicUser } from "../auth/auth.types.js";
+import { CollectionTaskEntity } from "../database/entities/collection-task.entity.js";
 import {
   LabelSetVersionEntity,
   type LabelSetItem,
@@ -159,14 +160,31 @@ export class LabelSetService {
       if (!existing) {
         throw new IdentityFailure("NOT_FOUND", "标签不存在", 404);
       }
+      const nextId = input.nextId?.trim().toUpperCase() || existing.id;
+      const duplicatedId = current.labels.some(
+        (label) => label.id === nextId && label.id !== existing.id,
+      );
+      if (duplicatedId) {
+        throw new IdentityFailure(
+          "CONFLICT",
+          `标签编号 ${nextId} 已存在`,
+          409,
+        );
+      }
       const updatedLabel = {
         ...existing,
+        id: nextId,
         name,
         enabled: input.enabled,
       };
       const labels = current.labels.map((label) =>
-        label.id === updatedLabel.id ? updatedLabel : label,
+        label.id === existing.id ? updatedLabel : label,
       );
+      if (nextId !== existing.id) {
+        await manager
+          .getRepository(CollectionTaskEntity)
+          .update({ sceneLabelId: existing.id }, { sceneLabelId: nextId });
+      }
       const latest = await repository
         .createQueryBuilder("labelSet")
         .select("MAX(labelSet.revision)", "max")
@@ -188,7 +206,7 @@ export class LabelSetService {
         actor,
         "label_set_update",
         { id: updatedLabel.id, name: updatedLabel.name },
-        `更新标签 ${existing.name} 为 ${updatedLabel.name}`,
+        `更新标签 ${existing.id} / ${existing.name} 为 ${updatedLabel.id} / ${updatedLabel.name}`,
         {
           revision: current.revision,
           label: existing,

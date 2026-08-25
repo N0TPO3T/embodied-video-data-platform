@@ -49,7 +49,9 @@ export type LabelSet = {
   createdAt: number;
 };
 
-export type UpdateLabelInput = Pick<LabelSetItem, "id" | "name" | "enabled">;
+export type UpdateLabelInput = Pick<LabelSetItem, "id" | "name" | "enabled"> & {
+  nextId?: string;
+};
 
 export type CreateLabelInput = {
   name: string;
