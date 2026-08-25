@@ -208,6 +208,57 @@ export function QualityReportCard({
                 <ul>{quality.reviewReasons.map((reason, index) => <li key={`reason-${index}`}><span><em>{reason}</em></span></li>)}</ul>
               </div>
             )}
+            {quality?.taskCompliance && (
+              <div className="report-issue-group">
+                <strong>
+                  任务符合度（D4）
+                  {quality.taskCompliance.compliance_ratio !== null && (
+                    <em className="report-compliance-ratio">
+                      {Math.round(quality.taskCompliance.compliance_ratio * 100)}%
+                    </em>
+                  )}
+                </strong>
+                <ul className="compliance-list">
+                  <li className={quality.taskCompliance.scene_match.matched ? "compliance-ok" : "compliance-warn"}>
+                    <span>
+                      <em>
+                        场景匹配：{quality.taskCompliance.scene_match.matched ? "匹配" : "不匹配"}
+                        {quality.taskCompliance.scene_match.note ? `（${quality.taskCompliance.scene_match.note}）` : ""}
+                      </em>
+                    </span>
+                  </li>
+                  {quality.taskCompliance.items.map((item, index) => (
+                    <li
+                      key={`compliance-${index}`}
+                      className={
+                        item.result === "met"
+                          ? "compliance-ok"
+                          : item.result === "partial"
+                            ? "compliance-warn"
+                            : "compliance-bad"
+                      }
+                    >
+                      <span>
+                        <em>
+                          <b className={`req-badge ${item.type}`}>
+                            {item.type === "hard" ? "硬性" : "一般"}
+                          </b>
+                          {item.requirement}
+                        </em>
+                        <small>
+                          {item.result === "met"
+                            ? "符合"
+                            : item.result === "partial"
+                              ? "部分符合"
+                              : "不符合"}
+                          {item.confidence ? ` · 确信度 ${Math.round(item.confidence * 100)}%` : ""}
+                        </small>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         )}
       </div>

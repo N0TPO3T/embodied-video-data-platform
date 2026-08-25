@@ -58,12 +58,19 @@ type UploadOptions = {
     privacyConfirmed: boolean;
     sensitiveContentConfirmed: boolean;
   };
+  /** 所属采集任务（必须选择已发布任务） */
+  task?: {
+    id: string;
+    requirementsConfirmed: boolean;
+  };
 };
 
 function requireAuthorization(options: UploadOptions): {
   dataUsageAuthorized: boolean;
   privacyConfirmed: boolean;
   sensitiveContentConfirmed: boolean;
+  taskId: string;
+  taskRequirementsConfirmed: boolean;
 } {
   const authorization = options.authorization;
   if (
@@ -73,7 +80,17 @@ function requireAuthorization(options: UploadOptions): {
   ) {
     throw new Error("上传前请先确认数据授权、隐私规范和敏感内容处理要求");
   }
-  return authorization;
+  if (!options.task?.id) {
+    throw new Error("请先选择采集任务");
+  }
+  if (!options.task.requirementsConfirmed) {
+    throw new Error("上传前请先确认已阅读并理解任务要求");
+  }
+  return {
+    ...authorization,
+    taskId: options.task.id,
+    taskRequirementsConfirmed: true,
+  };
 }
 
 function isAbortError(error: unknown): boolean {

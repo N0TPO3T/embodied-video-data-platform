@@ -80,7 +80,7 @@ export function SubmissionTable({
               <tr key={item.id}>
                 <td><div className="file-cell">{item.thumbnailUrl ? <img className="file-thumb" src={item.thumbnailUrl} alt={`${item.fileName} 缩略图`} loading="lazy" /> : <span><FileVideo size={17} /></span>}<div><strong>{item.fileName}</strong><small>{item.id} · {item.createdAt}</small>{item.assetStatus === "quarantined" && <em><ShieldAlert size={12} />敏感隔离</em>}{item.duplicateCandidates?.some((candidate) => candidate.status === "candidate") && <em className="warning-tag"><CopyCheck size={12} />疑似重复</em>}</div></div></td>
                 {showOwner && <td><div className="stack-cell"><strong>{item.ownerName}</strong><small>{item.teamName}</small></div></td>}
-                <td><div className="stack-cell"><strong>{item.scene}</strong><small>{item.action}</small></div></td>
+                <td><div className="stack-cell">{item.task ? <><strong>{item.task.sceneName}</strong><small>任务 · {item.task.sceneName}</small></> : <><strong>{item.scene}</strong><small>{item.action}</small></>}</div></td>
                 <td>{formatDuration(item.durationSeconds, item)}</td>
                 <td><StatusBadge label={label} tone={tone} /></td>
                 <td><QualityScore score={item.finalScore} ratio={item.qualityResult?.settlementRatio} passed={item.qualityResult?.passed} /></td>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as accountApi from "../auth/client/accountApi";
 import { useIdentity } from "../auth/client/IdentityContext";
 import type { Role } from "../domain/types";
@@ -15,10 +15,12 @@ import { QualityReviewPage } from "../features/admin/QualityReviewPage";
 import { RulesPage } from "../features/admin/RulesPage";
 import { SettlementPage } from "../features/admin/SettlementPage";
 import { SubmissionsAdminPage } from "../features/admin/SubmissionsAdminPage";
+import { TasksPage } from "../features/admin/TasksPage";
 import { UsersTeamsPage } from "../features/admin/UsersTeamsPage";
 import { CollectorDashboard } from "../features/collector/CollectorDashboard";
 import { EarningsPage } from "../features/collector/EarningsPage";
 import { GuidePage } from "../features/collector/GuidePage";
+import { TaskHallPage } from "../features/collector/TaskHallPage";
 import { AccountProfilePage } from "../features/account/AccountProfilePage";
 import { SubmissionDetail } from "../features/collector/SubmissionDetail";
 import { SubmissionsPage } from "../features/collector/SubmissionsPage";
@@ -52,6 +54,15 @@ export function PlatformApp({ initialPath }: { initialPath: string }) {
 
 function PlatformContent({ initialPath }: { initialPath: string }) {
   const [path, setPath] = useState(initialPath || "/");
+
+  useEffect(() => {
+    function syncPathFromBrowser() {
+      setPath(window.location.pathname || "/");
+    }
+
+    window.addEventListener("popstate", syncPathFromBrowser);
+    return () => window.removeEventListener("popstate", syncPathFromBrowser);
+  }, []);
 
   function navigate(nextPath: string) {
     window.history.pushState({}, "", nextPath);
@@ -93,7 +104,8 @@ function AuthenticatedPlatformContent({
   } else if (safePath === "/collector" && initialPath.startsWith("/admin")) {
     page = <CollectorDashboard navigate={navigate} title />;
   } else if (currentAccount.role === "collector") {
-    if (safePath === "/collector/upload") page = <UploadPage />;
+    if (safePath === "/collector/tasks") page = <TaskHallPage navigate={navigate} />;
+    else if (safePath === "/collector/upload") page = <UploadPage />;
     else if (safePath === "/collector/submissions") page = <SubmissionsPage navigate={navigate} />;
     else if (safePath.startsWith("/collector/submissions/")) page = <SubmissionDetail id={safePath.split("/").at(-1) ?? ""} navigate={navigate} />;
     else if (safePath === "/collector/quality") page = <SubmissionsPage qualityOnly navigate={navigate} />;
@@ -129,6 +141,7 @@ function AuthenticatedPlatformContent({
       );
     }
     else if (safePath === "/admin/assets") page = <AssetsPage />;
+    else if (safePath === "/admin/tasks") page = <TasksPage />;
     else if (safePath === "/admin/people") page = <UsersTeamsPage />;
     else if (safePath === "/admin/rules") page = <RulesPage />;
     else if (safePath === "/admin/settlements") page = <SettlementPage />;

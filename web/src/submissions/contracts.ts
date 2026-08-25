@@ -122,6 +122,18 @@ export type BackendQualityResult = {
   }>;
   dimensions?: Record<string, BackendQualityDimension>;
   hardVeto?: BackendQualityHardVeto;
+  taskCompliance?: {
+    scene_match: { matched: boolean; confidence: number; note?: string };
+    items: Array<{
+      requirement: string;
+      type: "hard" | "soft";
+      result: "met" | "partial" | "unmet";
+      confidence: number;
+      evidence_timestamps_ms: number[];
+    }>;
+    compliance_ratio: number | null;
+    review_required: boolean;
+  };
   billingObservations?: BackendQualityBillingObservations;
   startedAt?: number;
   completedAt?: number;
@@ -175,6 +187,13 @@ export type BackendSubmission = {
     quarantinedByAccountId?: string;
     quarantinedByName?: string;
   };
+  task?: {
+    taskId: string;
+    revision: number | null;
+    sceneName: string;
+    requirements?: unknown;
+    pricePointsPerMinute: number | null;
+  } | null;
   authorization?: {
     dataUsageAuthorized: boolean;
     privacyConfirmed: boolean;
@@ -310,6 +329,8 @@ export interface SubmissionUploadApi {
     dataUsageAuthorized: boolean;
     privacyConfirmed: boolean;
     sensitiveContentConfirmed: boolean;
+    taskId: string;
+    taskRequirementsConfirmed: boolean;
   }): Promise<CreateUploadResult>;
   presignParts(id: string, partNumbers: number[]): Promise<PresignedPart[]>;
   verifyResumeUpload(

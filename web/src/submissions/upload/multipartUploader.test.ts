@@ -96,6 +96,7 @@ describe("browser multipart uploader", () => {
         new File(["abcdefghij"], "task.mp4", { type: "video/mp4" }),
         {
           authorization,
+          task: { id: "TASK-1", requirementsConfirmed: true },
           onProgress: (value) => progress.push(value),
         },
       ),
@@ -236,6 +237,7 @@ describe("browser multipart uploader", () => {
     await expect(
       uploader(new File(["abcdefghij"], "task.mp4", { type: "video/mp4" }), {
         authorization,
+        task: { id: "TASK-1", requirementsConfirmed: true },
         signal: controller.signal,
       }),
     ).rejects.toMatchObject({ name: "AbortError" });
@@ -286,8 +288,43 @@ describe("browser multipart uploader", () => {
     Object.defineProperty(oversized, "size", { value: 2 * 1024 ** 3 + 1 });
 
     await expect(
-      createMultipartUploader(api)(oversized, { authorization }),
+      createMultipartUploader(api)(oversized, {
+        authorization,
+        task: { id: "TASK-1", requirementsConfirmed: true },
+      }),
     ).rejects.toThrow("单个视频不能超过 2 GiB");
     expect(createUpload).not.toHaveBeenCalled();
+  });
+
+  it("requires a selected task with confirmed requirements before uploading", async () => {
+    const api: SubmissionUploadApi = {
+      async createUpload(): Promise<CreateUploadResult> {
+        throw new Error("should not create");
+      },
+      async presignParts() {
+        return [];
+      },
+      async verifyResumeUpload(): Promise<CreateUploadResult> {
+        throw new Error("not used");
+      },
+      async completeUpload() {
+        return queuedSubmission;
+      },
+      async abortUpload() {},
+    };
+    const uploader = createMultipartUploader(api);
+
+    await expect(
+      uploader(new File(["a"], "task.mp4", { type: "video/mp4" }), {
+        authorization,
+      }),
+    ).rejects.toThrow("请先选择采集任务");
+
+    await expect(
+      uploader(new File(["a"], "task.mp4", { type: "video/mp4" }), {
+        authorization,
+        task: { id: "TASK-1", requirementsConfirmed: false },
+      }),
+    ).rejects.toThrow("请先确认已阅读并理解任务要求");
   });
 });

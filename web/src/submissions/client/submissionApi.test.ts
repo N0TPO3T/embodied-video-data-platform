@@ -64,6 +64,8 @@ describe("submission API client", () => {
         dataUsageAuthorized: true,
         privacyConfirmed: true,
         sensitiveContentConfirmed: true,
+        taskId: "TASK-1",
+        taskRequirementsConfirmed: true,
       }),
     ).rejects.toMatchObject({
       status: 400,

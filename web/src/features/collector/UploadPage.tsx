@@ -7,8 +7,12 @@ import { listActiveUploads } from "../../submissions/client/submissionApi";
 import type { ActiveUploadResult } from "../../submissions/contracts";
 import { resumeUploadVideo, uploadVideo } from "../../submissions/upload/multipartUploader";
 import { uploadSizeError } from "../../submissions/upload/uploadLimits";
+import { listTasksForCollector } from "../../tasks/client/taskApi";
+import type { CollectionTaskForCollector } from "../../tasks/contracts";
 
 const isSupported = (file: File) => /\.(mov|mp4)$/i.test(file.name);
+
+const SELECTED_TASK_STORAGE_KEY = "evdp:selectedTaskId";
 
 export function UploadPage() {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -20,6 +24,10 @@ export function UploadPage() {
     privacyConfirmed: false,
     sensitiveContentConfirmed: false,
   });
+  const [tasks, setTasks] = useState<CollectionTaskForCollector[]>([]);
+  const [selectedTaskId, setSelectedTaskId] = useState("");
+  const [taskRequirementsConfirmed, setTaskRequirementsConfirmed] =
+    useState(false);
   const [activeUploads, setActiveUploads] = useState<ActiveUploadResult[]>([]);
   const [uploads, setUploads] = useState<Array<{
     key: string;
@@ -32,6 +40,32 @@ export function UploadPage() {
     error?: string;
   }>>([]);
   const { upsertSubmission } = useDemoStore();
+  const selectedTask =
+    tasks.find((task) => task.id === selectedTaskId) ?? null;
+  const authorizationComplete =
+    authorization.dataUsageAuthorized &&
+    authorization.privacyConfirmed &&
+    authorization.sensitiveContentConfirmed &&
+    selectedTask !== null &&
+    taskRequirementsConfirmed;
+
+  useEffect(() => {
+    let active = true;
+    listTasksForCollector()
+      .then((items) => {
+        if (!active) return;
+        setTasks(items);
+        const preselected = sessionStorage.getItem(SELECTED_TASK_STORAGE_KEY);
+        if (preselected && items.some((task) => task.id === preselected)) {
+          setSelectedTaskId(preselected);
+          sessionStorage.removeItem(SELECTED_TASK_STORAGE_KEY);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -64,6 +98,10 @@ export function UploadPage() {
       const submission = await uploadVideo(file, {
         signal: controller.signal,
         authorization,
+        task: {
+          id: selectedTaskId,
+          requirementsConfirmed: taskRequirementsConfirmed,
+        },
         onProgress: (progress) =>
           updateUpload(key, { progress, status: "uploading" }),
       });
@@ -184,12 +222,14 @@ export function UploadPage() {
       setError(sizeError ?? "");
     }
     if (!valid.length) return;
-    if (
-      !authorization.dataUsageAuthorized ||
-      !authorization.privacyConfirmed ||
-      !authorization.sensitiveContentConfirmed
-    ) {
-      setError("上传前请先确认数据授权、隐私规范和敏感内容处理要求");
+    if (!authorizationComplete) {
+      setError(
+        !selectedTask
+          ? "请先选择采集任务"
+          : !taskRequirementsConfirmed
+            ? "上传前请先确认已阅读并理解任务要求"
+            : "上传前请先确认数据授权、隐私规范和敏感内容处理要求",
+      );
       return;
     }
     const created = valid.map((file, index) => ({
@@ -219,6 +259,78 @@ export function UploadPage() {
         <div className="content-card upload-main-card">
           <input ref={inputRef} className="file-input" aria-label="选择视频文件" accept=".mov,.mp4,video/quicktime,video/mp4" multiple type="file" onChange={(event) => acceptFiles(Array.from(event.target.files ?? []))} />
           <input ref={resumeInputRef} className="file-input" aria-label="选择恢复上传文件" accept=".mov,.mp4,video/quicktime,video/mp4" type="file" onChange={(event) => acceptResumeFile(event.target.files?.[0])} />
+          <section className="task-select-panel" aria-label="选择采集任务">
+            <div className="card-heading"><div><h2>选择采集任务</h2><p>上传的视频将归属所选任务，并按任务要求进行 AI 质检</p></div></div>
+            {tasks.length === 0 ? (
+              <p className="modal-hint">当前没有可提交的采集任务，请稍后再试。</p>
+            ) : (
+              <>
+                <label className="form-label">
+                  <span>任务（场景）</span>
+                  <select
+                    value={selectedTaskId}
+                    onChange={(event) => {
+                      setSelectedTaskId(event.target.value);
+                      setTaskRequirementsConfirmed(false);
+                    }}
+                  >
+                    <option value="">请选择任务…</option>
+                    {tasks.map((task) => (
+                      <option key={task.id} value={task.id}>
+                        {task.title}（{task.sceneName}）
+                        {task.pricePointsPerMinute !== null
+                          ? ` · ${task.pricePointsPerMinute} 分/分钟`
+                          : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {selectedTask && (
+                  <div className="task-requirements-preview">
+                    <p className="task-req-title">
+                      <strong>{selectedTask.title}</strong>
+                      <span>场景：{selectedTask.sceneName}</span>
+                    </p>
+                    <p className="task-req-desc">
+                      {selectedTask.normalizedRequirements?.scene_description ??
+                        (selectedTask.description ||
+                          "（任务未提供场景描述）")}
+                    </p>
+                    {selectedTask.normalizedRequirements?.requirements.length ? (
+                      <ul className="check-list compact">
+                        {selectedTask.normalizedRequirements.requirements.map(
+                          (item, index) => (
+                            <li key={`${item.type}-${index}`}>
+                              <ShieldCheck size={14} />
+                              <span>
+                                <strong>
+                                  {item.type === "hard" ? "【硬性】" : "【一般】"}
+                                  {item.content}
+                                </strong>
+                                {item.rationale ? (
+                                  <small>{item.rationale}</small>
+                                ) : null}
+                              </span>
+                            </li>
+                          ),
+                        )}
+                      </ul>
+                    ) : null}
+                    <label className="upload-consent-item">
+                      <input
+                        type="checkbox"
+                        checked={taskRequirementsConfirmed}
+                        onChange={(event) =>
+                          setTaskRequirementsConfirmed(event.target.checked)
+                        }
+                      />
+                      我已阅读并理解该任务的采集要求，本次视频符合任务要求
+                    </label>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
           <div className="upload-consent-panel">
             <label><input type="checkbox" checked={authorization.dataUsageAuthorized} onChange={(event) => setAuthorization((current) => ({ ...current, dataUsageAuthorized: event.target.checked }))} />我确认拥有本次上传视频的数据使用授权</label>
             <label><input type="checkbox" checked={authorization.privacyConfirmed} onChange={(event) => setAuthorization((current) => ({ ...current, privacyConfirmed: event.target.checked }))} />我已按隐私规范检查人脸、门牌、屏幕账号、定位等信息</label>
@@ -226,6 +338,8 @@ export function UploadPage() {
           </div>
           <button
             className="upload-dropzone"
+            type="button"
+            disabled={!authorizationComplete}
             onClick={() => inputRef.current?.click()}
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => {
@@ -234,13 +348,17 @@ export function UploadPage() {
             }}
           >
             <span><CloudUpload size={27} /></span>
-            <strong>点击选择或拖拽视频到这里</strong>
+            <strong>
+              {authorizationComplete
+                ? "点击选择或拖拽视频到这里"
+                : "请先完成上方三项授权确认"}
+            </strong>
             <small>MOV、MP4 格式 · 单文件最大 2 GiB · 支持批量上传</small>
-            <em>选择视频文件</em>
+            <em>{authorizationComplete ? "选择视频文件" : "完成确认后可上传"}</em>
           </button>
-          {error && <div className="inline-alert inline-alert-error"><XCircle size={16} />{error}</div>}
-          {activeUploads.length > 0 && <div className="upload-queue"><div className="card-heading"><div><h2>可恢复上传</h2><p>刷新前未完成的任务，可重新选择原文件继续上传</p></div></div>{activeUploads.map((item) => <div className="upload-item" key={item.submission.id}><span><FileVideo size={18} /></span><div><strong>{item.submission.fileName}</strong><small>{item.upload.partCount} 个分片 · 需要选择同名同大小文件</small></div><button className="table-action" onClick={() => chooseResumeFile(item)}>继续上传</button></div>)}</div>}
-          <div className="upload-queue">
+          {error && <div className="inline-alert inline-alert-error" role="alert"><XCircle size={16} />{error}</div>}
+          {activeUploads.length > 0 && <div className="upload-queue" aria-live="polite"><div className="card-heading"><div><h2>可恢复上传</h2><p>刷新前未完成的任务，可重新选择原文件继续上传</p></div></div>{activeUploads.map((item) => <div className="upload-item" key={item.submission.id}><span><FileVideo size={18} /></span><div><strong>{item.submission.fileName}</strong><small>{item.upload.partCount} 个分片 · 需要选择同名同大小文件</small></div><button className="table-action" onClick={() => chooseResumeFile(item)}>继续上传</button></div>)}</div>}
+          <div className="upload-queue" aria-live="polite">
             <div className="card-heading"><div><h2>本次上传</h2><p>{uploads.length ? `${uploads.length} 个视频上传任务` : "选择文件后在此查看上传进度"}</p></div></div>
             {uploads.length ? uploads.map((item) => (
               <div className="upload-item" key={item.key}>
@@ -258,7 +376,13 @@ export function UploadPage() {
                             ? item.error ?? "已暂停，可继续上传"
                           : item.error ?? "上传失败，请重试"}
                   </small>
-                  <i><b style={{ width: `${item.progress}%` }} /></i>
+                  <i
+                    role="progressbar"
+                    aria-label={`${item.name} 上传进度`}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={item.progress}
+                  ><b style={{ width: `${item.progress}%` }} /></i>
                 </div>
                 {item.status === "uploading" ? <button className="table-action" onClick={() => pauseUpload(item.key)}>暂停</button> : null}
                 {item.status === "paused" && item.session ? <button className="table-action" onClick={() => continueUpload(item)}>继续</button> : null}

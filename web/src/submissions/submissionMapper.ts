@@ -210,6 +210,7 @@ export function backendSubmissionToDomain(
           stuckReason: source.quality.stuckReason,
           dimensions: source.quality.dimensions,
           hardVeto: source.quality.hardVeto,
+          taskCompliance: source.quality.taskCompliance,
           billingObservations: source.quality.billingObservations,
           detectedTask: source.quality.detectedTask
             ? {
@@ -227,6 +228,14 @@ export function backendSubmissionToDomain(
         }
       : undefined,
     settlementStatus: source.settlementStatus ?? "unsettled",
+    task: source.task
+      ? {
+          taskId: source.task.taskId,
+          revision: source.task.revision,
+          sceneName: source.task.sceneName,
+          pricePointsPerMinute: source.task.pricePointsPerMinute,
+        }
+      : null,
     createdAt: createdAt(source.createdAt),
     completedAt: source.quality?.completedAt
       ? createdAt(source.quality.completedAt)
