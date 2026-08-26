@@ -319,7 +319,43 @@ describe("delivery package API", () => {
         deductions: [],
         reviewRequired: false,
         reviewReasons: [],
-        normalizedResult: {},
+        normalizedResult: {
+          candidateAnnotation: {
+            status: "review_required",
+            schemaVersion: "ego_video_annotation_v1",
+            policyVersion: "ego_annotation_evidence_policy_v1",
+            promptVersion: "ego_video_annotation_prompt_v1",
+            promptContentSha256: "a".repeat(64),
+            model: "qwen-vl-max",
+            effective: {
+              schema_version: "ego_video_annotation_v1",
+              video_id: "SUB-DLV-01",
+              video_summary: "整理厨房台面",
+              scene: {
+                coarse_label: "厨房",
+                fine_label: null,
+                confidence: 0.93,
+                evidence_timestamps_ms: [0],
+              },
+              temporal_structure_type: "single_task",
+              tasks: [],
+              global_limitations: ["稀疏采样无法判断动作结果"],
+            },
+            labelMappings: [],
+            validation: { errors: [], warnings: ["sparse sampling"] },
+          },
+          annotationReview: {
+            decision: "accepted",
+            reason: "人工确认场景与任务语义",
+            reviewedByAccountId: "U-DLV-ADMIN",
+            reviewedByName: "交付管理员",
+            reviewedAt: 1_777_000_000_000,
+            candidateSchemaVersion: "ego_video_annotation_v1",
+            candidatePolicyVersion: "ego_annotation_evidence_policy_v1",
+            candidatePromptVersion: "ego_video_annotation_prompt_v1",
+            candidatePromptContentSha256: "a".repeat(64),
+          },
+        },
         rawModelResult: {},
         completedAt: new Date(),
       },
@@ -517,6 +553,11 @@ describe("delivery package API", () => {
           finalScore: 91,
           points: 20,
           sizeBytes: "2048",
+          annotation: expect.objectContaining({
+            available: true,
+            schemaVersion: "ego_video_annotation_v1",
+            promptVersion: "ego_video_annotation_prompt_v1",
+          }),
         }),
       ]),
     );
@@ -545,6 +586,9 @@ describe("delivery package API", () => {
     expect(manifest.text).toContain('"kitchen,task.mp4"');
     expect(manifest.text).toContain("uploads/delivery/kitchen-task.mp4");
     expect(manifest.text).toContain(",91.0,20.00,2048");
+    expect(manifest.text).toContain(
+      "annotations/SUB-DLV-01.json,ego_video_annotation_v1",
+    );
     expect(manifest.text).not.toContain("SUB-DLV-02");
     expect(
       await dataSource.getRepository(AuditLogEntity).countBy({
@@ -638,6 +682,8 @@ describe("delivery package API", () => {
     );
     const body = (archive.body as Buffer).toString("utf8");
     expect(body).toContain("manifest.csv");
+    expect(body).toContain("annotations/SUB-DLV-01.json");
+    expect(body).toContain("人工确认场景与任务语义");
     expect(body).toContain("assets/SUB-DLV-01.mp4");
     expect(body).toContain("video:uploads/delivery/kitchen-task.mp4");
     expect(
@@ -667,6 +713,8 @@ describe("delivery package API", () => {
     const body = archive.body as Buffer;
     expect(body.subarray(0, 4).toString("hex")).toBe("504b0304");
     expect(body.toString("utf8")).toContain("manifest.csv");
+    expect(body.toString("utf8")).toContain("annotations/SUB-DLV-01.json");
+    expect(body.toString("utf8")).toContain("人工确认场景与任务语义");
     expect(body.toString("utf8")).toContain("assets/SUB-DLV-01.mp4");
     expect(body.toString("utf8")).toContain(
       "video:uploads/delivery/kitchen-task.mp4",

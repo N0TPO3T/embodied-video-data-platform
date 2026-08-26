@@ -32,6 +32,7 @@ import { CollectionTasks2026082400001 } from "./migrations/202608240001-collecti
 import { ScarcityConfigAndMediaScene2026081900001 } from "./migrations/202608190001-scarcity-config-and-media-scene.js";
 import { DeliveryPackages2026081300006 } from "./migrations/202608130006-delivery-packages.js";
 import { DeliveryArchiveTasks2026081300020 } from "./migrations/202608130020-delivery-archive-tasks.js";
+import { DeliveryAnnotationSnapshots2026082600001 } from "./migrations/202608260001-delivery-annotation-snapshots.js";
 import { HlsPreviewAssets2026081300021 } from "./migrations/202608130021-hls-preview-assets.js";
 import { Identity2026080700001 } from "./migrations/202608070001-identity.js";
 import { LabelSetVersions2026081300012 } from "./migrations/202608130012-label-set-versions.js";
@@ -123,6 +124,7 @@ export function createDataSource(
       AiQualityProgressStuck2026081700001,
       ScarcityConfigAndMediaScene2026081900001,
       CollectionTasks2026082400001,
+      DeliveryAnnotationSnapshots2026082600001,
     ],
     synchronize: false,
     logging: false,
