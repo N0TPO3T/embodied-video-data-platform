@@ -11,6 +11,7 @@ import {
   LabelSetVersionEntity,
   type LabelSetItem,
 } from "../database/entities/label-set-version.entity.js";
+import { MediaMetadataEntity } from "../database/entities/media-metadata.entity.js";
 import { UserEntity } from "../database/entities/user.entity.js";
 import { IdentityFailure } from "../identity/identity.policy.js";
 import type { CreateLabelDto, UpdateLabelDto } from "./dto/label-set.dto.js";
@@ -128,7 +129,7 @@ export class LabelSetService {
 
   async getActive(actor: PublicUser): Promise<LabelSetVersionEntity> {
     this.requireAdmin(actor);
-    return this.ensureDefault();
+    return this.hydrateAssociationCounts(await this.ensureDefault());
   }
 
   /** 供 AI 质检 worker 等无管理员会话的服务读取当前标签体系 */
@@ -216,7 +217,7 @@ export class LabelSetService {
           label: updatedLabel,
         },
       );
-      return next;
+      return this.hydrateAssociationCounts(next);
     });
   }
 
@@ -283,7 +284,7 @@ export class LabelSetService {
         { revision: current.revision },
         { revision: next.revision, label },
       );
-      return next;
+      return this.hydrateAssociationCounts(next);
     });
   }
 
@@ -333,8 +334,78 @@ export class LabelSetService {
         { revision: current.revision, label: existing },
         { revision: next.revision },
       );
-      return next;
+      return this.hydrateAssociationCounts(next);
     });
+  }
+
+  /**
+   * 把真实关联计数叠加到标签体系上（不落库，仅用于管理端展示）：
+   * - 场景：提交按任务关联的场景标签 + AI 质检识别结果（media_metadata.scene_id）
+   * - 动作/对象：AI 质检识别结果（media_metadata.task_id / variant_id）
+   * - 质量问题：暂无自动关联来源，保持 0
+   */
+  private async hydrateAssociationCounts(
+    labelSet: LabelSetVersionEntity,
+  ): Promise<LabelSetVersionEntity> {
+    const counts = await this.associationCounts();
+    return {
+      ...labelSet,
+      labels: labelSet.labels.map((label) => ({
+        ...label,
+        associationCount: counts.get(label.id) ?? 0,
+      })),
+    };
+  }
+
+  private async associationCounts(): Promise<Map<string, number>> {
+    const counts = new Map<string, number>();
+    const add = (id: string, amount: number) => {
+      counts.set(id, (counts.get(id) ?? 0) + amount);
+    };
+
+    const sceneByTask = await this.dataSource.query<Array<{
+      label_id: string;
+      cnt: string;
+    }>>(
+      `SELECT task.scene_label_id AS label_id, COUNT(DISTINCT submission.id)::int AS cnt
+         FROM submissions submission
+         JOIN collection_tasks task ON task.id = submission.task_id
+        WHERE task.scene_label_id IS NOT NULL
+        GROUP BY task.scene_label_id`,
+    );
+    for (const row of sceneByTask) add(row.label_id, Number(row.cnt) || 0);
+
+    const byName = async (column: "scene_id" | "task_id" | "variant_id") => {
+      return this.dataSource.query<Array<{ name: string; cnt: string }>>(
+        `SELECT ${column} AS name, COUNT(DISTINCT submission_id)::int AS cnt
+           FROM media_metadata
+          WHERE ${column} IS NOT NULL
+          GROUP BY ${column}`,
+      );
+    };
+
+    const detectedScenes = await byName("scene_id");
+    const detectedActions = await byName("task_id");
+    const detectedObjects = await byName("variant_id");
+
+    const existing = await this.labelSets.findOneBy({ active: true });
+    const labels = existing?.labels ?? [];
+    const countByType = (type: LabelSetItem["type"], rows: Array<{ name: string; cnt: string }>) => {
+      const nameToId = new Map(
+        labels
+          .filter((label) => label.type === type)
+          .map((label) => [label.name, label.id]),
+      );
+      for (const row of rows) {
+        const labelId = nameToId.get(row.name.trim());
+        if (labelId) add(labelId, Number(row.cnt) || 0);
+      }
+    };
+    countByType("scene", detectedScenes);
+    countByType("action", detectedActions);
+    countByType("object", detectedObjects);
+
+    return counts;
   }
 
   private requireAdmin(actor: PublicUser): void {
