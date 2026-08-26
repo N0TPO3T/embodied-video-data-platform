@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 
 import { QualityReportCard } from "../../components/QualityReportCard";
 import { StatusBadge } from "../../components/StatusBadge";
-import { useDemoStore } from "../../data/DemoStoreContext";
+import { useIdentity } from "../../auth/client/IdentityContext";
 import { estimatePoints } from "../../domain/calculations";
 import type { Submission } from "../../domain/types";
 import { getPointRule } from "../../points/client/pointCycleApi";
@@ -28,7 +28,7 @@ export function SubmissionDetail({
   backPath?: string;
   backLabel?: string;
 }) {
-  const { state, currentUser } = useDemoStore();
+  const { teams } = useIdentity();
   const [loadedItem, setLoadedItem] = useState<Submission | null>(null);
   const [loadedDetailId, setLoadedDetailId] = useState<string | null>(null);
   const [loadedDetailState, setLoadedDetailState] = useState<"ready" | "missing">("missing");
@@ -50,20 +50,14 @@ export function SubmissionDetail({
       })
       .catch(() => {
         if (!active) return;
-        const fallback = state.submissions.find(
-          (submission) =>
-            submission.id === id &&
-            (currentUser.role === "admin" ||
-              submission.ownerId === currentUser.id),
-        );
-        setLoadedItem(fallback ?? null);
+        setLoadedItem(null);
         setLoadedDetailId(id);
-        setLoadedDetailState(fallback ? "ready" : "missing");
+        setLoadedDetailState("missing");
       });
     return () => {
       active = false;
     };
-  }, [currentUser.id, currentUser.role, id, state.submissions]);
+  }, [id]);
   useEffect(() => {
     let active = true;
     getSubmissionPreview(id)
@@ -134,7 +128,7 @@ export function SubmissionDetail({
   if (!item) {
     return <div className="empty-state"><FileVideo size={28} /><strong>找不到这条数据</strong><button className="text-button" onClick={() => navigate(backPath)}>{backLabel}</button></div>;
   }
-  const submissionTeam = state.teams.find((team) => team.id === item.teamId);
+  const submissionTeam = teams.find((team) => team.id === item.teamId);
   const teamPointsPerMinute = submissionTeam?.unitPricePerMinute ?? 0;
   const points = pointRule
     ? item.qualityStatus === "passed"

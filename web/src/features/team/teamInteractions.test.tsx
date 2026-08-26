@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PlatformApp } from "../../app/PlatformApp";
 import { IdentityProvider } from "../../auth/client/IdentityContext";
-import { DemoStoreProvider } from "../../data/DemoStoreContext";
 import { accountForRole, demoAccounts } from "../../test/accountFixtures";
 
 afterEach(() => {
@@ -20,9 +19,7 @@ function renderLeader(path: string) {
       accounts={demoAccounts}
       teams={[{ id: "TEAM-01", name: "星火一队", status: "active", unitPricePerMinute: 12, createdAt: 1_722_708_000_000, updatedAt: 1_722_708_000_000 }]}
     >
-      <DemoStoreProvider currentAccount={leader} accounts={demoAccounts}>
-        <PlatformApp initialPath={path} />
-      </DemoStoreProvider>
+      <PlatformApp initialPath={path} />
     </IdentityProvider>,
   );
 }
@@ -93,7 +90,6 @@ describe("team member interactions", () => {
 
     const dialog = screen.getByRole("dialog", { name: "成员详情" });
     expect(within(dialog).getByText("tuanzhang1")).toBeVisible();
-    expect(within(dialog).getByText("139****1176")).toBeVisible();
     expect(within(dialog).getByText("近 30 日上传")).toBeVisible();
     expect(within(dialog).getByText("有效时长")).toBeVisible();
     expect(within(dialog).getByText("通过率")).toBeVisible();
@@ -119,11 +115,11 @@ describe("team member interactions", () => {
     ).toBeVisible();
   });
 
-  it("shows real-data team points instead of simulated balances", () => {
+  it("shows real-data team points instead of simulated balances", async () => {
     renderLeader("/team/income");
 
     expect(screen.getByRole("heading", { name: "团队积分汇总" })).toBeVisible();
-    expect(screen.getByText("153.84 分")).toBeVisible();
+    expect(await screen.findByText("数据暂不可用")).toBeVisible();
     expect(screen.getByText(/用于线下核对/)).toBeVisible();
     expect(screen.queryByText("成员可用余额")).not.toBeInTheDocument();
   });

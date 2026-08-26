@@ -5,7 +5,7 @@ import { BadgeCheck, Clock3, FileVideo, Wallet } from "lucide-react";
 
 import { MetricCard } from "../../components/MetricCard";
 import { StatusBadge } from "../../components/StatusBadge";
-import { useDemoStore } from "../../data/DemoStoreContext";
+import { useIdentity } from "../../auth/client/IdentityContext";
 import {
   effectiveDuration,
   estimatePoints,
@@ -24,7 +24,7 @@ import {
   submissionsSince,
 } from "../team/teamMetrics";
 
-type PageMode = "loading" | "live" | "demo";
+type PageMode = "loading" | "live" | "unavailable";
 
 function greeting(): string {
   const hour = new Date().getHours();
@@ -59,12 +59,9 @@ export function CollectorDashboard({
   navigate(path: string): void;
   title?: boolean;
 }) {
-  const { state, currentUser, currentTeam } = useDemoStore();
-  const ownSubmissions = useMemo(
-    () => state.submissions.filter((item) => item.ownerId === currentUser.id),
-    [currentUser.id, state.submissions],
-  );
-  const [submissions, setSubmissions] = useState<Submission[]>(ownSubmissions);
+  const { currentAccount, teams } = useIdentity();
+  const currentTeam = teams.find((team) => team.id === currentAccount.teamId);
+  const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [pointRule, setPointRule] = useState<BackendPointRule | null>(null);
   const [pointRuleState, setPointRuleState] = useState<
     "loading" | "ready" | "unavailable"
@@ -83,14 +80,14 @@ export function CollectorDashboard({
       })
       .catch(() => {
         if (!active) return;
-        setSubmissions(ownSubmissions);
+        setSubmissions([]);
         setPointRuleState("unavailable");
-        setMode("demo");
+        setMode("unavailable");
       });
     return () => {
       active = false;
     };
-  }, [ownSubmissions]);
+  }, []);
 
   const pointsPerMinute = currentTeam?.unitPricePerMinute ?? 12;
   const month = useMemo(
@@ -154,7 +151,7 @@ export function CollectorDashboard({
       <div className="page-heading">
         <div>
           <p className="page-kicker">今天也是好数据的一天</p>
-          <h1>{title ? "我的工作台" : `${greeting()}，${currentUser.name}`}</h1>
+          <h1>{title ? "我的工作台" : `${greeting()}，${currentAccount.displayName}`}</h1>
           <span>
             本月已上传 {month.length} 条 · 今日 {today.length} 条
           </span>

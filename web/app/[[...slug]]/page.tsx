@@ -6,7 +6,6 @@ import {
   listBackendTeams,
 } from "@/src/auth/server/backendClient";
 import { IdentityProvider } from "@/src/auth/client/IdentityContext";
-import { DemoStoreProvider } from "@/src/data/DemoStoreContext";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
@@ -27,11 +26,7 @@ export default async function Page({
     if (access.kind === "redirect") {
       redirect(access.location);
     }
-    return (
-      <DemoStoreProvider>
-        <PlatformApp initialPath={initialPath} />
-      </DemoStoreProvider>
-    );
+    return <PlatformApp initialPath={initialPath} />;
   }
 
   const session = await getBackendSession(sessionToken);
@@ -40,20 +35,15 @@ export default async function Page({
   if (access.kind === "redirect") {
     redirect(access.location);
   }
-  const [accounts, teams] = currentAccount
-    ? await Promise.all([
-        listBackendAccounts(sessionToken),
-        listBackendTeams(sessionToken),
-      ])
-    : [[], []];
 
   if (!currentAccount) {
-    return (
-      <DemoStoreProvider>
-        <PlatformApp initialPath={initialPath} />
-      </DemoStoreProvider>
-    );
+    return <PlatformApp initialPath={initialPath} />;
   }
+
+  const [accounts, teams] = await Promise.all([
+    listBackendAccounts(sessionToken),
+    listBackendTeams(sessionToken),
+  ]);
 
   return (
     <IdentityProvider
@@ -61,14 +51,7 @@ export default async function Page({
       accounts={accounts}
       teams={teams}
     >
-      <DemoStoreProvider
-        currentAccount={currentAccount}
-        accounts={accounts}
-        teams={teams}
-        backendSubmissions={[]}
-      >
-        <PlatformApp initialPath={initialPath} />
-      </DemoStoreProvider>
+      <PlatformApp initialPath={initialPath} />
     </IdentityProvider>
   );
 }
