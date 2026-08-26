@@ -10,8 +10,15 @@ import { OperationsModule } from "../operations/operations.module.js";
 import { VideoQualityMediaPreprocessor } from "../video-quality/media-preprocessor.js";
 import { QwenVideoQualityProvider } from "../video-quality/qwen-video-quality.provider.js";
 import { VideoQualityService } from "../video-quality/video-quality.service.js";
+import { loadVideoAnnotationPrompt } from "../video-annotation/prompt-loader.js";
+import { QwenVideoAnnotationProvider } from "../video-annotation/qwen-video-annotation.provider.js";
 import {
+  aiAnnotationConcurrency,
+  aiAnnotationModelTimeoutMs,
+  aiAnnotationSampleRate,
+  aiAnnotationShadowEnabled,
   aiQualityModelTimeoutMs,
+  videoAnnotationPromptPath,
 } from "./ai-quality.config.js";
 import { AiQualityAnalysisService } from "./ai-quality-analysis.service.js";
 import { AiQualityModule } from "./ai-quality.module.js";
@@ -39,31 +46,58 @@ function required(name: string): string {
   providers: [
     {
       provide: AI_QUALITY_EVALUATOR_FACTORY,
-      useFactory: () =>
-        (prompt: ConstructorParameters<typeof QwenVideoQualityProvider>[0]["prompt"]) => {
-        const provider = new QwenVideoQualityProvider({
-          config: {
-            apiKey: required("QWEN_API_KEY"),
-            baseUrl: required("QWEN_BASE_URL"),
-            initialModel: prompt.initialModel,
-            reviewModel: prompt.reviewModel,
-            timeoutMs: aiQualityModelTimeoutMs(
-              process.env.AI_QUALITY_MODEL_TIMEOUT_MS,
-            ),
-          },
-          prompt,
-          diagnosticSink: (diagnostic) => {
-            process.stdout.write(`${JSON.stringify({
-              event: "ai_quality_model_call",
-              ...diagnostic,
-            })}\n`);
-          },
-        });
+      useFactory: async () => {
+        const annotationPrompt = aiAnnotationShadowEnabled(
+          process.env.AI_ANNOTATION_SHADOW_ENABLED,
+        )
+          ? await loadVideoAnnotationPrompt(videoAnnotationPromptPath())
+          : null;
+        const annotationProvider = annotationPrompt
+          ? new QwenVideoAnnotationProvider({
+              apiKey: required("QWEN_API_KEY"),
+              baseUrl: required("QWEN_BASE_URL"),
+              timeoutMs: aiAnnotationModelTimeoutMs(
+                process.env.AI_ANNOTATION_MODEL_TIMEOUT_MS,
+              ),
+              maxConcurrency: aiAnnotationConcurrency(
+                process.env.AI_ANNOTATION_CONCURRENCY,
+              ),
+              prompt: annotationPrompt,
+            })
+          : undefined;
+        return (
+          prompt: ConstructorParameters<
+            typeof QwenVideoQualityProvider
+          >[0]["prompt"],
+        ) => {
+          const provider = new QwenVideoQualityProvider({
+            config: {
+              apiKey: required("QWEN_API_KEY"),
+              baseUrl: required("QWEN_BASE_URL"),
+              initialModel: prompt.initialModel,
+              reviewModel: prompt.reviewModel,
+              timeoutMs: aiQualityModelTimeoutMs(
+                process.env.AI_QUALITY_MODEL_TIMEOUT_MS,
+              ),
+            },
+            prompt,
+            diagnosticSink: (diagnostic) => {
+              process.stdout.write(`${JSON.stringify({
+                event: "ai_quality_model_call",
+                ...diagnostic,
+              })}\n`);
+            },
+          });
           return new VideoQualityService({
             preprocessor: new VideoQualityMediaPreprocessor(),
             provider,
+            ...(annotationProvider ? { annotationProvider } : {}),
+            annotationSampleRate: aiAnnotationSampleRate(
+              process.env.AI_ANNOTATION_SAMPLE_RATE,
+            ),
           });
-        },
+        };
+      },
     },
     AiQualityAnalysisService,
     RabbitAiQualityWorker,

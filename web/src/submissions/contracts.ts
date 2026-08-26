@@ -72,6 +72,80 @@ export type BackendQualityBillingObservations = {
   }>;
 };
 
+export type BackendVideoAnnotationTask = {
+  start_ms: number;
+  end_ms: number;
+  task_label: string;
+  task_verb: string;
+  task_object: string;
+  evidence_level: "direct_visual" | "partially_inferred" | "uncertain";
+  evidence_timestamps_ms: number[];
+  manipulated_objects: string[];
+  tools: string[];
+  hand_mode: string;
+  interaction_primitives: string[];
+  completion: "complete" | "incomplete" | "partial" | "uncertain";
+  result_status: "success" | "failure" | "partial" | "not_applicable" | "unknown";
+  confidence: number;
+  effective_completion: "complete" | "incomplete" | "partial" | "uncertain";
+  effective_result_status: "success" | "failure" | "partial" | "not_applicable" | "unknown";
+  effective_failure_recovery: string;
+  policy_reasons: string[];
+};
+
+export type BackendVideoAnnotationCandidate =
+  | {
+      status: "system_failed";
+      schemaVersion: string;
+      policyVersion: string;
+      promptVersion: string;
+      promptContentSha256: string;
+      model: string;
+      error: string;
+    }
+  | {
+      status: "candidate" | "review_required";
+      schemaVersion: string;
+      policyVersion: string;
+      promptVersion: string;
+      promptContentSha256: string;
+      model: string;
+      requestId: string | null;
+      durationMs: number;
+      frameCount: number;
+      sampling: {
+        maxFrameGapMs: number | null;
+        sourceTimestampsMs: number[];
+      };
+      labelMappings: Array<{
+        type: "scene" | "action" | "object";
+        sourceText: string;
+        status: "matched" | "proposed";
+        labelId: string | null;
+        labelName: string | null;
+        confidence: number;
+      }>;
+      raw: {
+        video_summary: string;
+        scene: {
+          coarse_label: string | null;
+          fine_label: string | null;
+          confidence: number;
+        };
+      };
+      effective: {
+        video_summary: string;
+        scene: {
+          coarse_label: string | null;
+          fine_label: string | null;
+          confidence: number;
+        };
+        tasks: BackendVideoAnnotationTask[];
+      };
+      validation: { errors: string[]; warnings: string[] };
+      reviewReasons: string[];
+    };
+
 export type BackendQualityResult = {
   status: BackendQualityStatus;
   attempts: number;
@@ -135,6 +209,18 @@ export type BackendQualityResult = {
     review_required: boolean;
   };
   billingObservations?: BackendQualityBillingObservations;
+  candidateAnnotation?: BackendVideoAnnotationCandidate;
+  annotationReview?: {
+    decision: "accepted" | "needs_correction";
+    reason: string;
+    reviewedByAccountId: string;
+    reviewedByName: string;
+    reviewedAt: number;
+    candidateSchemaVersion: string | null;
+    candidatePolicyVersion: string | null;
+    candidatePromptVersion: string | null;
+    candidatePromptContentSha256: string | null;
+  };
   startedAt?: number;
   completedAt?: number;
 };
@@ -254,6 +340,7 @@ export type ReviewSubmissionQualityInput = {
   issues: Array<{ label: string; start: number; end: number }>;
   expectedReviewRevision?: number;
   quarantine?: boolean;
+  annotationDecision?: "accepted" | "needs_correction";
 };
 
 export type RerunAiQualityInput = {

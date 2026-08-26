@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, CircleX, Clock3, Cpu, RotateCcw, Server, Trash2 } from "lucide-react";
+import { CheckCircle2, CircleX, Clock3, CopyCheck, Cpu, RotateCcw, Server, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { MetricCard } from "../../components/MetricCard";
@@ -114,7 +114,7 @@ function formatDurationMs(milliseconds?: number): string {
 export function AiQueuePage() {
   const { notify } = useInteractions();
   const [liveSubmissions, setLiveSubmissions] = useState<Submission[] | null>(null);
-  const jobs = liveSubmissions ?? [];
+  const jobs = useMemo(() => liveSubmissions ?? [], [liveSubmissions]);
   const [snapshot, setSnapshot] = useState<BackendQueueSnapshot | null>(null);
   const [queueMode, setQueueMode] = useState<QueueMode>("loading");
   const [tasksMode, setTasksMode] = useState<QueueMode>("loading");
@@ -185,6 +185,42 @@ export function AiQueuePage() {
         item.qualityResult?.status === "stuck",
     ).length;
     return { queued, mediaRunning, aiRunning, completed, failed, stuck };
+  }, [jobs]);
+  const annotationMetrics = useMemo(() => {
+    const completedQuality = jobs.filter((item) =>
+      ["scored", "hard_reject", "review_pending"].includes(
+        item.qualityResult?.status ?? "",
+      ),
+    );
+    const artifacts = completedQuality.flatMap((item) => {
+      const candidate = item.qualityResult?.candidateAnnotation;
+      return candidate ? [{ candidate, review: item.qualityResult?.annotationReview }] : [];
+    });
+    const generated = artifacts.filter(
+      ({ candidate }) => candidate.status !== "system_failed",
+    ).length;
+    const systemFailed = artifacts.length - generated;
+    const evidenceReview = artifacts.filter(
+      ({ candidate }) => candidate.status === "review_required",
+    ).length;
+    const reviewed = artifacts.filter(({ review }) => review).length;
+    const accepted = artifacts.filter(
+      ({ review }) => review?.decision === "accepted",
+    ).length;
+    return {
+      completedQuality: completedQuality.length,
+      artifacts: artifacts.length,
+      generated,
+      systemFailed,
+      evidenceReview,
+      reviewed,
+      accepted,
+      coverage:
+        completedQuality.length > 0
+          ? artifacts.length / completedQuality.length
+          : null,
+      acceptanceRate: reviewed > 0 ? accepted / reviewed : null,
+    };
   }, [jobs]);
 
   const liveSummary = snapshot?.summary;
@@ -289,6 +325,49 @@ export function AiQueuePage() {
         )}
         <MetricCard label="卡住任务" value={String(stuckCount)} detail="超时或心跳过期，可重新排队" icon={CircleX} tone={stuckCount > 0 ? "amber" : "green"} />
       </div>
+      <section className="content-card">
+        <div className="card-heading">
+          <div>
+            <h2>结构化内容标注 Shadow 指标</h2>
+            <p>候选链路不参与当前质检和结算；只有真实人工接受率与回归集效果达标后才讨论替换</p>
+          </div>
+        </div>
+        <div className="metric-grid metric-grid-5">
+          <MetricCard
+            label="链路覆盖率"
+            value={annotationMetrics.coverage === null ? "—" : `${Math.round(annotationMetrics.coverage * 100)}%`}
+            detail={`${annotationMetrics.artifacts}/${annotationMetrics.completedQuality} 条已完成质检`}
+            icon={Cpu}
+          />
+          <MetricCard
+            label="成功生成"
+            value={String(annotationMetrics.generated)}
+            detail={`系统失败 ${annotationMetrics.systemFailed} 条`}
+            icon={CheckCircle2}
+            tone={annotationMetrics.systemFailed > 0 ? "amber" : "green"}
+          />
+          <MetricCard
+            label="证据待复核"
+            value={String(annotationMetrics.evidenceReview)}
+            detail="稀疏采样、低置信度或证据校验触发"
+            icon={Clock3}
+            tone={annotationMetrics.evidenceReview > 0 ? "amber" : "green"}
+          />
+          <MetricCard
+            label="人工已复核"
+            value={String(annotationMetrics.reviewed)}
+            detail="接受或需要修正的显式反馈"
+            icon={CopyCheck}
+          />
+          <MetricCard
+            label="人工接受率"
+            value={annotationMetrics.acceptanceRate === null ? "—" : `${Math.round(annotationMetrics.acceptanceRate * 100)}%`}
+            detail="仅作为早期效果代理，不等同真实准确率"
+            icon={CheckCircle2}
+            tone={annotationMetrics.acceptanceRate !== null && annotationMetrics.acceptanceRate >= 0.9 ? "green" : "amber"}
+          />
+        </div>
+      </section>
       {snapshot && (
         <section className="content-card table-card">
           <div className="card-heading"><div><h2>当前 Worker</h2><p>仅展示存活且心跳正常的处理进程；已停止或心跳过期的记录收进下方历史区</p></div></div>

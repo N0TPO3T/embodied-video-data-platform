@@ -99,6 +99,9 @@ export function ReviewDrawer({
   const [quarantine, setQuarantine] = useState(
     submission.assetStatus === "quarantined",
   );
+  const [annotationDecision, setAnnotationDecision] = useState<
+    "" | "accepted" | "needs_correction"
+  >(submission.qualityResult?.annotationReview?.decision ?? "");
   const [issues, setIssues] = useState<IssueDraft[]>(() =>
     initialIssueDrafts(submission),
   );
@@ -225,6 +228,9 @@ export function ReviewDrawer({
         issues: nextIssues,
         expectedReviewRevision: submission.qualityResult.reviewRevision,
         quarantine,
+        ...(submission.qualityResult.candidateAnnotation && annotationDecision
+          ? { annotationDecision }
+          : {}),
       });
       notify("success", "复核结果已保存");
       onClose();
@@ -315,6 +321,31 @@ export function ReviewDrawer({
           )}
         </div>
       )}
+      {submission.qualityResult?.candidateAnnotation &&
+        submission.qualityResult.candidateAnnotation.status !== "system_failed" && (
+          <section className="ai-conclusion">
+            <div className="ai-conclusion-head">
+              <span>结构化内容标注（影子运行）</span>
+              <StatusBadge
+                label={submission.qualityResult.candidateAnnotation.status === "candidate" ? "候选可用" : "待确认"}
+                tone={submission.qualityResult.candidateAnnotation.status === "candidate" ? "info" : "warning"}
+              />
+            </div>
+            <p>{submission.qualityResult.candidateAnnotation.effective.video_summary}</p>
+            <ul>
+              {submission.qualityResult.candidateAnnotation.effective.tasks.map((task, index) => (
+                <li key={`review-annotation-task-${index}`}>
+                  {task.task_label} · {Math.round(task.start_ms / 1000)}s—{Math.round(task.end_ms / 1000)}s · {Math.round(task.confidence * 100)}%
+                </li>
+              ))}
+            </ul>
+            {submission.qualityResult.annotationReview && (
+              <small>
+                上次标注复核：{submission.qualityResult.annotationReview.decision === "accepted" ? "已接受" : "需要修正"} · {submission.qualityResult.annotationReview.reviewedByName}
+              </small>
+            )}
+          </section>
+        )}
       {duplicateCandidate && (
         <section className="ai-conclusion duplicate-review">
           <div className="ai-conclusion-head"><span>近似重复候选</span><StatusBadge label="待确认" tone="warning" /></div>
@@ -388,6 +419,26 @@ export function ReviewDrawer({
         </div>
         <label><span>调整原因</span><textarea aria-label="调整原因" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="请说明人工复核依据，必填" rows={3} /><small className="field-hint">必填，将写入审计记录留痕</small></label>
         <label className="checkbox-line"><input type="checkbox" checked={quarantine} onChange={(event) => setQuarantine(event.target.checked)} />敏感内容隔离，不进入普通资产和交付候选</label>
+        {submission.qualityResult?.candidateAnnotation &&
+          submission.qualityResult.candidateAnnotation.status !== "system_failed" && (
+            <label>
+              <span>候选内容标注结论</span>
+              <select
+                aria-label="候选内容标注结论"
+                value={annotationDecision}
+                onChange={(event) =>
+                  setAnnotationDecision(
+                    event.target.value as "" | "accepted" | "needs_correction",
+                  )
+                }
+              >
+                <option value="">本次不处理</option>
+                <option value="accepted">接受候选标注</option>
+                <option value="needs_correction">需要修正</option>
+              </select>
+              <small className="field-hint">结论会连同候选 Schema、Prompt 哈希和复核原因写入审计</small>
+            </label>
+          )}
         {submission.issues.length > 0 && <div className="review-issues"><AlertTriangle size={15} /><span>AI 标记 {submission.issues.length} 个问题区间，人工确认无效时长 {finalInvalidSeconds} 秒</span></div>}
         {error && <p className="form-message error">{error}</p>}
         <button className="button button-primary" disabled={saving} type="submit"><CheckCircle2 size={16} />{saving ? "保存中" : "保存调整"}</button>

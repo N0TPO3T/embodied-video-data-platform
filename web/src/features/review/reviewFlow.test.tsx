@@ -354,6 +354,55 @@ describe("review workflows", () => {
     );
   });
 
+  it("writes an explicit human decision for a shadow annotation candidate", async () => {
+    const user = userEvent.setup();
+    const submission = backendSubmission({ id: "SUB-ANNOTATION-REVIEW" });
+    submission.quality!.candidateAnnotation = {
+      status: "candidate",
+      schemaVersion: "ego_video_annotation_v1",
+      policyVersion: "ego_annotation_evidence_policy_v1",
+      promptVersion: "ego_video_annotation_prompt_v1",
+      promptContentSha256: "a".repeat(64),
+      model: "qwen3.7-plus",
+      requestId: "request-1",
+      durationMs: 100,
+      frameCount: 4,
+      sampling: { maxFrameGapMs: 250, sourceTimestampsMs: [0, 250, 500, 750] },
+      labelMappings: [],
+      raw: {
+        video_summary: "放置杯子",
+        scene: { coarse_label: "indoor", fine_label: "kitchen", confidence: 0.9 },
+      },
+      effective: {
+        video_summary: "放置杯子",
+        scene: { coarse_label: "indoor", fine_label: "kitchen", confidence: 0.9 },
+        tasks: [],
+      },
+      validation: { errors: [], warnings: [] },
+      reviewReasons: [],
+    };
+    vi.mocked(reviewSubmissionQuality).mockResolvedValue(submission);
+    renderAdminWithSubmissions([submission]);
+
+    await user.click(await screen.findByRole("button", { name: "复核" }));
+    await user.selectOptions(
+      screen.getByLabelText("候选内容标注结论"),
+      "accepted",
+    );
+    await user.type(screen.getByLabelText("调整原因"), "逐帧检查后确认标注正确");
+    await user.click(screen.getByRole("button", { name: "保存调整" }));
+
+    await waitFor(() =>
+      expect(reviewSubmissionQuality).toHaveBeenCalledWith(
+        "SUB-ANNOTATION-REVIEW",
+        expect.objectContaining({
+          annotationDecision: "accepted",
+          reason: "逐帧检查后确认标注正确",
+        }),
+      ),
+    );
+  });
+
   it("clears a near-duplicate candidate from the review drawer", async () => {
     const user = userEvent.setup();
     const submission: BackendSubmission = {

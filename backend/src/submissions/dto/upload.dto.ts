@@ -133,6 +133,10 @@ export class ReviewSubmissionQualityDto {
   @IsOptional()
   @IsBoolean()
   quarantine?: boolean;
+
+  @IsOptional()
+  @IsIn(["accepted", "needs_correction"])
+  annotationDecision?: "accepted" | "needs_correction";
 }
 
 export class RerunAiQualityDto {

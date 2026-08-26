@@ -540,6 +540,15 @@ describe("submission multipart upload API", () => {
           confidence: 0.98,
         },
         invalidSegments: [],
+        candidateAnnotation: {
+          status: "candidate",
+          schemaVersion: "ego_video_annotation_v1",
+          policyVersion: "ego_annotation_evidence_policy_v1",
+          promptVersion: "ego_video_annotation_prompt_v1",
+          promptContentSha256: "a".repeat(64),
+          effective: { video_summary: "整理厨房台面", tasks: [] },
+          validation: { errors: [], warnings: [] },
+        },
       },
       rawModelResult: {},
       startedAt: new Date(),
@@ -1054,6 +1063,7 @@ describe("submission multipart upload API", () => {
         reason: "证据区间复核后确认画面可用",
         expectedReviewRevision: 0,
         issues: [{ label: "轻微晃动", start: 1, end: 3.5 }],
+        annotationDecision: "accepted",
       })
       .expect(200);
 
@@ -1069,6 +1079,13 @@ describe("submission multipart upload API", () => {
         reviewedByName: "上传管理员",
         reason: "证据区间复核后确认画面可用",
         finalScore: 92,
+      },
+      annotationReview: {
+        decision: "accepted",
+        reviewedByAccountId: "U-UPLOAD-ADMIN",
+        reviewedByName: "上传管理员",
+        candidateSchemaVersion: "ego_video_annotation_v1",
+        candidatePromptVersion: "ego_video_annotation_prompt_v1",
       },
     });
     expect(reviewed.body.submission.quality.manualIssues).toEqual([

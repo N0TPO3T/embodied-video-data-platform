@@ -82,8 +82,6 @@ const REVIEW_AUDIT_ACTIONS = [
   "ai_quality_rerun",
   "submission_rename",
 ];
-const SENSITIVE_REVIEW_PATTERN =
-  /PRIVACY_OR_SAFETY|privacy|sensitive|隐私|敏感|合规|安全|人脸|门牌|定位|账号/u;
 const HLS_FILE_NAME_PATTERN = /^[A-Za-z0-9._-]+\.(?:m3u8|ts)$/u;
 const QUALITY_EFFECTIVE_PASSED_SQL = `
   CASE
@@ -512,6 +510,22 @@ function publicSubmission(submission: SubmissionEntity) {
             quality.normalizedResult &&
             typeof quality.normalizedResult.taskCompliance === "object"
               ? (quality.normalizedResult.taskCompliance as Record<
+                  string,
+                  unknown
+                >)
+              : undefined,
+          candidateAnnotation:
+            quality.normalizedResult &&
+            typeof quality.normalizedResult.candidateAnnotation === "object"
+              ? (quality.normalizedResult.candidateAnnotation as Record<
+                  string,
+                  unknown
+                >)
+              : undefined,
+          annotationReview:
+            quality.normalizedResult &&
+            typeof quality.normalizedResult.annotationReview === "object"
+              ? (quality.normalizedResult.annotationReview as Record<
                   string,
                   unknown
                 >)
@@ -1225,6 +1239,13 @@ export class SubmissionsService {
         reviewRevision: quality.reviewRevision,
         assetStatus: submission.assetStatus,
         quarantineReason: submission.quarantineReason,
+        annotationDecision:
+          quality.normalizedResult &&
+          typeof quality.normalizedResult.annotationReview === "object" &&
+          quality.normalizedResult.annotationReview !== null
+            ? (quality.normalizedResult.annotationReview as Record<string, unknown>)
+                .decision
+            : null,
       };
 
       quality.manualFinalScore = decimal(finalScore, 1);
@@ -1238,6 +1259,57 @@ export class SubmissionsService {
       quality.manualReviewedByAccountId = actor.id;
       quality.manualReviewedByName = actor.displayName;
       quality.manualReviewedAt = new Date();
+      if (input.annotationDecision) {
+        const normalizedResult = quality.normalizedResult ?? {};
+        const candidate = normalizedResult.candidateAnnotation;
+        if (
+          !candidate ||
+          typeof candidate !== "object" ||
+          !["candidate", "review_required"].includes(
+            String((candidate as Record<string, unknown>).status),
+          )
+        ) {
+          throw new SubmissionFailure(
+            "ANNOTATION_CANDIDATE_NOT_FOUND",
+            "当前视频没有可供确认的候选内容标注",
+            409,
+          );
+        }
+        const candidateRecord = candidate as Record<string, unknown>;
+        const validation =
+          candidateRecord.validation &&
+          typeof candidateRecord.validation === "object" &&
+          !Array.isArray(candidateRecord.validation)
+            ? (candidateRecord.validation as Record<string, unknown>)
+            : null;
+        if (
+          input.annotationDecision === "accepted" &&
+          (!validation ||
+            !Array.isArray(validation.errors) ||
+            validation.errors.length > 0)
+        ) {
+          throw new SubmissionFailure(
+            "ANNOTATION_VALIDATION_FAILED",
+            "候选标注存在结构或证据错误，不能直接接受，请标记为需要修正",
+            409,
+          );
+        }
+        quality.normalizedResult = {
+          ...normalizedResult,
+          annotationReview: {
+            decision: input.annotationDecision,
+            reason,
+            reviewedByAccountId: actor.id,
+            reviewedByName: actor.displayName,
+            reviewedAt: Date.now(),
+            candidateSchemaVersion: candidateRecord.schemaVersion ?? null,
+            candidatePolicyVersion: candidateRecord.policyVersion ?? null,
+            candidatePromptVersion: candidateRecord.promptVersion ?? null,
+            candidatePromptContentSha256:
+              candidateRecord.promptContentSha256 ?? null,
+          },
+        };
+      }
       quality.reviewRevision += 1;
       await manager.getRepository(VideoQualityResultEntity).save(quality);
 
@@ -1245,13 +1317,11 @@ export class SubmissionsService {
         finalScore,
         invalidDurationMs,
         reviewRevision: quality.reviewRevision,
+        annotationDecision: input.annotationDecision ?? before.annotationDecision,
       };
       const previousAssetStatus = submission.assetStatus;
       const previousQuarantineReason = submission.quarantineReason;
-      const shouldQuarantine =
-        input.quarantine === true ||
-        (input.quarantine === undefined &&
-          this.reviewContainsSensitiveRisk(reason, issues));
+      const shouldQuarantine = input.quarantine === true;
       const shouldRelease = input.quarantine === false;
       if (shouldQuarantine) {
         submission.assetStatus = "quarantined";
@@ -2442,15 +2512,6 @@ export class SubmissionsService {
       .addOrderBy("duplicateCandidate.similarity", "DESC")
       .addOrderBy("reviewAudit.createdAt", "ASC")
       .getMany();
-  }
-
-  private reviewContainsSensitiveRisk(
-    reason: string,
-    issues: PublicReviewIssue[],
-  ): boolean {
-    return SENSITIVE_REVIEW_PATTERN.test(
-      [reason, ...issues.map((issue) => issue.label)].join(" "),
-    );
   }
 
   private async qualityRuleForResult(
