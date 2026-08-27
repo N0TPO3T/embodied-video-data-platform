@@ -199,13 +199,38 @@ export function AiQueuePage() {
     const generated = artifacts.filter(
       ({ candidate }) => candidate.status !== "system_failed",
     ).length;
+    const successfulCandidates = artifacts.flatMap(({ candidate }) =>
+      candidate.status === "system_failed" ? [] : [candidate],
+    );
+    const tokenSamples = successfulCandidates.flatMap((candidate) =>
+      candidate.usage?.totalTokens === null ||
+      candidate.usage?.totalTokens === undefined
+        ? []
+        : [candidate.usage.totalTokens],
+    );
+    const averageTokens =
+      tokenSamples.length > 0
+        ? tokenSamples.reduce((total, value) => total + value, 0) /
+          tokenSamples.length
+        : null;
+    const averageLatencyMs =
+      successfulCandidates.length > 0
+        ? successfulCandidates.reduce(
+            (total, candidate) => total + candidate.durationMs,
+            0,
+          ) / successfulCandidates.length
+        : null;
     const systemFailed = artifacts.length - generated;
     const evidenceReview = artifacts.filter(
       ({ candidate }) => candidate.status === "review_required",
     ).length;
     const reviewed = artifacts.filter(({ review }) => review).length;
-    const accepted = artifacts.filter(
-      ({ review }) => review?.decision === "accepted",
+    const corrected = artifacts.filter(
+      ({ review }) => Boolean(review?.correctedAnnotation),
+    ).length;
+    const acceptedUnchanged = artifacts.filter(
+      ({ review }) =>
+        review?.decision === "accepted" && !review.correctedAnnotation,
     ).length;
     return {
       completedQuality: completedQuality.length,
@@ -214,12 +239,16 @@ export function AiQueuePage() {
       systemFailed,
       evidenceReview,
       reviewed,
-      accepted,
+      acceptedUnchanged,
+      corrected,
+      averageTokens,
+      averageLatencyMs,
       coverage:
         completedQuality.length > 0
           ? artifacts.length / completedQuality.length
           : null,
-      acceptanceRate: reviewed > 0 ? accepted / reviewed : null,
+      unchangedAcceptanceRate:
+        reviewed > 0 ? acceptedUnchanged / reviewed : null,
     };
   }, [jobs]);
 
@@ -342,7 +371,7 @@ export function AiQueuePage() {
           <MetricCard
             label="成功生成"
             value={String(annotationMetrics.generated)}
-            detail={`系统失败 ${annotationMetrics.systemFailed} 条`}
+            detail={`系统失败 ${annotationMetrics.systemFailed} 条 · 平均 ${annotationMetrics.averageTokens === null ? "—" : Math.round(annotationMetrics.averageTokens).toLocaleString()} Token / ${annotationMetrics.averageLatencyMs === null ? "—" : formatDurationMs(annotationMetrics.averageLatencyMs)}`}
             icon={CheckCircle2}
             tone={annotationMetrics.systemFailed > 0 ? "amber" : "green"}
           />
@@ -360,11 +389,11 @@ export function AiQueuePage() {
             icon={CopyCheck}
           />
           <MetricCard
-            label="人工接受率"
-            value={annotationMetrics.acceptanceRate === null ? "—" : `${Math.round(annotationMetrics.acceptanceRate * 100)}%`}
-            detail="仅作为早期效果代理，不等同真实准确率"
+            label="原样接受率"
+            value={annotationMetrics.unchangedAcceptanceRate === null ? "—" : `${Math.round(annotationMetrics.unchangedAcceptanceRate * 100)}%`}
+            detail={`修正后接受 ${annotationMetrics.corrected} 条；原样接受率仍不等同真实准确率`}
             icon={CheckCircle2}
-            tone={annotationMetrics.acceptanceRate !== null && annotationMetrics.acceptanceRate >= 0.9 ? "green" : "amber"}
+            tone={annotationMetrics.unchangedAcceptanceRate !== null && annotationMetrics.unchangedAcceptanceRate >= 0.9 ? "green" : "amber"}
           />
         </div>
       </section>

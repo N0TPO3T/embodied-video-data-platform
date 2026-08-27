@@ -314,7 +314,16 @@ export function QualityReportCard({
                 <div className="metadata-grid">
                   <div><small>场景</small><strong>{quality.candidateAnnotation.effective.scene.fine_label || quality.candidateAnnotation.effective.scene.coarse_label || "未识别"}</strong></div>
                   <div><small>采样证据</small><strong>{quality.candidateAnnotation.frameCount} 帧</strong></div>
+                  {quality.candidateAnnotation.effective.model_assessability && (
+                    <div><small>模型可判定性</small><strong>{quality.candidateAnnotation.effective.model_assessability === "assessable" ? "可判定" : "需要复核"}</strong></div>
+                  )}
+                  {quality.candidateAnnotation.usage?.totalTokens !== undefined && (
+                    <div><small>模型 Token</small><strong>{quality.candidateAnnotation.usage.totalTokens ?? "未返回"}</strong></div>
+                  )}
                 </div>
+                {quality.candidateAnnotation.effective.assessability_reason && (
+                  <p className="report-fold-empty">可判定性说明：{quality.candidateAnnotation.effective.assessability_reason}</p>
+                )}
                 {quality.candidateAnnotation.effective.tasks.length > 0 ? (
                   <ul>
                     {quality.candidateAnnotation.effective.tasks.map((task, index) => (
@@ -327,6 +336,15 @@ export function QualityReportCard({
                             {` · 结果：${resultLabels[task.effective_result_status] ?? task.effective_result_status}`}
                             {` · 确信度 ${Math.round(task.confidence * 100)}%`}
                           </small>
+                          {task.execution_pattern && (
+                            <small>执行模式：{task.execution_pattern} · 原子步骤：{task.atomic_action_sequence?.map((action) => action.verb).join(" → ") || "无充分证据"}</small>
+                          )}
+                          {(task.effective_complexity_signals?.length ?? 0) > 0 && (
+                            <small>复杂度信号：{task.effective_complexity_signals!.join("、")}</small>
+                          )}
+                          {task.visible_postcondition && (
+                            <small>可见后状态：{task.visible_postcondition}</small>
+                          )}
                           {task.policy_reasons.length > 0 && (
                             <small>证据策略：{task.policy_reasons.join("、")}</small>
                           )}
@@ -357,6 +375,9 @@ export function QualityReportCard({
                 )}
                 {quality.candidateAnnotation.reviewReasons.length > 0 && (
                   <p className="report-fold-empty">复核原因：{quality.candidateAnnotation.reviewReasons.join("；")}</p>
+                )}
+                {(quality.candidateAnnotation.effective.uncertain_fields?.length ?? 0) > 0 && (
+                  <p className="report-fold-empty">不确定字段：{quality.candidateAnnotation.effective.uncertain_fields!.join("、")}</p>
                 )}
                 <small>Schema {quality.candidateAnnotation.schemaVersion} · Prompt {quality.candidateAnnotation.promptVersion} · 不参与当前质检与结算</small>
               </div>

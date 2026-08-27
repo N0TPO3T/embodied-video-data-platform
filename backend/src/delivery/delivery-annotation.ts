@@ -1,14 +1,24 @@
 import {
+  LEGACY_VIDEO_ANNOTATION_POLICY_VERSION,
+  LEGACY_VIDEO_ANNOTATION_SCHEMA_VERSION,
   VIDEO_ANNOTATION_POLICY_VERSION,
   VIDEO_ANNOTATION_SCHEMA_VERSION,
 } from "../video-annotation/video-annotation.js";
 
+type DeliveryAnnotationSchemaVersion =
+  | typeof VIDEO_ANNOTATION_SCHEMA_VERSION
+  | typeof LEGACY_VIDEO_ANNOTATION_SCHEMA_VERSION;
+type DeliveryAnnotationPolicyVersion =
+  | typeof VIDEO_ANNOTATION_POLICY_VERSION
+  | typeof LEGACY_VIDEO_ANNOTATION_POLICY_VERSION;
+
 export type AcceptedDeliveryAnnotation = {
-  schemaVersion: typeof VIDEO_ANNOTATION_SCHEMA_VERSION;
-  policyVersion: typeof VIDEO_ANNOTATION_POLICY_VERSION;
+  schemaVersion: DeliveryAnnotationSchemaVersion;
+  policyVersion: DeliveryAnnotationPolicyVersion;
   promptVersion: string;
   promptContentSha256: string;
   model: string;
+  source: "candidate" | "human_correction";
   effective: Record<string, unknown>;
   labelMappings: unknown[];
   review: {
@@ -42,10 +52,21 @@ export function acceptedDeliveryAnnotation(
   if (!["candidate", "review_required"].includes(String(candidate.status))) {
     return null;
   }
+  let schemaVersion: DeliveryAnnotationSchemaVersion;
+  let policyVersion: DeliveryAnnotationPolicyVersion;
   if (
-    candidate.schemaVersion !== VIDEO_ANNOTATION_SCHEMA_VERSION ||
-    candidate.policyVersion !== VIDEO_ANNOTATION_POLICY_VERSION
+    candidate.schemaVersion === VIDEO_ANNOTATION_SCHEMA_VERSION &&
+    candidate.policyVersion === VIDEO_ANNOTATION_POLICY_VERSION
   ) {
+    schemaVersion = VIDEO_ANNOTATION_SCHEMA_VERSION;
+    policyVersion = VIDEO_ANNOTATION_POLICY_VERSION;
+  } else if (
+    candidate.schemaVersion === LEGACY_VIDEO_ANNOTATION_SCHEMA_VERSION &&
+    candidate.policyVersion === LEGACY_VIDEO_ANNOTATION_POLICY_VERSION
+  ) {
+    schemaVersion = LEGACY_VIDEO_ANNOTATION_SCHEMA_VERSION;
+    policyVersion = LEGACY_VIDEO_ANNOTATION_POLICY_VERSION;
+  } else {
     return null;
   }
   if (
@@ -56,18 +77,28 @@ export function acceptedDeliveryAnnotation(
   ) {
     return null;
   }
-  const validation = record(candidate.validation);
-  if (
-    !validation ||
-    !Array.isArray(validation.errors) ||
-    validation.errors.length > 0
-  ) {
+  const correctedAnnotation = record(review.correctedAnnotation);
+  const selectedArtifact = correctedAnnotation ?? candidate;
+  const validation = record(selectedArtifact.validation);
+  if (!validation || !Array.isArray(validation.errors) || validation.errors.length > 0) {
     return null;
   }
-  const effective = record(candidate.effective);
+  if (correctedAnnotation) {
+    if (
+      correctedAnnotation.source !== "human_correction" ||
+      correctedAnnotation.schemaVersion !== VIDEO_ANNOTATION_SCHEMA_VERSION ||
+      correctedAnnotation.policyVersion !== VIDEO_ANNOTATION_POLICY_VERSION
+    ) {
+      return null;
+    }
+    schemaVersion = VIDEO_ANNOTATION_SCHEMA_VERSION;
+    policyVersion = VIDEO_ANNOTATION_POLICY_VERSION;
+  }
+  const effective = record(selectedArtifact.effective);
+  const labelMappings = selectedArtifact.labelMappings;
   if (
     !effective ||
-    !Array.isArray(candidate.labelMappings) ||
+    !Array.isArray(labelMappings) ||
     !nonEmptyString(candidate.promptVersion) ||
     !nonEmptyString(candidate.promptContentSha256) ||
     !nonEmptyString(candidate.model) ||
@@ -80,13 +111,14 @@ export function acceptedDeliveryAnnotation(
   }
 
   return {
-    schemaVersion: VIDEO_ANNOTATION_SCHEMA_VERSION,
-    policyVersion: VIDEO_ANNOTATION_POLICY_VERSION,
+    schemaVersion,
+    policyVersion,
     promptVersion: candidate.promptVersion,
     promptContentSha256: candidate.promptContentSha256,
     model: candidate.model,
+    source: correctedAnnotation ? "human_correction" : "candidate",
     effective,
-    labelMappings: candidate.labelMappings,
+    labelMappings,
     review: {
       reviewedByAccountId: review.reviewedByAccountId,
       reviewedByName: review.reviewedByName,

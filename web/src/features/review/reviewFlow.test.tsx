@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PlatformApp } from "../../app/PlatformApp";
@@ -401,6 +401,129 @@ describe("review workflows", () => {
         }),
       ),
     );
+  });
+
+  it("submits a v2 human correction for server-side evidence validation", async () => {
+    const user = userEvent.setup();
+    const submission = backendSubmission({ id: "SUB-ANNOTATION-CORRECTION" });
+    submission.quality!.candidateAnnotation = {
+      status: "review_required",
+      schemaVersion: "ego_video_annotation_v2",
+      policyVersion: "ego_annotation_evidence_policy_v2",
+      promptVersion: "ego_video_annotation_prompt_v2",
+      promptContentSha256: "a".repeat(64),
+      model: "qwen3.7-plus",
+      requestId: "request-2",
+      durationMs: 100,
+      frameCount: 4,
+      sampling: { maxFrameGapMs: 250, sourceTimestampsMs: [0, 250, 500, 750] },
+      labelMappings: [],
+      raw: {
+        video_summary: "原候选",
+        scene: { coarse_label: "室内", fine_label: "厨房", confidence: 0.9 },
+      },
+      effective: {
+        video_summary: "原候选",
+        scene: { coarse_label: "室内", fine_label: "厨房", confidence: 0.9 },
+        tasks: [],
+      },
+      validation: { errors: [], warnings: [] },
+      reviewReasons: ["需要人工修正"],
+    };
+    vi.mocked(reviewSubmissionQuality).mockResolvedValue(submission);
+    renderAdminWithSubmissions([submission]);
+
+    await user.click(await screen.findByRole("button", { name: "复核" }));
+    await user.selectOptions(
+      screen.getByLabelText("候选内容标注结论"),
+      "corrected",
+    );
+    const correction = {
+      schema_version: "ego_video_annotation_v2",
+      video_id: "SUB-ANNOTATION-CORRECTION",
+    };
+    fireEvent.change(screen.getByLabelText("修正后的结构化标注 JSON"), {
+      target: { value: JSON.stringify(correction) },
+    });
+    await user.type(screen.getByLabelText("调整原因"), "核对原视频后修正漏标");
+    await user.click(screen.getByRole("button", { name: "保存调整" }));
+
+    await waitFor(() =>
+      expect(reviewSubmissionQuality).toHaveBeenCalledWith(
+        "SUB-ANNOTATION-CORRECTION",
+        expect.objectContaining({
+          annotationDecision: "accepted",
+          annotationCorrection: correction,
+        }),
+      ),
+    );
+  });
+
+  it("reopens the persisted human correction instead of the stale model JSON", async () => {
+    const user = userEvent.setup();
+    const submission = backendSubmission({ id: "SUB-ANNOTATION-REOPEN" });
+    submission.quality!.candidateAnnotation = {
+      status: "review_required",
+      schemaVersion: "ego_video_annotation_v2",
+      policyVersion: "ego_annotation_evidence_policy_v2",
+      promptVersion: "ego_video_annotation_prompt_v2",
+      promptContentSha256: "a".repeat(64),
+      model: "qwen3.7-plus",
+      requestId: "request-3",
+      durationMs: 100,
+      frameCount: 4,
+      sampling: { maxFrameGapMs: 250, sourceTimestampsMs: [0, 250, 500, 750] },
+      labelMappings: [],
+      raw: {
+        schema_version: "ego_video_annotation_v2",
+        video_id: submission.id,
+        video_summary: "模型原始结果",
+        scene: { coarse_label: "室内", fine_label: "厨房", confidence: 0.9 },
+      },
+      effective: {
+        video_summary: "模型原始结果",
+        scene: { coarse_label: "室内", fine_label: "厨房", confidence: 0.9 },
+        tasks: [],
+      },
+      validation: { errors: [], warnings: [] },
+      reviewReasons: ["需要人工修正"],
+    };
+    submission.quality!.annotationReview = {
+      decision: "accepted",
+      reason: "人工已修正",
+      reviewedByAccountId: "U-ADMIN",
+      reviewedByName: "管理员",
+      reviewedAt: Date.now(),
+      candidateSchemaVersion: "ego_video_annotation_v2",
+      candidatePolicyVersion: "ego_annotation_evidence_policy_v2",
+      candidatePromptVersion: "ego_video_annotation_prompt_v2",
+      candidatePromptContentSha256: "a".repeat(64),
+      correctedAnnotation: {
+        source: "human_correction",
+        schemaVersion: "ego_video_annotation_v2",
+        policyVersion: "ego_annotation_evidence_policy_v2",
+        raw: {
+          schema_version: "ego_video_annotation_v2",
+          video_id: submission.id,
+          video_summary: "人工修正结果",
+        },
+        effective: { video_id: submission.id, video_summary: "人工修正结果" },
+        labelMappings: [],
+        validation: { errors: [], warnings: [] },
+      },
+    };
+    renderAdminWithSubmissions([submission]);
+
+    await user.click(await screen.findByRole("button", { name: "复核" }));
+
+    expect(screen.getByLabelText("候选内容标注结论")).toHaveValue("corrected");
+    const correctionText = (
+      screen.getByLabelText(
+        "修正后的结构化标注 JSON",
+      ) as HTMLTextAreaElement
+    ).value;
+    expect(correctionText).toContain("人工修正结果");
+    expect(correctionText).not.toContain("模型原始结果");
   });
 
   it("clears a near-duplicate candidate from the review drawer", async () => {

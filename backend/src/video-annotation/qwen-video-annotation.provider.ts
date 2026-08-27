@@ -12,15 +12,29 @@ import {
 } from "./video-annotation.js";
 
 type Fetcher = typeof fetch;
+const MAX_ANNOTATION_FRAME_COUNT = 80;
+
+type ModelUsage = {
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+};
+
+type ModelCallResult = {
+  content: string;
+  requestId: string | null;
+  responseModel: string | null;
+  usage?: ModelUsage;
+};
+
+type ChatContentPart =
+  | { type: "video"; video: string[] }
+  | { type: "image_url"; image_url: { url: string } }
+  | { type: "text"; text: string };
 
 type ChatMessage = {
   role: "system" | "user" | "assistant";
-  content:
-    | string
-    | Array<
-        | { type: "video"; video: string[] }
-        | { type: "text"; text: string }
-      >;
+  content: string | ChatContentPart[];
 };
 
 export type VideoAnnotationRequest = {
@@ -53,6 +67,17 @@ export class VideoAnnotationProviderError extends Error {
 
 function stripTrailingSlash(value: string): string {
   return value.replace(/\/+$/u, "");
+}
+
+function annotationFrames(frames: TimestampedFrame[]): TimestampedFrame[] {
+  if (frames.length <= MAX_ANNOTATION_FRAME_COUNT) return frames;
+  const selected = new Set<number>();
+  for (let index = 0; index < MAX_ANNOTATION_FRAME_COUNT; index += 1) {
+    selected.add(
+      Math.round((index * (frames.length - 1)) / (MAX_ANNOTATION_FRAME_COUNT - 1)),
+    );
+  }
+  return [...selected].map((index) => frames[index]!);
 }
 
 function safeError(value: unknown): string {
@@ -117,6 +142,63 @@ function responseContent(document: unknown): string {
       .join("");
   }
   throw new Error("百炼候选标注响应 content 类型无效");
+}
+
+function nonNegativeInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : null;
+}
+
+function responseModel(document: unknown): string | null {
+  return document &&
+    typeof document === "object" &&
+    "model" in document &&
+    typeof document.model === "string"
+    ? document.model
+    : null;
+}
+
+function responseUsage(document: unknown): ModelUsage | undefined {
+  if (
+    !document ||
+    typeof document !== "object" ||
+    !("usage" in document) ||
+    !document.usage ||
+    typeof document.usage !== "object"
+  ) {
+    return undefined;
+  }
+  const usage = document.usage;
+  return {
+    promptTokens:
+      "prompt_tokens" in usage
+        ? nonNegativeInteger(usage.prompt_tokens)
+        : null,
+    completionTokens:
+      "completion_tokens" in usage
+        ? nonNegativeInteger(usage.completion_tokens)
+        : null,
+    totalTokens:
+      "total_tokens" in usage
+        ? nonNegativeInteger(usage.total_tokens)
+        : null,
+  };
+}
+
+function mergeUsage(
+  first: ModelUsage | undefined,
+  second: ModelUsage | undefined,
+): ModelUsage | undefined {
+  if (!first) return second;
+  if (!second) return undefined;
+  const sum = (left: number | null, right: number | null): number | null =>
+    left === null || right === null ? null : left + right;
+  return {
+    promptTokens: sum(first.promptTokens, second.promptTokens),
+    completionTokens: sum(first.completionTokens, second.completionTokens),
+    totalTokens: sum(first.totalTokens, second.totalTokens),
+  };
 }
 
 function schemaIssues(error: unknown): string[] {
@@ -230,11 +312,15 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
         null,
       );
     }
+    const selectedFrames = annotationFrames(request.frames);
+    const selectedRequest = { ...request, frames: selectedFrames };
     const startedAt = Date.now();
-    const messages = this.analysisMessages(request);
+    const messages = this.analysisMessages(selectedRequest);
     const first = await this.call(messages, signal);
     let raw;
     let finalRequestId = first.requestId;
+    let finalResponseModel = first.responseModel;
+    let totalUsage = first.usage;
     try {
       raw = parseRawVideoAnnotation(extractJson(first.content));
     } catch (error) {
@@ -247,7 +333,7 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
             {
               type: "text",
               text: [
-                "上一个输出不符合 ego_video_annotation_v1。只返回修正后的合法 JSON。",
+                `上一个输出不符合 ${this.options.prompt.outputSchema}。只返回修正后的合法 JSON。`,
                 ...schemaIssues(error).slice(0, 20),
                 `output_contract=${JSON.stringify(this.options.prompt.outputExample)}`,
               ].join("\n"),
@@ -257,6 +343,8 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
       ];
       const repaired = await this.call(repairMessages, signal);
       finalRequestId = repaired.requestId;
+      finalResponseModel = repaired.responseModel;
+      totalUsage = mergeUsage(first.usage, repaired.usage);
       try {
         raw = parseRawVideoAnnotation(extractJson(repaired.content));
       } catch (repairError) {
@@ -276,32 +364,44 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
     }
     return normalizeVideoAnnotation({
       raw,
-      frames: request.frames,
+      frames: selectedFrames,
       durationMs: request.durationMs,
       promptVersion: this.options.prompt.promptVersion,
       promptContentSha256: this.options.prompt.contentSha256,
       model: this.options.prompt.model,
+      responseModel: finalResponseModel,
       requestId: finalRequestId,
       modelDurationMs: Date.now() - startedAt,
+      ...(totalUsage ? { usage: totalUsage } : {}),
       enabledLabels: request.enabledLabels,
     });
   }
 
   private analysisMessages(request: VideoAnnotationRequest): ChatMessage[] {
+    const frameContent: ChatContentPart[] = request.frames.flatMap(
+      (frame, frameIndex): ChatContentPart[] => [
+        {
+          type: "text",
+          text: `FRAME ${frameIndex} | timestamp_ms=${frame.timestampMs}`,
+        },
+        { type: "image_url", image_url: { url: frame.dataUrl } },
+      ],
+    );
     return [
       { role: "system", content: this.options.prompt.systemPrompt },
       {
         role: "user",
         content: [
-          {
-            type: "video",
-            video: request.frames.map((frame) => frame.dataUrl),
-          },
+          ...frameContent,
           {
             type: "text",
             text: JSON.stringify({
               video_id: request.videoId,
               duration_ms: request.durationMs,
+              frame_manifest: request.frames.map((frame, frameIndex) => ({
+                frame_index: frameIndex,
+                timestamp_ms: frame.timestampMs,
+              })),
               frame_timestamps_ms: request.frames.map(
                 (frame) => frame.timestampMs,
               ),
@@ -325,7 +425,7 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
   private async call(
     messages: ChatMessage[],
     signal?: AbortSignal,
-  ): Promise<{ content: string; requestId: string | null }> {
+  ): Promise<ModelCallResult> {
     const delays = [0, 500, 1_500];
     let lastError: unknown;
     for (let attempt = 0; attempt < delays.length; attempt += 1) {
@@ -349,6 +449,7 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
             stream: false,
             enable_thinking: false,
             temperature: 0,
+            max_tokens: 8_000,
             response_format: { type: "json_object" },
           }),
           signal: requestSignal,
@@ -368,9 +469,12 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
           throw error;
         }
         const document = (await response.json()) as unknown;
+        const usage = responseUsage(document);
         return {
           content: responseContent(document),
           requestId: responseRequestId(response, document),
+          responseModel: responseModel(document),
+          ...(usage ? { usage } : {}),
         };
       } catch (error) {
         if (signal?.aborted) throw signal.reason;

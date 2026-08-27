@@ -79,17 +79,31 @@ export type BackendVideoAnnotationTask = {
   task_verb: string;
   task_object: string;
   evidence_level: "direct_visual" | "partially_inferred" | "uncertain";
+  execution_pattern?: "single_goal" | "repeated_cycles" | "continuous_operation" | "uncertain";
   evidence_timestamps_ms: number[];
   manipulated_objects: string[];
   tools: string[];
   hand_mode: string;
+  atomic_action_sequence?: Array<{
+    order: number;
+    verb: string;
+    object: string;
+    evidence_timestamps_ms: number[];
+  }>;
   interaction_primitives: string[];
   completion: "complete" | "incomplete" | "partial" | "uncertain";
+  result_observability?: "visible" | "partial" | "not_visible";
   result_status: "success" | "failure" | "partial" | "not_applicable" | "unknown";
+  result_evidence_type?: "direct_visible_postcondition" | "action_completion_only" | "contextual_inference" | "not_observed";
+  visible_postcondition?: string;
+  result_evidence_timestamps_ms?: number[];
+  failure_recovery?: string;
+  complexity_signals?: string[];
   confidence: number;
   effective_completion: "complete" | "incomplete" | "partial" | "uncertain";
   effective_result_status: "success" | "failure" | "partial" | "not_applicable" | "unknown";
   effective_failure_recovery: string;
+  effective_complexity_signals?: string[];
   policy_reasons: string[];
 };
 
@@ -110,9 +124,15 @@ export type BackendVideoAnnotationCandidate =
       promptVersion: string;
       promptContentSha256: string;
       model: string;
+      responseModel?: string | null;
       requestId: string | null;
       durationMs: number;
       frameCount: number;
+      usage?: {
+        promptTokens: number | null;
+        completionTokens: number | null;
+        totalTokens: number | null;
+      };
       sampling: {
         maxFrameGapMs: number | null;
         sourceTimestampsMs: number[];
@@ -125,7 +145,7 @@ export type BackendVideoAnnotationCandidate =
         labelName: string | null;
         confidence: number;
       }>;
-      raw: {
+      raw: Record<string, unknown> & {
         video_summary: string;
         scene: {
           coarse_label: string | null;
@@ -135,12 +155,24 @@ export type BackendVideoAnnotationCandidate =
       };
       effective: {
         video_summary: string;
+        temporal_structure_type?: string;
+        model_assessability?: "assessable" | "needs_review";
+        assessability_reason?: string;
         scene: {
           coarse_label: string | null;
           fine_label: string | null;
           confidence: number;
         };
         tasks: BackendVideoAnnotationTask[];
+        coverage_segments?: Array<{
+          start_ms: number;
+          end_ms: number;
+          segment_type: "task" | "transition" | "unclear";
+          linked_task_index: number | null;
+          visible_activity: string;
+          evidence_timestamps_ms: number[];
+        }>;
+        uncertain_fields?: string[];
       };
       validation: { errors: string[]; warnings: string[] };
       reviewReasons: string[];
@@ -220,6 +252,15 @@ export type BackendQualityResult = {
     candidatePolicyVersion: string | null;
     candidatePromptVersion: string | null;
     candidatePromptContentSha256: string | null;
+    correctedAnnotation?: {
+      source: "human_correction";
+      schemaVersion: string;
+      policyVersion: string;
+      raw: Record<string, unknown>;
+      effective: Record<string, unknown>;
+      labelMappings: unknown[];
+      validation: { errors: string[]; warnings: string[] };
+    };
   };
   startedAt?: number;
   completedAt?: number;
@@ -341,6 +382,7 @@ export type ReviewSubmissionQualityInput = {
   expectedReviewRevision?: number;
   quarantine?: boolean;
   annotationDecision?: "accepted" | "needs_correction";
+  annotationCorrection?: Record<string, unknown>;
 };
 
 export type RerunAiQualityInput = {

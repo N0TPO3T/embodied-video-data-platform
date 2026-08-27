@@ -144,15 +144,22 @@ pnpm start:local
 
 完整视频处理应使用 `docker compose up -d --build`，因为 `media-worker` 和 `ai-quality-worker` 容器均已包含 FFprobe/FFmpeg。正式 AI Worker 默认只启动一个实例，总并发固定为 2。
 
-### 独立 AI 视频质检实验页
+### 独立 AI 视频质检与融合标注实验页
 
 只验证 AI 视频质检时，不需要启动 PostgreSQL、MinIO、RabbitMQ 或 Qdrant。根目录 `.env` 配置百炼 `QWEN_API_KEY` 和工作空间专属 `QWEN_BASE_URL` 后运行：
 
 ```bash
-docker compose --profile ai-test up --build ai-quality-lab
+docker compose --profile ai-test up --build ai-quality-lab ai-annotation-lab
 ```
 
-打开 `http://localhost:4010`，可一次选择多个 MP4/MOV；浏览器和服务端都最多同时处理 2 条。页面使用 `docs/quality/` 中的 `video_qc_v1` 评分规则与 `qwen_video_qc_prompt_v2` 提示词，初检固定调用 `qwen3.7-plus`，满足复核条件时调用 `qwen3.7-flash`。系统提示词可直接在页面编辑并发布新版本；每个新任务会锁定创建时的提示词版本，之后的修改不会影响已上传或历史任务。
+两个实验入口使用相同视频上传方式，但任务历史和结果完全隔离：
+
+- `http://127.0.0.1:4010`：原业务 AI 质检基线，只运行 D1–D5、条件复核和服务端规则复算。
+- `http://127.0.0.1:4011`：融合 AI 标注实验页，对同一视频并行运行原业务质检与 `ego_video_annotation_v2` 结构化语义标注，后者不参与质检分数或结算。
+
+v2 标注会输出任务粒度、执行模式、原子步骤、手物交互、完成度、可见结果、失败恢复、复杂度信号和逐采样点 coverage；服务端会复算证据一致性，稀疏证据默认进入人工复核。业务复核可原样接受、退回修正，或提交修正后的 v2 JSON；只有通过服务端校验且人工接受的候选/修正版才会进入交付快照。
+
+两个页面均可一次选择多个 MP4/MOV；浏览器和服务端都最多同时处理 2 条。业务质检提示词可直接在页面编辑并发布新版本；每个新任务会锁定创建时的提示词版本，之后的修改不会影响已上传或历史任务。融合结构化标注使用仓库中版本化的独立提示词，并在结果 JSON 中记录 Prompt、Schema、证据策略和模型版本。
 
 实验模式不写正式数据库。每次上传由服务端生成固定的 `LAB-...` 任务 ID；页面刷新后会从本地历史恢复，容器重启后仍可查询。点击左侧历史任务即可在右侧切换对应评分详情，任务缩略卡会显示总分。任务状态、评分结果、当前提示词和脱敏百炼调用诊断通过 Docker 命名卷持久化，任务数据保留 30 天，也可以在页面手动删除并下载单项或整批 JSON。诊断包含每次尝试的阶段、模型、耗时、HTTP 状态、百炼 `request_id` 和底层网络错误码，但不保存 API Key、Authorization 请求头、Base64 帧、请求正文或完整模型回复。
 
@@ -166,7 +173,7 @@ docker compose --profile ai-test run --rm ai-quality-lab \
   /samples/file/27622_60.mp4 --confirm-paid-call
 ```
 
-停止实验页使用 `docker compose --profile ai-test stop ai-quality-lab`。当前 API Key 曾通过明文渠道提供，完成联调后应在百炼控制台轮换。
+停止实验页使用 `docker compose --profile ai-test stop ai-quality-lab ai-annotation-lab`。当前 API Key 曾通过明文渠道提供，完成联调后应在百炼控制台轮换。
 
 旧 D1 账号只在首次迁移时读取，运行期不再提供 D1 接口。迁移命令会保留账号 ID、角色和团队归属，把旧原型密码立即转换为 Argon2id，并跳过旧会话：
 

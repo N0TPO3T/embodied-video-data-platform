@@ -2,8 +2,13 @@ import { z } from "zod";
 
 import type { TimestampedFrame } from "../video-quality/video-quality.types.js";
 
-export const VIDEO_ANNOTATION_SCHEMA_VERSION = "ego_video_annotation_v1" as const;
+export const VIDEO_ANNOTATION_SCHEMA_VERSION = "ego_video_annotation_v2" as const;
 export const VIDEO_ANNOTATION_POLICY_VERSION =
+  "ego_annotation_evidence_policy_v2" as const;
+
+export const LEGACY_VIDEO_ANNOTATION_SCHEMA_VERSION =
+  "ego_video_annotation_v1" as const;
+export const LEGACY_VIDEO_ANNOTATION_POLICY_VERSION =
   "ego_annotation_evidence_policy_v1" as const;
 
 export const TASK_VERBS = [
@@ -33,11 +38,12 @@ export const TASK_VERBS = [
   "uncertain",
 ] as const;
 
-export const INTERACTION_PRIMITIVES = [
+export const ATOMIC_ACTION_VERBS = [
   "grasp",
-  "pinch",
   "hold",
-  "support",
+  "release",
+  "move",
+  "carry",
   "place",
   "push",
   "pull",
@@ -45,14 +51,70 @@ export const INTERACTION_PRIMITIVES = [
   "twist",
   "insert",
   "remove",
+  "open",
+  "close",
+  "rub_or_wipe",
   "cut",
   "pour",
+  "fold",
+  "unfold",
+  "squeeze",
+  "spray",
+  "align",
+  "assemble",
+  "disassemble",
+  "adjust",
+  "other_visible_action",
+  "uncertain",
+] as const;
+
+export const INTERACTION_PRIMITIVES = [
+  "grasp",
+  "pinch",
+  "hold",
+  "support",
+  "release",
+  "push",
+  "pull",
+  "press",
+  "twist",
+  "insert",
+  "remove",
   "rub_or_wipe",
-  "other",
+  "squeeze",
+  "bimanual_fix_and_operate",
+  "other_visible_contact",
+] as const;
+
+export const EXECUTION_PATTERNS = [
+  "single_goal",
+  "repeated_cycles",
+  "continuous_operation",
+  "uncertain",
+] as const;
+
+export const COMPLEXITY_SIGNALS = [
+  "bimanual_coordination",
+  "tool_use",
+  "precision_alignment",
+  "fine_finger_control",
+  "deformable_object",
+  "multi_step",
+  "visible_state_change",
+  "failure_recovery_value",
 ] as const;
 
 const boundedConfidence = z.number().finite().min(0).max(1);
 const nonNegativeTime = z.number().finite().nonnegative();
+
+const rawAtomicActionSchema = z
+  .object({
+    order: z.number().int().min(1),
+    verb: z.enum(ATOMIC_ACTION_VERBS),
+    object: z.string().max(200),
+    evidence_timestamps_ms: z.array(nonNegativeTime).min(1).max(8),
+  })
+  .strict();
 
 const rawTaskSchema = z
   .object({
@@ -66,7 +128,8 @@ const rawTaskSchema = z
       "partially_inferred",
       "uncertain",
     ]),
-    evidence_timestamps_ms: z.array(nonNegativeTime).max(20),
+    execution_pattern: z.enum(EXECUTION_PATTERNS),
+    evidence_timestamps_ms: z.array(nonNegativeTime).min(1).max(20),
     manipulated_objects: z.array(z.string().min(1).max(120)).max(30),
     tools: z.array(z.string().min(1).max(120)).max(20),
     hand_mode: z.enum([
@@ -76,6 +139,7 @@ const rawTaskSchema = z
       "unclear",
       "no_hand_visible",
     ]),
+    atomic_action_sequence: z.array(rawAtomicActionSchema).max(30),
     interaction_primitives: z.array(z.enum(INTERACTION_PRIMITIVES)).max(20),
     completion: z.enum(["complete", "incomplete", "partial", "uncertain"]),
     result_observability: z.enum(["visible", "partial", "not_visible"]),
@@ -86,17 +150,38 @@ const rawTaskSchema = z
       "not_applicable",
       "unknown",
     ]),
+    result_evidence_type: z.enum([
+      "direct_visible_postcondition",
+      "action_completion_only",
+      "contextual_inference",
+      "not_observed",
+    ]),
     visible_postcondition: z.string().max(500),
     result_evidence_timestamps_ms: z.array(nonNegativeTime).max(20),
     failure_recovery: z.enum([
       "none_observed",
       "failure_without_recovery",
       "failure_then_recovery",
+      "possible_failure",
       "ambiguous",
       "not_assessable",
     ]),
+    failure_evidence_timestamps_ms: z.array(nonNegativeTime).max(20),
+    recovery_evidence_timestamps_ms: z.array(nonNegativeTime).max(20),
+    complexity_signals: z.array(z.enum(COMPLEXITY_SIGNALS)).max(20),
     uncertainty_reasons: z.array(z.string().min(1).max(500)).max(20),
     confidence: boundedConfidence,
+  })
+  .strict();
+
+const rawCoverageSegmentSchema = z
+  .object({
+    start_ms: nonNegativeTime,
+    end_ms: nonNegativeTime,
+    segment_type: z.enum(["task", "transition", "unclear"]),
+    linked_task_index: z.number().int().min(0).nullable(),
+    visible_activity: z.string().min(1).max(500),
+    evidence_timestamps_ms: z.array(nonNegativeTime).min(1).max(100),
   })
   .strict();
 
@@ -119,7 +204,11 @@ export const rawVideoAnnotationSchema = z
       "continuous_repetitive",
       "unclear",
     ]),
+    model_assessability: z.enum(["assessable", "needs_review"]),
+    assessability_reason: z.string().min(1).max(1_000),
     tasks: z.array(rawTaskSchema).max(100),
+    coverage_segments: z.array(rawCoverageSegmentSchema).min(1).max(200),
+    uncertain_fields: z.array(z.string().min(1).max(300)).max(100),
     global_limitations: z.array(z.string().min(1).max(500)).max(30),
   })
   .strict();
@@ -131,6 +220,7 @@ export type EffectiveVideoAnnotationTask = RawVideoAnnotationTask & {
   effective_completion: RawVideoAnnotationTask["completion"];
   effective_result_status: RawVideoAnnotationTask["result_status"];
   effective_failure_recovery: RawVideoAnnotationTask["failure_recovery"];
+  effective_complexity_signals: RawVideoAnnotationTask["complexity_signals"];
   policy_reasons: string[];
 };
 
@@ -150,9 +240,15 @@ export type VideoAnnotationCandidateSuccess = {
   promptVersion: string;
   promptContentSha256: string;
   model: string;
+  responseModel?: string | null;
   requestId: string | null;
   durationMs: number;
   frameCount: number;
+  usage?: {
+    promptTokens: number | null;
+    completionTokens: number | null;
+    totalTokens: number | null;
+  };
   sampling: {
     maxFrameGapMs: number | null;
     sourceTimestampsMs: number[];
@@ -183,11 +279,14 @@ export type VideoAnnotationCandidate =
   | VideoAnnotationCandidateSuccess
   | VideoAnnotationCandidateFailure;
 
-function maxFrameGapMs(frames: TimestampedFrame[]): number | null {
-  if (frames.length < 2) return null;
-  const timestamps = frames
-    .map((frame) => frame.timestampMs)
-    .sort((left, right) => left - right);
+function sortedUniqueTimestamps(frames: TimestampedFrame[]): number[] {
+  return [...new Set(frames.map((frame) => frame.timestampMs))].sort(
+    (left, right) => left - right,
+  );
+}
+
+function maxFrameGapMsFromTimestamps(timestamps: number[]): number | null {
+  if (timestamps.length < 2) return null;
   let maximum = 0;
   for (let index = 1; index < timestamps.length; index += 1) {
     maximum = Math.max(maximum, timestamps[index]! - timestamps[index - 1]!);
@@ -195,11 +294,184 @@ function maxFrameGapMs(frames: TimestampedFrame[]): number | null {
   return maximum;
 }
 
-function timestampHasSourceEvidence(
-  timestampMs: number,
-  sourceTimestamps: Set<number>,
-): boolean {
-  return sourceTimestamps.has(timestampMs);
+function evidenceTimestampErrors(input: {
+  timestamps: number[];
+  sourceTimestamps: Set<number>;
+  context: string;
+  errors: string[];
+  startMs?: number;
+  endMs?: number;
+}): void {
+  const seen = new Set<number>();
+  for (const timestamp of input.timestamps) {
+    if (seen.has(timestamp)) {
+      input.errors.push(`${input.context} 重复引用证据时间点 ${timestamp}`);
+    }
+    seen.add(timestamp);
+    if (!input.sourceTimestamps.has(timestamp)) {
+      input.errors.push(`${input.context} 引用了未提供的证据时间点 ${timestamp}`);
+    }
+    if (
+      input.startMs !== undefined &&
+      input.endMs !== undefined &&
+      (timestamp < input.startMs || timestamp > input.endMs)
+    ) {
+      input.errors.push(`${input.context} 的证据时间点 ${timestamp} 不在区间内`);
+    }
+  }
+}
+
+function effectiveComplexitySignals(
+  task: RawVideoAnnotationTask,
+  effectiveRecovery: RawVideoAnnotationTask["failure_recovery"],
+  warnings: string[],
+  context: string,
+): RawVideoAnnotationTask["complexity_signals"] {
+  const signals = new Set(task.complexity_signals);
+  const synchronize = (
+    signal: RawVideoAnnotationTask["complexity_signals"][number],
+    expected: boolean,
+  ) => {
+    if (expected && !signals.has(signal)) {
+      signals.add(signal);
+      warnings.push(`${context} 已按结构化事实补充复杂度信号 ${signal}`);
+    }
+    if (!expected && signals.delete(signal)) {
+      warnings.push(`${context} 已移除缺少结构化依据的复杂度信号 ${signal}`);
+    }
+  };
+  synchronize("tool_use", task.tools.length > 0);
+  synchronize("multi_step", task.atomic_action_sequence.length >= 3);
+  synchronize("failure_recovery_value", effectiveRecovery === "failure_then_recovery");
+  if (
+    signals.has("bimanual_coordination") &&
+    task.hand_mode !== "both"
+  ) {
+    signals.delete("bimanual_coordination");
+    warnings.push(
+      `${context} 已移除与 hand_mode 冲突的复杂度信号 bimanual_coordination`,
+    );
+  }
+  return [...signals];
+}
+
+function validateCoverage(input: {
+  raw: RawVideoAnnotation;
+  sourceTimestamps: number[];
+  sourceTimestampSet: Set<number>;
+  durationMs: number;
+  errors: string[];
+}): void {
+  const coverageCounts = new Map(
+    input.sourceTimestamps.map((timestamp) => [timestamp, 0]),
+  );
+  const sourcePositions = new Map(
+    input.sourceTimestamps.map((timestamp, index) => [timestamp, index]),
+  );
+  const linkedTasksByTimestamp = new Map<number, Set<number>>();
+  let previousEndPosition = -1;
+  for (const [index, segment] of input.raw.coverage_segments.entries()) {
+    const context = `coverage_segments[${index}]`;
+    if (segment.end_ms < segment.start_ms) {
+      input.errors.push(`${context} 时间区间无效`);
+    }
+    if (segment.end_ms > input.durationMs) {
+      input.errors.push(`${context} 结束时间超出视频时长`);
+    }
+    if (segment.segment_type === "task") {
+      if (
+        segment.linked_task_index === null ||
+        segment.linked_task_index >= input.raw.tasks.length
+      ) {
+        input.errors.push(`${context} 未绑定有效任务索引`);
+      } else {
+        const linkedTask = input.raw.tasks[segment.linked_task_index];
+        if (
+          linkedTask &&
+          (segment.start_ms < linkedTask.start_ms ||
+            segment.end_ms > linkedTask.end_ms)
+        ) {
+          input.errors.push(`${context} 超出所绑定任务的时间区间`);
+        }
+      }
+    } else if (segment.linked_task_index !== null) {
+      input.errors.push(`${context} 非任务区间不得绑定任务索引`);
+    }
+    evidenceTimestampErrors({
+      timestamps: segment.evidence_timestamps_ms,
+      sourceTimestamps: input.sourceTimestampSet,
+      context,
+      errors: input.errors,
+      startMs: segment.start_ms,
+      endMs: segment.end_ms,
+    });
+    const positions = segment.evidence_timestamps_ms.flatMap((timestamp) => {
+      const position = sourcePositions.get(timestamp);
+      return position === undefined ? [] : [position];
+    });
+    if (
+      positions.some(
+        (position, positionIndex) =>
+          positionIndex > 0 && position !== positions[positionIndex - 1]! + 1,
+      )
+    ) {
+      input.errors.push(`${context} 的证据帧必须按时间连续且递增`);
+    }
+    if (positions.length > 0) {
+      const firstPosition = positions[0]!;
+      const lastPosition = positions.at(-1)!;
+      if (firstPosition !== previousEndPosition + 1) {
+        input.errors.push(`${context} 与前一 coverage 区间不连续或顺序错误`);
+      }
+      previousEndPosition = lastPosition;
+      if (
+        segment.start_ms !== input.sourceTimestamps[firstPosition] ||
+        segment.end_ms !== input.sourceTimestamps[lastPosition]
+      ) {
+        input.errors.push(`${context} 的边界必须等于首尾证据时间点`);
+      }
+    }
+    for (const timestamp of new Set(segment.evidence_timestamps_ms)) {
+      if (coverageCounts.has(timestamp)) {
+        coverageCounts.set(timestamp, (coverageCounts.get(timestamp) ?? 0) + 1);
+      }
+      if (
+        segment.segment_type === "task" &&
+        segment.linked_task_index !== null &&
+        segment.linked_task_index < input.raw.tasks.length
+      ) {
+        const linked = linkedTasksByTimestamp.get(timestamp) ?? new Set<number>();
+        linked.add(segment.linked_task_index);
+        linkedTasksByTimestamp.set(timestamp, linked);
+      }
+    }
+  }
+  for (const [timestamp, count] of coverageCounts) {
+    if (count === 0) input.errors.push(`采样证据时间点 ${timestamp} 未被 coverage 覆盖`);
+    if (count > 1) input.errors.push(`采样证据时间点 ${timestamp} 被 coverage 重复覆盖`);
+  }
+  for (const [taskIndex, task] of input.raw.tasks.entries()) {
+    for (const timestamp of task.evidence_timestamps_ms) {
+      if (!linkedTasksByTimestamp.get(timestamp)?.has(taskIndex)) {
+        input.errors.push(
+          `tasks[${taskIndex}] 的证据时间点 ${timestamp} 未被对应 task coverage 覆盖`,
+        );
+      }
+    }
+  }
+}
+
+function taskEvidenceSubsetErrors(input: {
+  taskEvidence: Set<number>;
+  timestamps: number[];
+  context: string;
+  errors: string[];
+}): void {
+  for (const timestamp of input.timestamps) {
+    if (!input.taskEvidence.has(timestamp)) {
+      input.errors.push(`${input.context} 的时间点 ${timestamp} 未列入任务主证据`);
+    }
+  }
 }
 
 export function normalizeVideoAnnotation(input: {
@@ -209,8 +481,15 @@ export function normalizeVideoAnnotation(input: {
   promptVersion: string;
   promptContentSha256: string;
   model: string;
+  responseModel?: string | null;
   requestId: string | null;
   modelDurationMs: number;
+  usage?: {
+    promptTokens: number | null;
+    completionTokens: number | null;
+    totalTokens: number | null;
+  };
+  applySparseEvidencePolicy?: boolean;
   enabledLabels?: Array<{
     id: string;
     name: string;
@@ -220,43 +499,127 @@ export function normalizeVideoAnnotation(input: {
   const errors: string[] = [];
   const warnings: string[] = [];
   const reviewReasons: string[] = [];
-  const sourceTimestamps = new Set(
-    input.frames.map((frame) => frame.timestampMs),
-  );
-  const gapMs = maxFrameGapMs(input.frames);
+  const sourceTimestamps = sortedUniqueTimestamps(input.frames);
+  const sourceTimestampSet = new Set(sourceTimestamps);
+  const gapMs = maxFrameGapMsFromTimestamps(sourceTimestamps);
+  const applySparseEvidencePolicy = input.applySparseEvidencePolicy ?? true;
+
+  if (sourceTimestamps.some((timestamp) => timestamp > input.durationMs)) {
+    errors.push("输入采样时间点超出视频时长");
+  }
 
   if (input.raw.video_id !== input.raw.video_id.trim()) {
     errors.push("video_id 包含首尾空白");
   }
 
+  validateCoverage({
+    raw: input.raw,
+    sourceTimestamps,
+    sourceTimestampSet,
+    durationMs: input.durationMs,
+    errors,
+  });
+
   const effectiveTasks = input.raw.tasks.map((task, taskIndex) => {
     const reasons: string[] = [];
     const context = `tasks[${taskIndex}]`;
-    if (task.end_ms <= task.start_ms) {
-      errors.push(`${context} 时间区间无效`);
+    if (task.end_ms <= task.start_ms) errors.push(`${context} 时间区间无效`);
+    if (
+      !sourceTimestampSet.has(task.start_ms) ||
+      !sourceTimestampSet.has(task.end_ms)
+    ) {
+      errors.push(`${context} 的边界必须引用输入采样时间点`);
     }
     if (task.end_ms > input.durationMs) {
       errors.push(`${context} 结束时间超出视频时长`);
     }
-    for (const timestamp of task.evidence_timestamps_ms) {
-      if (timestamp < task.start_ms || timestamp > task.end_ms) {
-        errors.push(`${context} 的任务证据不在任务区间内`);
+    evidenceTimestampErrors({
+      timestamps: task.evidence_timestamps_ms,
+      sourceTimestamps: sourceTimestampSet,
+      context: `${context}.evidence_timestamps_ms`,
+      errors,
+      startMs: task.start_ms,
+      endMs: task.end_ms,
+    });
+    const taskEvidence = new Set(task.evidence_timestamps_ms);
+    taskEvidenceSubsetErrors({
+      taskEvidence,
+      timestamps: task.result_evidence_timestamps_ms,
+      context: `${context}.result_evidence_timestamps_ms`,
+      errors,
+    });
+    taskEvidenceSubsetErrors({
+      taskEvidence,
+      timestamps: task.failure_evidence_timestamps_ms,
+      context: `${context}.failure_evidence_timestamps_ms`,
+      errors,
+    });
+    taskEvidenceSubsetErrors({
+      taskEvidence,
+      timestamps: task.recovery_evidence_timestamps_ms,
+      context: `${context}.recovery_evidence_timestamps_ms`,
+      errors,
+    });
+    evidenceTimestampErrors({
+      timestamps: task.result_evidence_timestamps_ms,
+      sourceTimestamps: sourceTimestampSet,
+      context: `${context}.result_evidence_timestamps_ms`,
+      errors,
+      startMs: task.start_ms,
+      endMs: task.end_ms,
+    });
+    evidenceTimestampErrors({
+      timestamps: task.failure_evidence_timestamps_ms,
+      sourceTimestamps: sourceTimestampSet,
+      context: `${context}.failure_evidence_timestamps_ms`,
+      errors,
+      startMs: task.start_ms,
+      endMs: task.end_ms,
+    });
+    evidenceTimestampErrors({
+      timestamps: task.recovery_evidence_timestamps_ms,
+      sourceTimestamps: sourceTimestampSet,
+      context: `${context}.recovery_evidence_timestamps_ms`,
+      errors,
+      startMs: task.start_ms,
+      endMs: task.end_ms,
+    });
+
+    const actualOrders = task.atomic_action_sequence.map((action) => action.order);
+    if (actualOrders.some((order, index) => order !== index + 1)) {
+      errors.push(`${context}.atomic_action_sequence 的 order 必须从 1 连续递增`);
+    }
+    let previousActionStartMs = -1;
+    for (const [actionIndex, action] of task.atomic_action_sequence.entries()) {
+      evidenceTimestampErrors({
+        timestamps: action.evidence_timestamps_ms,
+        sourceTimestamps: sourceTimestampSet,
+        context: `${context}.atomic_action_sequence[${actionIndex}]`,
+        errors,
+        startMs: task.start_ms,
+        endMs: task.end_ms,
+      });
+      taskEvidenceSubsetErrors({
+        taskEvidence,
+        timestamps: action.evidence_timestamps_ms,
+        context: `${context}.atomic_action_sequence[${actionIndex}]`,
+        errors,
+      });
+      const actionStartMs = Math.min(...action.evidence_timestamps_ms);
+      if (actionStartMs < previousActionStartMs) {
+        errors.push(
+          `${context}.atomic_action_sequence[${actionIndex}] 的证据时间早于前一步`,
+        );
       }
-      if (!timestampHasSourceEvidence(timestamp, sourceTimestamps)) {
-        errors.push(`${context} 引用了未提供的任务证据时间点 ${timestamp}`);
+      previousActionStartMs = actionStartMs;
+      if (
+        action.evidence_timestamps_ms.length < 2 &&
+        !["hold", "grasp", "release"].includes(action.verb)
+      ) {
+        reasons.push(`atomic_action_${actionIndex}_needs_multiple_frames`);
       }
     }
-    for (const timestamp of task.result_evidence_timestamps_ms) {
-      if (timestamp < task.start_ms || timestamp > task.end_ms) {
-        errors.push(`${context} 的结果证据不在任务区间内`);
-      }
-      if (!timestampHasSourceEvidence(timestamp, sourceTimestamps)) {
-        errors.push(`${context} 引用了未提供的结果证据时间点 ${timestamp}`);
-      }
-    }
-    if (task.evidence_timestamps_ms.length === 0) {
-      reasons.push("task_missing_source_evidence");
-    }
+
     if (
       task.evidence_level === "direct_visual" &&
       task.evidence_timestamps_ms.length < 2
@@ -267,7 +630,14 @@ export function normalizeVideoAnnotation(input: {
     let effectiveCompletion = task.completion;
     let effectiveResult = task.result_status;
     let effectiveRecovery = task.failure_recovery;
-    if (gapMs !== null && gapMs > 1_000) {
+    if (
+      task.completion === "complete" &&
+      task.evidence_timestamps_ms.length < 3
+    ) {
+      effectiveCompletion = "uncertain";
+      reasons.push("complete_task_requires_start_core_end_evidence");
+    }
+    if (applySparseEvidencePolicy && gapMs !== null && gapMs > 1_000) {
       if (task.completion !== "uncertain") {
         effectiveCompletion = "uncertain";
         reasons.push("sparse_sampling_cannot_verify_completion");
@@ -284,52 +654,152 @@ export function normalizeVideoAnnotation(input: {
         reasons.push("sparse_sampling_cannot_verify_failure_recovery");
       }
     }
+
     if (
-      task.result_observability !== "visible" ||
-      task.result_evidence_timestamps_ms.length === 0
+      task.result_status === "success" ||
+      task.result_status === "failure"
     ) {
       if (
-        effectiveResult !== "unknown" &&
-        effectiveResult !== "not_applicable"
+        task.result_evidence_type !== "direct_visible_postcondition" ||
+        task.result_observability !== "visible" ||
+        task.result_evidence_timestamps_ms.length < 2
       ) {
         effectiveResult = "unknown";
+        reasons.push("result_lacks_stable_direct_postcondition_evidence");
       }
-      reasons.push("result_lacks_direct_postcondition_evidence");
+      const firstResultEvidence = Math.min(
+        ...task.result_evidence_timestamps_ms,
+      );
+      if (
+        task.result_evidence_timestamps_ms.length > 0 &&
+        !task.evidence_timestamps_ms.some(
+          (timestamp) => timestamp < firstResultEvidence,
+        )
+      ) {
+        effectiveResult = "unknown";
+        reasons.push("result_lacks_before_state_evidence");
+      }
+      if (!task.visible_postcondition.trim()) {
+        effectiveResult = "unknown";
+        reasons.push("result_missing_visible_postcondition");
+      }
+    }
+    if (
+      task.result_status === "partial" &&
+      (task.result_evidence_type !== "direct_visible_postcondition" ||
+        task.result_observability === "not_visible" ||
+        task.result_evidence_timestamps_ms.length === 0 ||
+        !task.visible_postcondition.trim())
+    ) {
+      effectiveResult = "unknown";
+      reasons.push("partial_result_lacks_direct_postcondition_evidence");
+    }
+    if (
+      task.failure_recovery === "failure_without_recovery" &&
+      task.failure_evidence_timestamps_ms.length === 0
+    ) {
+      effectiveRecovery = "not_assessable";
+      reasons.push("failure_claim_missing_evidence");
+    }
+    if (
+      (task.failure_recovery === "possible_failure" ||
+        task.failure_recovery === "ambiguous") &&
+      task.failure_evidence_timestamps_ms.length === 0
+    ) {
+      effectiveRecovery = "not_assessable";
+      reasons.push("uncertain_failure_claim_missing_evidence");
+    }
+    if (
+      task.failure_recovery === "failure_then_recovery" &&
+      (task.failure_evidence_timestamps_ms.length === 0 ||
+        task.recovery_evidence_timestamps_ms.length === 0)
+    ) {
+      effectiveRecovery = "not_assessable";
+      reasons.push("recovery_claim_missing_before_after_evidence");
+    }
+    if (
+      task.failure_recovery === "failure_then_recovery" &&
+      task.failure_evidence_timestamps_ms.length > 0 &&
+      task.recovery_evidence_timestamps_ms.length > 0 &&
+      Math.max(...task.failure_evidence_timestamps_ms) >=
+        Math.min(...task.recovery_evidence_timestamps_ms)
+    ) {
+      effectiveRecovery = "not_assessable";
+      reasons.push("failure_recovery_evidence_order_invalid");
+    }
+    if (
+      task.failure_recovery === "failure_without_recovery" &&
+      task.recovery_evidence_timestamps_ms.length > 0
+    ) {
+      effectiveRecovery = "not_assessable";
+      reasons.push("failure_without_recovery_contains_recovery_evidence");
+    }
+    if (
+      task.failure_recovery === "none_observed" &&
+      (task.failure_evidence_timestamps_ms.length > 0 ||
+        task.recovery_evidence_timestamps_ms.length > 0)
+    ) {
+      effectiveRecovery = "not_assessable";
+      reasons.push("none_observed_contains_failure_recovery_evidence");
+    }
+    if (
+      task.failure_recovery === "possible_failure" ||
+      task.failure_recovery === "ambiguous" ||
+      task.failure_recovery === "not_assessable"
+    ) {
+      reasons.push("failure_recovery_requires_human_review");
     }
     if (task.evidence_level === "uncertain" || task.confidence < 0.75) {
       reasons.push("semantic_annotation_low_confidence");
     }
+    const effectiveSignals = effectiveComplexitySignals(
+      task,
+      effectiveRecovery,
+      warnings,
+      context,
+    );
     if (reasons.length > 0) {
-      reviewReasons.push(`${context}: ${reasons.join(",")}`);
+      reviewReasons.push(`${context}: ${[...new Set(reasons)].join(",")}`);
     }
     return {
       ...task,
       effective_completion: effectiveCompletion,
       effective_result_status: effectiveResult,
       effective_failure_recovery: effectiveRecovery,
+      effective_complexity_signals: effectiveSignals,
       policy_reasons: [...new Set(reasons)],
     };
   });
 
-  for (const timestamp of input.raw.scene.evidence_timestamps_ms) {
-    if (!timestampHasSourceEvidence(timestamp, sourceTimestamps)) {
-      errors.push(`scene 引用了未提供的证据时间点 ${timestamp}`);
-    }
-  }
-  if (input.raw.scene.confidence < 0.75) {
-    reviewReasons.push("scene: low_confidence");
-  }
-  if (input.raw.tasks.length === 0) {
-    reviewReasons.push("未识别到可见任务");
-  }
-  if (gapMs !== null && gapMs > 1_000) {
+  evidenceTimestampErrors({
+    timestamps: input.raw.scene.evidence_timestamps_ms,
+    sourceTimestamps: sourceTimestampSet,
+    context: "scene.evidence_timestamps_ms",
+    errors,
+  });
+  if (input.raw.scene.confidence < 0.75) reviewReasons.push("scene: low_confidence");
+  if (input.raw.tasks.length === 0) reviewReasons.push("未识别到可见任务");
+
+  let effectiveAssessability = input.raw.model_assessability;
+  let effectiveAssessabilityReason = input.raw.assessability_reason;
+  if (applySparseEvidencePolicy && gapMs !== null && gapMs > 1_000) {
+    effectiveAssessability = "needs_review";
+    effectiveAssessabilityReason = `最大采样间隔 ${gapMs}ms，不能排除帧间短暂动作、失败或结果变化。`;
     warnings.push(
       `最大采样间隔 ${gapMs}ms，完成度、结果和失败恢复已按证据策略保守降级`,
     );
   }
   if (errors.length > 0) {
-    reviewReasons.push("候选标注证据校验未通过");
+    effectiveAssessability = "needs_review";
+    effectiveAssessabilityReason = "候选标注存在结构或证据一致性错误，必须人工修正。";
   }
+  if (effectiveAssessability === "needs_review") {
+    reviewReasons.push(`model_assessability: ${effectiveAssessabilityReason}`);
+  }
+  if (input.raw.uncertain_fields.length > 0) {
+    reviewReasons.push(`uncertain_fields: ${input.raw.uncertain_fields.join(",")}`);
+  }
+  if (errors.length > 0) reviewReasons.push("候选标注证据校验未通过");
 
   const labelMappings = mapControlledLabels(
     input.raw,
@@ -346,20 +816,26 @@ export function normalizeVideoAnnotation(input: {
     promptVersion: input.promptVersion,
     promptContentSha256: input.promptContentSha256,
     model: input.model,
+    ...(input.responseModel !== undefined
+      ? { responseModel: input.responseModel }
+      : {}),
     requestId: input.requestId,
     durationMs: input.modelDurationMs,
     frameCount: input.frames.length,
+    ...(input.usage ? { usage: input.usage } : {}),
     sampling: {
       maxFrameGapMs: gapMs,
-      sourceTimestampsMs: input.frames.map((frame) => frame.timestampMs),
+      sourceTimestampsMs: sourceTimestamps,
     },
     labelMappings,
     raw: input.raw,
     effective: {
       ...input.raw,
+      model_assessability: effectiveAssessability,
+      assessability_reason: effectiveAssessabilityReason,
       tasks: effectiveTasks,
     },
-    validation: { errors, warnings },
+    validation: { errors: [...new Set(errors)], warnings: [...new Set(warnings)] },
     reviewReasons: [...new Set(reviewReasons)],
   };
 }

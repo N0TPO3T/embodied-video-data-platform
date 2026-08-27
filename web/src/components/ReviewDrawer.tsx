@@ -100,8 +100,22 @@ export function ReviewDrawer({
     submission.assetStatus === "quarantined",
   );
   const [annotationDecision, setAnnotationDecision] = useState<
-    "" | "accepted" | "needs_correction"
-  >(submission.qualityResult?.annotationReview?.decision ?? "");
+    "" | "accepted" | "corrected" | "needs_correction"
+  >(
+    submission.qualityResult?.annotationReview?.correctedAnnotation
+      ? "corrected"
+      : submission.qualityResult?.annotationReview?.decision ?? "",
+  );
+  const [annotationCorrectionText, setAnnotationCorrectionText] = useState(() =>
+    submission.qualityResult?.candidateAnnotation?.status !== "system_failed"
+      ? JSON.stringify(
+          submission.qualityResult?.annotationReview?.correctedAnnotation?.raw ??
+            submission.qualityResult?.candidateAnnotation?.raw,
+          null,
+          2,
+        )
+      : "",
+  );
   const [issues, setIssues] = useState<IssueDraft[]>(() =>
     initialIssueDrafts(submission),
   );
@@ -217,6 +231,23 @@ export function ReviewDrawer({
       start: Number(issue.start),
       end: Number(issue.end),
     }));
+    let annotationCorrection: Record<string, unknown> | undefined;
+    if (annotationDecision === "corrected") {
+      try {
+        const parsed = JSON.parse(annotationCorrectionText) as unknown;
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error("修正标注必须是 JSON 对象");
+        }
+        annotationCorrection = parsed as Record<string, unknown>;
+      } catch (caught) {
+        setError(
+          caught instanceof Error
+            ? `修正标注 JSON 无效：${caught.message}`
+            : "修正标注 JSON 无效",
+        );
+        return;
+      }
+    }
     try {
       setSaving(true);
       if (!submission.qualityResult) {
@@ -229,7 +260,13 @@ export function ReviewDrawer({
         expectedReviewRevision: submission.qualityResult.reviewRevision,
         quarantine,
         ...(submission.qualityResult.candidateAnnotation && annotationDecision
-          ? { annotationDecision }
+          ? {
+              annotationDecision:
+                annotationDecision === "corrected"
+                  ? ("accepted" as const)
+                  : annotationDecision,
+              ...(annotationCorrection ? { annotationCorrection } : {}),
+            }
           : {}),
       });
       notify("success", "复核结果已保存");
@@ -332,16 +369,28 @@ export function ReviewDrawer({
               />
             </div>
             <p>{submission.qualityResult.candidateAnnotation.effective.video_summary}</p>
+            {submission.qualityResult.candidateAnnotation.effective.assessability_reason && (
+              <small>可判定性：{submission.qualityResult.candidateAnnotation.effective.model_assessability === "assessable" ? "可判定" : "需要复核"} · {submission.qualityResult.candidateAnnotation.effective.assessability_reason}</small>
+            )}
             <ul>
               {submission.qualityResult.candidateAnnotation.effective.tasks.map((task, index) => (
                 <li key={`review-annotation-task-${index}`}>
-                  {task.task_label} · {Math.round(task.start_ms / 1000)}s—{Math.round(task.end_ms / 1000)}s · {Math.round(task.confidence * 100)}%
+                  <strong>{task.task_label}</strong> · {Math.round(task.start_ms / 1000)}s—{Math.round(task.end_ms / 1000)}s · {Math.round(task.confidence * 100)}%
+                  <small>
+                    完成度 {task.effective_completion} · 结果 {task.effective_result_status}
+                    {task.execution_pattern ? ` · ${task.execution_pattern}` : ""}
+                  </small>
+                  {(task.atomic_action_sequence?.length ?? 0) > 0 && (
+                    <small>原子步骤：{task.atomic_action_sequence!.map((action) => action.verb).join(" → ")}</small>
+                  )}
+                  {task.visible_postcondition && <small>可见后状态：{task.visible_postcondition}</small>}
+                  {task.policy_reasons.length > 0 && <small>证据策略：{task.policy_reasons.join("、")}</small>}
                 </li>
               ))}
             </ul>
             {submission.qualityResult.annotationReview && (
               <small>
-                上次标注复核：{submission.qualityResult.annotationReview.decision === "accepted" ? "已接受" : "需要修正"} · {submission.qualityResult.annotationReview.reviewedByName}
+                上次标注复核：{submission.qualityResult.annotationReview.correctedAnnotation ? "已修正并接受" : submission.qualityResult.annotationReview.decision === "accepted" ? "已接受" : "需要修正"} · {submission.qualityResult.annotationReview.reviewedByName}
               </small>
             )}
           </section>
@@ -428,17 +477,37 @@ export function ReviewDrawer({
                 value={annotationDecision}
                 onChange={(event) =>
                   setAnnotationDecision(
-                    event.target.value as "" | "accepted" | "needs_correction",
+                    event.target.value as
+                      | ""
+                      | "accepted"
+                      | "corrected"
+                      | "needs_correction",
                   )
                 }
               >
                 <option value="">本次不处理</option>
                 <option value="accepted">接受候选标注</option>
+                {submission.qualityResult.candidateAnnotation.schemaVersion ===
+                  "ego_video_annotation_v2" && (
+                  <option value="corrected">修正后接受</option>
+                )}
                 <option value="needs_correction">需要修正</option>
               </select>
               <small className="field-hint">结论会连同候选 Schema、Prompt 哈希和复核原因写入审计</small>
             </label>
           )}
+        {annotationDecision === "corrected" && (
+          <label>
+            <span>修正后的结构化标注 JSON</span>
+            <textarea
+              aria-label="修正后的结构化标注 JSON"
+              rows={12}
+              value={annotationCorrectionText}
+              onChange={(event) => setAnnotationCorrectionText(event.target.value)}
+            />
+            <small className="field-hint">以当前候选 v2 JSON 为基础修正；服务端会重新执行 Schema、时间戳、coverage 和结果证据校验，通过后才可交付。</small>
+          </label>
+        )}
         {submission.issues.length > 0 && <div className="review-issues"><AlertTriangle size={15} /><span>AI 标记 {submission.issues.length} 个问题区间，人工确认无效时长 {finalInvalidSeconds} 秒</span></div>}
         {error && <p className="form-message error">{error}</p>}
         <button className="button button-primary" disabled={saving} type="submit"><CheckCircle2 size={16} />{saving ? "保存中" : "保存调整"}</button>

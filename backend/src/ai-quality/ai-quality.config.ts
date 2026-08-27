@@ -19,7 +19,7 @@ export function videoAnnotationPromptPath(): string {
   if (configured && existsSync(configured)) return configured;
   return fileURLToPath(
     new URL(
-      "../../../docs/quality/prompts/ego-video-annotation-v1/manifest.json",
+      "../../../docs/quality/prompts/ego-video-annotation-v2/manifest.json",
       import.meta.url,
     ),
   );

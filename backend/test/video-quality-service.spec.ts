@@ -243,9 +243,9 @@ describe("video quality service", () => {
     const annotationProvider: VideoAnnotationProvider = {
       annotate: vi.fn().mockResolvedValue({
         status: "system_failed",
-        schemaVersion: "ego_video_annotation_v1",
-        policyVersion: "ego_annotation_evidence_policy_v1",
-        promptVersion: "annotation-prompt-v1",
+        schemaVersion: "ego_video_annotation_v2",
+        policyVersion: "ego_annotation_evidence_policy_v2",
+        promptVersion: "annotation-prompt-v2",
         promptContentSha256: "a".repeat(64),
         model: "annotation-model",
         error: "shadow request failed",

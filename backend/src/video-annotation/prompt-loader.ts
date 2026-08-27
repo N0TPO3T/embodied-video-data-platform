@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
-import { VIDEO_ANNOTATION_SCHEMA_VERSION } from "./video-annotation.js";
+import {
+  VIDEO_ANNOTATION_SCHEMA_VERSION,
+  parseRawVideoAnnotation,
+} from "./video-annotation.js";
 
 export type LoadedVideoAnnotationPrompt = {
   systemPrompt: string;
@@ -68,6 +71,15 @@ export async function loadVideoAnnotationPrompt(
   if (outputExampleValue.schema_version !== VIDEO_ANNOTATION_SCHEMA_VERSION) {
     throw new Error("候选标注标准输出与 manifest 的 Schema 不一致");
   }
+  try {
+    parseRawVideoAnnotation(outputExampleValue);
+  } catch (error) {
+    throw new Error(
+      `候选标注标准输出不符合 ${VIDEO_ANNOTATION_SCHEMA_VERSION}：${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+  }
   return {
     systemPrompt,
     outputExample: outputExampleValue,
@@ -75,7 +87,16 @@ export async function loadVideoAnnotationPrompt(
     outputSchema: VIDEO_ANNOTATION_SCHEMA_VERSION,
     model,
     contentSha256: createHash("sha256")
-      .update(systemPrompt, "utf8")
+      .update(
+        JSON.stringify({
+          promptVersion,
+          outputSchema: VIDEO_ANNOTATION_SCHEMA_VERSION,
+          model,
+          systemPrompt,
+          outputExample: outputExampleValue,
+        }),
+        "utf8",
+      )
       .digest("hex"),
   };
 }

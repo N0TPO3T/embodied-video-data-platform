@@ -8,7 +8,7 @@ import {
 
 function rawAnnotation(): RawVideoAnnotation {
   return {
-    schema_version: "ego_video_annotation_v1",
+    schema_version: "ego_video_annotation_v2",
     video_id: "video-1",
     video_summary: "将杯子放到桌面右侧。",
     scene: {
@@ -18,6 +18,8 @@ function rawAnnotation(): RawVideoAnnotation {
       evidence_timestamps_ms: [0, 1_000],
     },
     temporal_structure_type: "single_task",
+    model_assessability: "assessable",
+    assessability_reason: "采样间隔足以支持当前可见任务和稳定终态。",
     tasks: [
       {
         start_ms: 0,
@@ -26,21 +28,51 @@ function rawAnnotation(): RawVideoAnnotation {
         task_verb: "pick_and_place",
         task_object: "杯子",
         evidence_level: "direct_visual",
+        execution_pattern: "single_goal",
         evidence_timestamps_ms: [0, 500, 1_000],
         manipulated_objects: ["杯子"],
         tools: [],
         hand_mode: "right",
-        interaction_primitives: ["grasp", "place"],
+        atomic_action_sequence: [
+          {
+            order: 1,
+            verb: "grasp",
+            object: "杯子",
+            evidence_timestamps_ms: [0],
+          },
+          {
+            order: 2,
+            verb: "place",
+            object: "杯子",
+            evidence_timestamps_ms: [500, 1_000],
+          },
+        ],
+        interaction_primitives: ["grasp", "release"],
         completion: "complete",
         result_observability: "visible",
         result_status: "success",
+        result_evidence_type: "direct_visible_postcondition",
         visible_postcondition: "杯子位于桌面右侧。",
-        result_evidence_timestamps_ms: [1_000],
+        result_evidence_timestamps_ms: [500, 1_000],
         failure_recovery: "none_observed",
+        failure_evidence_timestamps_ms: [],
+        recovery_evidence_timestamps_ms: [],
+        complexity_signals: [],
         uncertainty_reasons: [],
         confidence: 0.9,
       },
     ],
+    coverage_segments: [
+      {
+        start_ms: 0,
+        end_ms: 1_000,
+        segment_type: "task",
+        linked_task_index: 0,
+        visible_activity: "拿起并放置杯子",
+        evidence_timestamps_ms: [0, 500, 1_000],
+      },
+    ],
+    uncertain_fields: [],
     global_limitations: [],
   };
 }
@@ -82,8 +114,24 @@ describe("video annotation evidence policy", () => {
     const raw = rawAnnotation();
     raw.tasks[0]!.end_ms = 5_000;
     raw.tasks[0]!.evidence_timestamps_ms = [0, 5_000];
-    raw.tasks[0]!.result_evidence_timestamps_ms = [5_000];
+    raw.tasks[0]!.result_evidence_timestamps_ms = [0, 5_000];
+    raw.tasks[0]!.atomic_action_sequence = [
+      {
+        order: 1,
+        verb: "move",
+        object: "杯子",
+        evidence_timestamps_ms: [0, 5_000],
+      },
+    ];
     raw.scene.evidence_timestamps_ms = [0, 5_000];
+    raw.coverage_segments[0] = {
+      start_ms: 0,
+      end_ms: 5_000,
+      segment_type: "task",
+      linked_task_index: 0,
+      visible_activity: "移动杯子",
+      evidence_timestamps_ms: [0, 5_000],
+    };
 
     const result = normalizeVideoAnnotation({
       raw,
@@ -114,6 +162,116 @@ describe("video annotation evidence policy", () => {
     );
   });
 
+  it("preserves a human-confirmed outcome while retaining structural evidence checks", () => {
+    const raw = rawAnnotation();
+    raw.tasks[0]!.end_ms = 5_000;
+    raw.tasks[0]!.evidence_timestamps_ms = [0, 2_500, 5_000];
+    raw.tasks[0]!.result_evidence_timestamps_ms = [2_500, 5_000];
+    raw.tasks[0]!.atomic_action_sequence = [
+      {
+        order: 1,
+        verb: "move",
+        object: "杯子",
+        evidence_timestamps_ms: [0, 2_500],
+      },
+    ];
+    raw.scene.evidence_timestamps_ms = [0, 5_000];
+    raw.coverage_segments[0] = {
+      start_ms: 0,
+      end_ms: 5_000,
+      segment_type: "task",
+      linked_task_index: 0,
+      visible_activity: "移动杯子",
+      evidence_timestamps_ms: [0, 2_500, 5_000],
+    };
+
+    const result = normalizeVideoAnnotation({
+      raw,
+      frames: [0, 2_500, 5_000].map((timestampMs) => ({
+        timestampMs,
+        dataUrl: "data:image/jpeg;base64,AA==",
+      })),
+      durationMs: 5_000,
+      promptVersion: "prompt-v1",
+      promptContentSha256: "a".repeat(64),
+      model: "test-model",
+      requestId: null,
+      modelDurationMs: 0,
+      applySparseEvidencePolicy: false,
+    });
+
+    expect(result.validation.errors).toEqual([]);
+    expect(result.effective.tasks[0]).toMatchObject({
+      effective_completion: "complete",
+      effective_result_status: "success",
+      effective_failure_recovery: "none_observed",
+    });
+    expect(result.effective.tasks[0]!.policy_reasons).not.toContain(
+      "sparse_sampling_cannot_verify_outcome",
+    );
+  });
+
+  it("downgrades unsupported completion and partial-result claims", () => {
+    const raw = rawAnnotation();
+    raw.tasks[0]!.evidence_timestamps_ms = [0, 1_000];
+    raw.tasks[0]!.atomic_action_sequence = [
+      {
+        order: 1,
+        verb: "move",
+        object: "杯子",
+        evidence_timestamps_ms: [0, 1_000],
+      },
+    ];
+    raw.tasks[0]!.result_status = "partial";
+    raw.tasks[0]!.result_evidence_type = "action_completion_only";
+    raw.tasks[0]!.result_evidence_timestamps_ms = [];
+
+    const result = normalize(raw, [0, 500, 1_000]);
+
+    expect(result.effective.tasks[0]).toMatchObject({
+      effective_completion: "uncertain",
+      effective_result_status: "unknown",
+    });
+    expect(result.effective.tasks[0]!.policy_reasons).toEqual(
+      expect.arrayContaining([
+        "complete_task_requires_start_core_end_evidence",
+        "partial_result_lacks_direct_postcondition_evidence",
+      ]),
+    );
+  });
+
+  it("requires failure evidence to precede recovery evidence", () => {
+    const raw = rawAnnotation();
+    raw.tasks[0]!.failure_recovery = "failure_then_recovery";
+    raw.tasks[0]!.failure_evidence_timestamps_ms = [500];
+    raw.tasks[0]!.recovery_evidence_timestamps_ms = [0];
+
+    const result = normalize(raw, [0, 500, 1_000]);
+
+    expect(result.effective.tasks[0]).toMatchObject({
+      effective_failure_recovery: "not_assessable",
+    });
+    expect(result.effective.tasks[0]!.policy_reasons).toContain(
+      "failure_recovery_evidence_order_invalid",
+    );
+  });
+
+  it("retains evidence-backed possible failure as an explicit review state", () => {
+    const raw = rawAnnotation();
+    raw.tasks[0]!.failure_recovery = "possible_failure";
+    raw.tasks[0]!.failure_evidence_timestamps_ms = [500];
+
+    const result = normalize(raw, [0, 500, 1_000]);
+
+    expect(result.status).toBe("review_required");
+    expect(result.effective.tasks[0]).toMatchObject({
+      effective_failure_recovery: "possible_failure",
+    });
+    expect(result.effective.tasks[0]!.policy_reasons).toContain(
+      "failure_recovery_requires_human_review",
+    );
+  });
+
   it("rejects hallucinated evidence timestamps into human review", () => {
     const raw = rawAnnotation();
     raw.tasks[0]!.result_evidence_timestamps_ms = [750];
@@ -122,7 +280,7 @@ describe("video annotation evidence policy", () => {
 
     expect(result.status).toBe("review_required");
     expect(result.validation.errors.join(" ")).toContain(
-      "未提供的结果证据时间点 750",
+      "引用了未提供的证据时间点 750",
     );
   });
 
@@ -130,6 +288,75 @@ describe("video annotation evidence policy", () => {
     expect(() =>
       parseRawVideoAnnotation({ ...rawAnnotation(), pass: true }),
     ).toThrow();
+  });
+
+  it("routes non-contiguous or reordered coverage into review", () => {
+    const raw = rawAnnotation();
+    raw.coverage_segments = [
+      {
+        start_ms: 0,
+        end_ms: 1_000,
+        segment_type: "task",
+        linked_task_index: 0,
+        visible_activity: "错误地跳过中间帧",
+        evidence_timestamps_ms: [0, 1_000],
+      },
+      {
+        start_ms: 500,
+        end_ms: 500,
+        segment_type: "transition",
+        linked_task_index: null,
+        visible_activity: "错误排序的中间帧",
+        evidence_timestamps_ms: [500],
+      },
+    ];
+
+    const result = normalize(raw, [0, 500, 1_000]);
+
+    expect(result.status).toBe("review_required");
+    expect(result.validation.errors.join(" ")).toContain(
+      "证据帧必须按时间连续且递增",
+    );
+    expect(result.effective.model_assessability).toBe("needs_review");
+  });
+
+  it("requires every task evidence timestamp to be covered by that task", () => {
+    const raw = rawAnnotation();
+    raw.coverage_segments = [
+      {
+        start_ms: 0,
+        end_ms: 500,
+        segment_type: "task",
+        linked_task_index: 0,
+        visible_activity: "拿起杯子",
+        evidence_timestamps_ms: [0, 500],
+      },
+      {
+        start_ms: 1_000,
+        end_ms: 1_000,
+        segment_type: "transition",
+        linked_task_index: null,
+        visible_activity: "错误标成过渡",
+        evidence_timestamps_ms: [1_000],
+      },
+    ];
+
+    const result = normalize(raw, [0, 500, 1_000]);
+
+    expect(result.validation.errors.join(" ")).toContain(
+      "tasks[0] 的证据时间点 1000 未被对应 task coverage 覆盖",
+    );
+  });
+
+  it("rejects specialized evidence that is absent from task evidence", () => {
+    const raw = rawAnnotation();
+    raw.tasks[0]!.evidence_timestamps_ms = [0, 1_000];
+
+    const result = normalize(raw, [0, 500, 1_000]);
+
+    expect(result.validation.errors.join(" ")).toContain(
+      "result_evidence_timestamps_ms 的时间点 500 未列入任务主证据",
+    );
   });
 
   it("maps exact controlled labels and keeps unknown values as proposals", () => {
@@ -169,6 +396,17 @@ describe("video annotation evidence policy", () => {
           labelId: null,
         }),
       ]),
+    );
+  });
+
+  it("does not infer bimanual coordination from two visible hands alone", () => {
+    const raw = rawAnnotation();
+    raw.tasks[0]!.hand_mode = "both";
+
+    const result = normalize(raw, [0, 500, 1_000]);
+
+    expect(result.effective.tasks[0]!.effective_complexity_signals).not.toContain(
+      "bimanual_coordination",
     );
   });
 });
