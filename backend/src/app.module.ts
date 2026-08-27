@@ -13,6 +13,7 @@ import { PointsModule } from "./points/points.module.js";
 import { PublicSiteModule } from "./public-site/public-site.module.js";
 import { SubmissionsModule } from "./submissions/submissions.module.js";
 import { TasksModule } from "./tasks/tasks.module.js";
+import { VideoAnnotationModule } from "./video-annotation/video-annotation.module.js";
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { TasksModule } from "./tasks/tasks.module.js";
     PublicSiteModule,
     HealthModule,
     TasksModule,
+    VideoAnnotationModule,
   ],
 })
 export class AppModule {}

@@ -35,6 +35,7 @@ import {
 import type { BackendSubmissionPreview } from "../submissions/contracts";
 import { useInteractions } from "../interactions/InteractionContext";
 import { StatusBadge } from "./StatusBadge";
+import { AnnotationRunReview } from "./AnnotationRunReview";
 
 type IssueDraft = {
   id: string;
@@ -122,6 +123,9 @@ export function ReviewDrawer({
   const [error, setError] = useState("");
   const [duplicateSaving, setDuplicateSaving] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [hasIndependentAnnotation, setHasIndependentAnnotation] = useState<
+    boolean | null
+  >(null);
   const [pointRule, setPointRule] = useState<BackendPointRule | null>(null);
   const [pointRuleState, setPointRuleState] = useState<
     "loading" | "ready" | "unavailable"
@@ -259,7 +263,8 @@ export function ReviewDrawer({
         issues: nextIssues,
         expectedReviewRevision: submission.qualityResult.reviewRevision,
         quarantine,
-        ...(submission.qualityResult.candidateAnnotation && annotationDecision
+        ...(hasIndependentAnnotation === false &&
+        submission.qualityResult.candidateAnnotation && annotationDecision
           ? {
               annotationDecision:
                 annotationDecision === "corrected"
@@ -358,7 +363,13 @@ export function ReviewDrawer({
           )}
         </div>
       )}
+      <AnnotationRunReview
+        submissionId={submission.id}
+        readOnly={readOnly}
+        onIndependentState={setHasIndependentAnnotation}
+      />
       {submission.qualityResult?.candidateAnnotation &&
+        hasIndependentAnnotation === false &&
         submission.qualityResult.candidateAnnotation.status !== "system_failed" && (
           <section className="ai-conclusion">
             <div className="ai-conclusion-head">
@@ -469,6 +480,7 @@ export function ReviewDrawer({
         <label><span>调整原因</span><textarea aria-label="调整原因" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="请说明人工复核依据，必填" rows={3} /><small className="field-hint">必填，将写入审计记录留痕</small></label>
         <label className="checkbox-line"><input type="checkbox" checked={quarantine} onChange={(event) => setQuarantine(event.target.checked)} />敏感内容隔离，不进入普通资产和交付候选</label>
         {submission.qualityResult?.candidateAnnotation &&
+          hasIndependentAnnotation === false &&
           submission.qualityResult.candidateAnnotation.status !== "system_failed" && (
             <label>
               <span>候选内容标注结论</span>
@@ -496,7 +508,7 @@ export function ReviewDrawer({
               <small className="field-hint">结论会连同候选 Schema、Prompt 哈希和复核原因写入审计</small>
             </label>
           )}
-        {annotationDecision === "corrected" && (
+        {hasIndependentAnnotation === false && annotationDecision === "corrected" && (
           <label>
             <span>修正后的结构化标注 JSON</span>
             <textarea

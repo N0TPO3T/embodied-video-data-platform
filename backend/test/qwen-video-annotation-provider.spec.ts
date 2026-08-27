@@ -3,7 +3,10 @@ import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { loadVideoAnnotationPrompt } from "../src/video-annotation/prompt-loader.js";
-import { QwenVideoAnnotationProvider } from "../src/video-annotation/qwen-video-annotation.provider.js";
+import {
+  QwenVideoAnnotationProvider,
+  VideoAnnotationProviderError,
+} from "../src/video-annotation/qwen-video-annotation.provider.js";
 
 function modelOutput() {
   return {
@@ -77,6 +80,31 @@ function modelOutput() {
 }
 
 describe("qwen video annotation provider", () => {
+  it("preserves provider failures for the independent run state machine", async () => {
+    const prompt = await loadVideoAnnotationPrompt(
+      resolve(process.cwd(), "../docs/quality/prompts/ego-video-annotation-v2"),
+    );
+    const provider = new QwenVideoAnnotationProvider({
+      apiKey: "test-key",
+      baseUrl: "https://example.invalid/v1",
+      timeoutMs: 1_000,
+      prompt,
+      fetcher: vi.fn().mockResolvedValue(new Response("not found", { status: 404 })),
+    });
+
+    await expect(
+      provider.annotateStrict({
+        videoId: "video-1",
+        durationMs: 750,
+        frames: [0, 250, 500, 750].map((timestampMs) => ({
+          timestampMs,
+          dataUrl: "data:image/jpeg;base64,AA==",
+        })),
+        enabledLabels: [],
+      }),
+    ).rejects.toBeInstanceOf(VideoAnnotationProviderError);
+  });
+
   it("loads versioned prompt assets and sends only task-blind annotation context", async () => {
     const prompt = await loadVideoAnnotationPrompt(
       resolve(process.cwd(), "../docs/quality/prompts/ego-video-annotation-v2"),

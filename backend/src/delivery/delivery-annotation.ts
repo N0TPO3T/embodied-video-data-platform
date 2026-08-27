@@ -4,6 +4,8 @@ import {
   VIDEO_ANNOTATION_POLICY_VERSION,
   VIDEO_ANNOTATION_SCHEMA_VERSION,
 } from "../video-annotation/video-annotation.js";
+import type { AnnotationReviewEntity } from "../database/entities/annotation-review.entity.js";
+import type { AnnotationRunEntity } from "../database/entities/annotation-run.entity.js";
 
 type DeliveryAnnotationSchemaVersion =
   | typeof VIDEO_ANNOTATION_SCHEMA_VERSION
@@ -124,6 +126,76 @@ export function acceptedDeliveryAnnotation(
       reviewedByName: review.reviewedByName,
       reviewedAt: review.reviewedAt,
       reason: typeof review.reason === "string" ? review.reason : "",
+    },
+  };
+}
+
+export function acceptedAnnotationRun(
+  run: AnnotationRunEntity | null | undefined,
+  review: AnnotationReviewEntity | null | undefined,
+): AcceptedDeliveryAnnotation | null {
+  if (
+    !run ||
+    !review ||
+    run.executionStatus !== "succeeded" ||
+    run.publicationStatus !== "human_verified" ||
+    !["accepted_unchanged", "accepted_corrected"].includes(run.reviewStatus) ||
+    review.revision !== run.reviewRevision ||
+    review.disposition !== run.reviewStatus
+  ) {
+    return null;
+  }
+  const candidate = record(run.normalizedResult);
+  if (
+    !candidate ||
+    candidate.schemaVersion !== VIDEO_ANNOTATION_SCHEMA_VERSION ||
+    candidate.policyVersion !== VIDEO_ANNOTATION_POLICY_VERSION ||
+    candidate.promptVersion !== run.promptVersion ||
+    candidate.promptContentSha256 !== run.promptContentSha256 ||
+    candidate.model !== run.model
+  ) {
+    return null;
+  }
+  const selected =
+    run.reviewStatus === "accepted_corrected" ? record(run.humanResult) : candidate;
+  if (!selected) return null;
+  if (
+    run.reviewStatus === "accepted_corrected" &&
+    (selected.source !== "human_correction" ||
+      selected.schemaVersion !== VIDEO_ANNOTATION_SCHEMA_VERSION ||
+      selected.policyVersion !== VIDEO_ANNOTATION_POLICY_VERSION)
+  ) {
+    return null;
+  }
+  const validation = record(selected.validation);
+  const effective = record(selected.effective);
+  if (
+    !validation ||
+    !Array.isArray(validation.errors) ||
+    validation.errors.length > 0 ||
+    !effective ||
+    !Array.isArray(selected.labelMappings) ||
+    !nonEmptyString(run.promptVersion) ||
+    !nonEmptyString(run.promptContentSha256) ||
+    !nonEmptyString(run.model)
+  ) {
+    return null;
+  }
+  return {
+    schemaVersion: VIDEO_ANNOTATION_SCHEMA_VERSION,
+    policyVersion: VIDEO_ANNOTATION_POLICY_VERSION,
+    promptVersion: run.promptVersion,
+    promptContentSha256: run.promptContentSha256,
+    model: run.model,
+    source:
+      run.reviewStatus === "accepted_corrected" ? "human_correction" : "candidate",
+    effective,
+    labelMappings: selected.labelMappings,
+    review: {
+      reviewedByAccountId: review.reviewerAccountId,
+      reviewedByName: review.reviewerName,
+      reviewedAt: review.createdAt.getTime(),
+      reason: review.reason,
     },
   };
 }

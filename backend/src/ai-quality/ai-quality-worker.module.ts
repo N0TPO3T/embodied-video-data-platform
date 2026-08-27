@@ -10,20 +10,15 @@ import { OperationsModule } from "../operations/operations.module.js";
 import { VideoQualityMediaPreprocessor } from "../video-quality/media-preprocessor.js";
 import { QwenVideoQualityProvider } from "../video-quality/qwen-video-quality.provider.js";
 import { VideoQualityService } from "../video-quality/video-quality.service.js";
-import { loadVideoAnnotationPrompt } from "../video-annotation/prompt-loader.js";
-import { QwenVideoAnnotationProvider } from "../video-annotation/qwen-video-annotation.provider.js";
 import {
-  aiAnnotationConcurrency,
-  aiAnnotationModelTimeoutMs,
-  aiAnnotationSampleRate,
-  aiAnnotationShadowEnabled,
   aiQualityModelTimeoutMs,
-  videoAnnotationPromptPath,
 } from "./ai-quality.config.js";
 import { AiQualityAnalysisService } from "./ai-quality-analysis.service.js";
 import { AiQualityModule } from "./ai-quality.module.js";
 import { AI_QUALITY_EVALUATOR_FACTORY } from "./ai-quality.tokens.js";
 import { RabbitAiQualityWorker } from "./rabbit-ai-quality-worker.js";
+import { RabbitAnnotationWorker } from "../video-annotation/rabbit-annotation-worker.js";
+import { VideoAnnotationModule } from "../video-annotation/video-annotation.module.js";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -42,30 +37,13 @@ function required(name: string): string {
     StorageModule,
     AiQualityModule,
     OperationsModule,
+    VideoAnnotationModule,
   ],
   providers: [
     {
       provide: AI_QUALITY_EVALUATOR_FACTORY,
-      useFactory: async () => {
-        const annotationPrompt = aiAnnotationShadowEnabled(
-          process.env.AI_ANNOTATION_SHADOW_ENABLED,
-        )
-          ? await loadVideoAnnotationPrompt(videoAnnotationPromptPath())
-          : null;
-        const annotationProvider = annotationPrompt
-          ? new QwenVideoAnnotationProvider({
-              apiKey: required("QWEN_API_KEY"),
-              baseUrl: required("QWEN_BASE_URL"),
-              timeoutMs: aiAnnotationModelTimeoutMs(
-                process.env.AI_ANNOTATION_MODEL_TIMEOUT_MS,
-              ),
-              maxConcurrency: aiAnnotationConcurrency(
-                process.env.AI_ANNOTATION_CONCURRENCY,
-              ),
-              prompt: annotationPrompt,
-            })
-          : undefined;
-        return (
+      useFactory: () =>
+        (
           prompt: ConstructorParameters<
             typeof QwenVideoQualityProvider
           >[0]["prompt"],
@@ -91,16 +69,12 @@ function required(name: string): string {
           return new VideoQualityService({
             preprocessor: new VideoQualityMediaPreprocessor(),
             provider,
-            ...(annotationProvider ? { annotationProvider } : {}),
-            annotationSampleRate: aiAnnotationSampleRate(
-              process.env.AI_ANNOTATION_SAMPLE_RATE,
-            ),
           });
-        };
-      },
+        },
     },
     AiQualityAnalysisService,
     RabbitAiQualityWorker,
+    RabbitAnnotationWorker,
   ],
 })
 export class AiQualityWorkerModule {}

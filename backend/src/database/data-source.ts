@@ -2,6 +2,9 @@ import "reflect-metadata";
 
 import { DataSource } from "typeorm";
 
+import { AnnotationCorrectionEntity } from "./entities/annotation-correction.entity.js";
+import { AnnotationReviewEntity } from "./entities/annotation-review.entity.js";
+import { AnnotationRunEntity } from "./entities/annotation-run.entity.js";
 import { AuditLogEntity } from "./entities/audit-log.entity.js";
 import { CollectionTaskEntity } from "./entities/collection-task.entity.js";
 import { DeliveryArchiveTaskEntity } from "./entities/delivery-archive-task.entity.js";
@@ -30,6 +33,7 @@ import { AiQuality2026081200003 } from "./migrations/202608120003-ai-quality.js"
 import { AddAccountPhone2026082600001 } from "./migrations/202608260001-add-account-phone.js";
 import { AddTaskTypeToCollectionTasks2026083000001 } from "./migrations/202608300001-add-task-type.js";
 import { AiQualityProgressStuck2026081700001 } from "./migrations/202608170001-ai-quality-progress-stuck.js";
+import { AnnotationRuns2026083000002 } from "./migrations/202608300002-annotation-runs.js";
 import { CollectionTasks2026082400001 } from "./migrations/202608240001-collection-tasks.js";
 import { ScarcityConfigAndMediaScene2026081900001 } from "./migrations/202608190001-scarcity-config-and-media-scene.js";
 import { DeliveryPackages2026081300006 } from "./migrations/202608130006-delivery-packages.js";
@@ -64,6 +68,9 @@ export const identityEntities = [
   UserEntity,
   SessionEntity,
   AuditLogEntity,
+  AnnotationRunEntity,
+  AnnotationReviewEntity,
+  AnnotationCorrectionEntity,
   SubmissionEntity,
   SubmissionDuplicateCandidateEntity,
   MediaMetadataEntity,
@@ -129,6 +136,7 @@ export function createDataSource(
       AddAccountPhone2026082600001,
       DeliveryAnnotationSnapshots2026082600001,
       AddTaskTypeToCollectionTasks2026083000001,
+      AnnotationRuns2026083000002,
     ],
     synchronize: false,
     logging: false,

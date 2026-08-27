@@ -4,7 +4,7 @@ import { Readable } from "node:stream";
 
 import { Inject, Injectable, PayloadTooLargeException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Brackets, DataSource, EntityManager, Repository } from "typeorm";
+import { Brackets, DataSource, EntityManager, In, Repository } from "typeorm";
 
 import { AuditService } from "../audit/audit.service.js";
 import { AiQualityPromptService } from "../ai-quality/ai-quality-prompt.service.js";
@@ -17,6 +17,7 @@ import { LabelSetService } from "../ai-quality/label-set.service.js";
 import { QualityRuleService } from "../ai-quality/quality-rule.service.js";
 import type { PublicUser } from "../auth/auth.types.js";
 import { AuditLogEntity } from "../database/entities/audit-log.entity.js";
+import { AnnotationRunEntity } from "../database/entities/annotation-run.entity.js";
 import { CollectionTaskEntity } from "../database/entities/collection-task.entity.js";
 import { csvDocument } from "../csv/csv.js";
 import { JobOutboxEntity } from "../database/entities/job-outbox.entity.js";
@@ -2891,6 +2892,7 @@ export class SubmissionsService {
         await manager.getRepository(JobOutboxEntity).delete({
           aggregateId: submission.id,
         });
+        await this.cancelAnnotationRuns(manager, submission.id);
         await this.audit.record(
           manager,
           actor,
@@ -2942,6 +2944,7 @@ export class SubmissionsService {
       await manager.getRepository(JobOutboxEntity).delete({
         aggregateId: submission.id,
       });
+      await this.cancelAnnotationRuns(manager, submission.id);
       await this.audit.record(
         manager,
         actor,
@@ -3004,6 +3007,31 @@ export class SubmissionsService {
       }
     }
     return { completedUploads, completedDeletes, failures };
+  }
+
+  private async cancelAnnotationRuns(
+    manager: EntityManager,
+    submissionId: string,
+  ): Promise<void> {
+    const repository = manager.getRepository(AnnotationRunEntity);
+    const runs = await repository.find({ where: { submissionId } });
+    if (runs.length === 0) return;
+    await manager.getRepository(JobOutboxEntity).delete({
+      aggregateId: In(runs.map((run) => run.id)),
+    });
+    await repository.update(
+      {
+        submissionId,
+        executionStatus: In(["queued", "running", "retry_scheduled", "stuck"]),
+      },
+      {
+        executionStatus: "cancelled",
+        nextRetryAt: null,
+        completedAt: new Date(),
+        lastErrorCode: "SOURCE_DELETED",
+        lastErrorMessage: "视频源对象已删除",
+      },
+    );
   }
 
   private async ensureMultipartObject(

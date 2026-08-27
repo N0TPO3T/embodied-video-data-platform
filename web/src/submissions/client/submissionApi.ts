@@ -4,6 +4,7 @@ import type {
   BackendSubmission,
   BackendSubmissionListResult,
   BackendSubmissionTaskStat,
+  BackendAnnotationRun,
   ClearDuplicateCandidateInput,
   CreateUploadResult,
   DeleteSubmissionInput,
@@ -12,6 +13,7 @@ import type {
   RenameSubmissionInput,
   RerunAiQualityInput,
   ReviewSubmissionQualityInput,
+  ReviewAnnotationRunInput,
   SubmissionUploadApi,
 } from "../contracts";
 
@@ -368,6 +370,48 @@ export async function reviewSubmissionQuality(
     },
   );
   return result.submission;
+}
+
+export async function listAnnotationRuns(
+  submissionId: string,
+): Promise<BackendAnnotationRun[]> {
+  const result = await requestJson<{ runs: BackendAnnotationRun[] }>(
+    `/submissions/${encodeURIComponent(submissionId)}/annotation-runs`,
+  );
+  return result.runs;
+}
+
+export async function createAnnotationRun(
+  submissionId: string,
+  reason: string,
+): Promise<BackendAnnotationRun> {
+  const result = await requestJson<{ run: BackendAnnotationRun }>(
+    `/submissions/${encodeURIComponent(submissionId)}/annotation-runs`,
+    { method: "POST", body: JSON.stringify({ reason }) },
+  );
+  return result.run;
+}
+
+export async function retryAnnotationRun(
+  runId: string,
+  reason: string,
+): Promise<BackendAnnotationRun> {
+  const result = await requestJson<{ run: BackendAnnotationRun }>(
+    `/annotation-runs/${encodeURIComponent(runId)}/retry`,
+    { method: "POST", body: JSON.stringify({ reason }) },
+  );
+  return result.run;
+}
+
+export async function reviewAnnotationRun(
+  runId: string,
+  input: ReviewAnnotationRunInput,
+): Promise<BackendAnnotationRun> {
+  const result = await requestJson<{ run: BackendAnnotationRun }>(
+    `/annotation-runs/${encodeURIComponent(runId)}/review`,
+    { method: "PATCH", body: JSON.stringify(input) },
+  );
+  return result.run;
 }
 
 export async function rerunAiQuality(

@@ -1,17 +1,19 @@
 import { Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Brackets, Repository, type EntityManager, type SelectQueryBuilder } from "typeorm";
+import { Brackets, In, Not, Repository, type EntityManager, type SelectQueryBuilder } from "typeorm";
 import { randomUUID } from "node:crypto";
 
 import { AuditService } from "../audit/audit.service.js";
 import type { PublicUser } from "../auth/auth.types.js";
 import { AuditLogEntity } from "../database/entities/audit-log.entity.js";
+import { AnnotationRunEntity } from "../database/entities/annotation-run.entity.js";
 import { JobOutboxEntity } from "../database/entities/job-outbox.entity.js";
 import { PointCycleItemEntity } from "../database/entities/point-cycle-item.entity.js";
 import { SubmissionEntity } from "../database/entities/submission.entity.js";
 import { VideoQualityResultEntity } from "../database/entities/video-quality-result.entity.js";
 import { OperationsFailure } from "./operations-failure.js";
 import { WorkerHeartbeatService } from "./worker-heartbeat.service.js";
+import { enqueueAnnotationRun } from "../video-annotation/annotation-run.queue.js";
 
 const MAX_AUTO_RETRY_ATTEMPTS = 3;
 
@@ -175,6 +177,10 @@ export class OperationsService {
           "ai",
         )
         .addSelect(
+          "COUNT(*) FILTER (WHERE job.eventType = :annotationEventType)",
+          "annotation",
+        )
+        .addSelect(
           `COALESCE(
             AVG(
               GREATEST(
@@ -191,6 +197,7 @@ export class OperationsService {
           publishedStatus: "published",
           mediaEventType: "media.probe.v1",
           aiEventType: "ai.quality.v1",
+          annotationEventType: "ai.annotation.v1",
         })
         .getRawOne<{
           total: string;
@@ -199,6 +206,7 @@ export class OperationsService {
           failed: string;
           media: string;
           ai: string;
+          annotation: string;
           averagePublishLatencyMs: string;
         }>(),
       this.workerHeartbeats.list(),
@@ -211,6 +219,7 @@ export class OperationsService {
         failed: Number(rawSummary?.failed ?? 0),
         media: Number(rawSummary?.media ?? 0),
         ai: Number(rawSummary?.ai ?? 0),
+        annotation: Number(rawSummary?.annotation ?? 0),
         averagePublishLatencyMs: Math.round(
           Number(rawSummary?.averagePublishLatencyMs ?? 0),
         ),
@@ -465,6 +474,7 @@ export class OperationsService {
       workers
         .filter(
           (worker) =>
+            worker.kind !== "ai_annotation" &&
             worker.currentSubmissionId &&
             worker.status === "running" &&
             !worker.stale &&
@@ -476,6 +486,7 @@ export class OperationsService {
       workers
         .filter(
           (worker) =>
+            worker.kind !== "ai_annotation" &&
             worker.currentSubmissionId &&
             (worker.runningTooLong ||
               (worker.stale && worker.status !== "stopped")),
@@ -483,8 +494,32 @@ export class OperationsService {
         .map((worker) => worker.currentSubmissionId as string)
         .filter((submissionId) => !activeProcessorIds.has(submissionId)),
     );
-    if (stuckCandidateIds.size === 0) {
-      return { reclaimed: [], stuck: [] };
+    const activeAnnotationRunIds = new Set(
+      workers
+        .filter(
+          (worker) =>
+            worker.kind === "ai_annotation" &&
+            worker.currentSubmissionId &&
+            worker.status === "running" &&
+            !worker.stale &&
+            !worker.runningTooLong,
+        )
+        .map((worker) => worker.currentSubmissionId as string),
+    );
+    const stuckAnnotationRunIds = new Set(
+      workers
+        .filter(
+          (worker) =>
+            worker.kind === "ai_annotation" &&
+            worker.currentSubmissionId &&
+            (worker.runningTooLong ||
+              (worker.stale && worker.status !== "stopped")),
+        )
+        .map((worker) => worker.currentSubmissionId as string)
+        .filter((runId) => !activeAnnotationRunIds.has(runId)),
+    );
+    if (stuckCandidateIds.size === 0 && stuckAnnotationRunIds.size === 0) {
+      return { reclaimed: [], stuck: [], annotationReclaimed: [], annotationStuck: [] };
     }
 
     return await this.submissions.manager.transaction(async (manager) => {
@@ -504,6 +539,19 @@ export class OperationsService {
         eventType: string;
       }> = [];
       const stuck: Array<{
+        submissionId: string;
+        previousStatus: string;
+        reason: string;
+      }> = [];
+      const annotationReclaimed: Array<{
+        runId: string;
+        submissionId: string;
+        previousStatus: string;
+        nextStatus: string;
+        eventType: string;
+      }> = [];
+      const annotationStuck: Array<{
+        runId: string;
         submissionId: string;
         previousStatus: string;
         reason: string;
@@ -577,7 +625,73 @@ export class OperationsService {
           eventType,
         });
       }
-      return { reclaimed, stuck };
+      if (stuckAnnotationRunIds.size > 0) {
+        const runs = await manager
+          .getRepository(AnnotationRunEntity)
+          .createQueryBuilder("run")
+          .setLock("pessimistic_write")
+          .where("run.id IN (:...ids)", { ids: [...stuckAnnotationRunIds] })
+          .andWhere("run.executionStatus IN (:...statuses)", {
+            statuses: ["running", "stuck"],
+          })
+          .getMany();
+        for (const run of runs) {
+          const previousStatus = run.executionStatus;
+          const reason = "候选标注 Worker 运行超时或心跳过期，已标记为卡住";
+          if (run.executionStatus !== "stuck") {
+            run.executionStatus = "stuck";
+            run.lastErrorCode = "WORKER_STUCK";
+            run.lastErrorMessage = reason;
+            run.nextRetryAt = null;
+            await manager.getRepository(AnnotationRunEntity).save(run);
+            annotationStuck.push({
+              runId: run.id,
+              submissionId: run.submissionId,
+              previousStatus,
+              reason,
+            });
+          }
+          if (run.attemptCount >= MAX_AUTO_RETRY_ATTEMPTS) continue;
+          const otherActive = await manager.getRepository(AnnotationRunEntity).exists({
+            where: {
+              id: Not(run.id),
+              submissionId: run.submissionId,
+              executionStatus: In(["queued", "running", "retry_scheduled"]),
+            },
+          });
+          if (otherActive) continue;
+          run.executionStatus = "queued";
+          run.queuedAt = new Date();
+          run.startedAt = null;
+          run.lastErrorCode = "WORKER_STUCK_REQUEUED";
+          run.lastErrorMessage = "卡住的候选标注运行已自动重新排队";
+          await manager.getRepository(AnnotationRunEntity).save(run);
+          await enqueueAnnotationRun(manager, run);
+          const submission = await manager.getRepository(SubmissionEntity).findOneBy({
+            id: run.submissionId,
+          });
+          await this.audit.record(
+            manager,
+            actor,
+            "annotation.run.reclaim",
+            {
+              id: submission?.id ?? run.submissionId,
+              name: submission?.originalFileName ?? run.submissionId,
+            },
+            "卡住的候选标注运行自动重新排队",
+            { runId: run.id, executionStatus: "stuck", attemptCount: run.attemptCount },
+            { runId: run.id, executionStatus: "queued", eventType: "ai.annotation.v1" },
+          );
+          annotationReclaimed.push({
+            runId: run.id,
+            submissionId: run.submissionId,
+            previousStatus,
+            nextStatus: "queued",
+            eventType: "ai.annotation.v1",
+          });
+        }
+      }
+      return { reclaimed, stuck, annotationReclaimed, annotationStuck };
     });
   }
 

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { acceptedDeliveryAnnotation } from "../src/delivery/delivery-annotation.js";
+import {
+  acceptedAnnotationRun,
+  acceptedDeliveryAnnotation,
+} from "../src/delivery/delivery-annotation.js";
+import type { AnnotationReviewEntity } from "../src/database/entities/annotation-review.entity.js";
+import type { AnnotationRunEntity } from "../src/database/entities/annotation-run.entity.js";
 
 function normalizedResult() {
   return {
@@ -92,5 +97,64 @@ describe("acceptedDeliveryAnnotation", () => {
     const value = normalizedResult();
     mutate(value);
     expect(acceptedDeliveryAnnotation(value)).toBeNull();
+  });
+});
+
+describe("acceptedAnnotationRun", () => {
+  function verifiedRun(): {
+    run: AnnotationRunEntity;
+    review: AnnotationReviewEntity;
+  } {
+    const candidate = {
+      status: "candidate",
+      schemaVersion: "ego_video_annotation_v2",
+      policyVersion: "ego_annotation_evidence_policy_v2",
+      promptVersion: "prompt-v2",
+      promptContentSha256: "a".repeat(64),
+      model: "qwen-vl-max",
+      effective: { video_id: "SUB-1", tasks: [] },
+      labelMappings: [],
+      validation: { errors: [], warnings: [] },
+    };
+    return {
+      run: {
+        executionStatus: "succeeded",
+        reviewStatus: "accepted_unchanged",
+        publicationStatus: "human_verified",
+        reviewRevision: 1,
+        promptVersion: "prompt-v2",
+        promptContentSha256: "a".repeat(64),
+        model: "qwen-vl-max",
+        normalizedResult: candidate,
+        humanResult: null,
+      } as unknown as AnnotationRunEntity,
+      review: {
+        revision: 1,
+        disposition: "accepted_unchanged",
+        reviewerAccountId: "U-ADMIN",
+        reviewerName: "审核员",
+        reason: "逐字段核验",
+        createdAt: new Date("2026-08-27T12:00:00Z"),
+      } as unknown as AnnotationReviewEntity,
+    };
+  }
+
+  it("publishes only the independently human-verified revision", () => {
+    const { run, review } = verifiedRun();
+
+    expect(acceptedAnnotationRun(run, review)).toMatchObject({
+      schemaVersion: "ego_video_annotation_v2",
+      source: "candidate",
+      review: { reviewedByAccountId: "U-ADMIN", reason: "逐字段核验" },
+    });
+  });
+
+  it("rejects stale or candidate-only runs at the delivery boundary", () => {
+    const { run, review } = verifiedRun();
+    review.revision = 0;
+    expect(acceptedAnnotationRun(run, review)).toBeNull();
+    review.revision = 1;
+    run.publicationStatus = "candidate_only";
+    expect(acceptedAnnotationRun(run, review)).toBeNull();
   });
 });

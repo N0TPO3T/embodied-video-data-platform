@@ -8,7 +8,7 @@ import { pipeline } from "node:stream/promises";
 
 import { Inject, Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { DataSource, MoreThan, Repository, type EntityManager } from "typeorm";
+import { DataSource, In, MoreThan, Repository, type EntityManager } from "typeorm";
 
 import { AuditService } from "../audit/audit.service.js";
 import type { PublicUser } from "../auth/auth.types.js";
@@ -24,12 +24,15 @@ import { PointCycleItemEntity } from "../database/entities/point-cycle-item.enti
 import { loadLatestPointCycleAdjustments } from "../points/latest-point-cycle-adjustments.js";
 import { SubmissionEntity } from "../database/entities/submission.entity.js";
 import { VideoQualityResultEntity } from "../database/entities/video-quality-result.entity.js";
+import { AnnotationRunEntity } from "../database/entities/annotation-run.entity.js";
+import { AnnotationReviewEntity } from "../database/entities/annotation-review.entity.js";
 import {
   OBJECT_STORAGE,
   type ObjectStoragePort,
 } from "../storage/object-storage.port.js";
 import {
   acceptedDeliveryAnnotation,
+  acceptedAnnotationRun,
   type AcceptedDeliveryAnnotation,
 } from "./delivery-annotation.js";
 import { DeliveryFailure } from "./delivery-failure.js";
@@ -1395,6 +1398,39 @@ export class DeliveryPackagesService {
       manager,
       pointItems.map((pointItem) => pointItem.id),
     );
+    const submissionIds = pointItems.flatMap((pointItem) =>
+      pointItem.submission ? [pointItem.submission.id] : [],
+    );
+    const verifiedRuns =
+      submissionIds.length === 0
+        ? []
+        : await manager.getRepository(AnnotationRunEntity).find({
+            where: {
+              submissionId: In(submissionIds),
+              publicationStatus: "human_verified",
+            },
+            order: { createdAt: "DESC", id: "DESC" },
+          });
+    const latestVerifiedRun = new Map<string, AnnotationRunEntity>();
+    for (const run of verifiedRuns) {
+      if (!latestVerifiedRun.has(run.submissionId)) {
+        latestVerifiedRun.set(run.submissionId, run);
+      }
+    }
+    const verifiedRunIds = [...latestVerifiedRun.values()].map((run) => run.id);
+    const verifiedReviews =
+      verifiedRunIds.length === 0
+        ? []
+        : await manager.getRepository(AnnotationReviewEntity).find({
+            where: { annotationRunId: In(verifiedRunIds) },
+            order: { revision: "DESC" },
+          });
+    const latestVerifiedReview = new Map<string, AnnotationReviewEntity>();
+    for (const review of verifiedReviews) {
+      if (!latestVerifiedReview.has(review.annotationRunId)) {
+        latestVerifiedReview.set(review.annotationRunId, review);
+      }
+    }
     return pointItems.flatMap((pointItem) => {
       const submission = pointItem.submission;
       if (!submission) return [];
@@ -1413,6 +1449,7 @@ export class DeliveryPackagesService {
           qualityResult?: VideoQualityResultEntity | null;
         }
       ).qualityResult;
+      const annotationRun = latestVerifiedRun.get(submission.id);
       return [
         {
           pointItem,
@@ -1420,9 +1457,13 @@ export class DeliveryPackagesService {
           sizeBytes: metadata?.sizeBytes ?? submission.expectedSizeBytes,
           finalScore: adjustment?.nextFinalScore ?? pointItem.finalScore,
           points: adjustment?.nextPoints ?? pointItem.points,
-          acceptedAnnotation: acceptedDeliveryAnnotation(
-            qualityResult?.normalizedResult,
-          ),
+          acceptedAnnotation:
+            acceptedAnnotationRun(
+              annotationRun,
+              annotationRun
+                ? latestVerifiedReview.get(annotationRun.id)
+                : undefined,
+            ) ?? acceptedDeliveryAnnotation(qualityResult?.normalizedResult),
         },
       ];
     });

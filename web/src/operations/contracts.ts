@@ -18,7 +18,7 @@ export type BackendQueueJob = {
 
 export type BackendWorkerHeartbeat = {
   id: string;
-  kind: "media" | "ai_quality";
+  kind: "media" | "ai_quality" | "ai_annotation";
   hostName: string;
   processId: number;
   status: "idle" | "running" | "stopped";
@@ -50,6 +50,19 @@ export type BackendWorkerReclaimResult = {
     previousStatus: string;
     reason: string;
   }>;
+  annotationReclaimed?: Array<{
+    runId: string;
+    submissionId: string;
+    previousStatus: string;
+    nextStatus: string;
+    eventType: string;
+  }>;
+  annotationStuck?: Array<{
+    runId: string;
+    submissionId: string;
+    previousStatus: string;
+    reason: string;
+  }>;
 };
 
 export type BackendQueueSnapshot = {
@@ -60,6 +73,7 @@ export type BackendQueueSnapshot = {
     failed: number;
     media: number;
     ai: number;
+    annotation?: number;
     averagePublishLatencyMs: number;
   };
   jobs: BackendQueueJob[];

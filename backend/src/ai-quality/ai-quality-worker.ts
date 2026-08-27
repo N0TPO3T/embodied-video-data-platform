@@ -5,9 +5,13 @@ import { pathToFileURL } from "node:url";
 
 import { NestFactory } from "@nestjs/core";
 
-import { aiQualityConcurrency } from "./ai-quality.config.js";
+import {
+  aiAnnotationConcurrency,
+  aiQualityConcurrency,
+} from "./ai-quality.config.js";
 import { AiQualityWorkerModule } from "./ai-quality-worker.module.js";
 import { RabbitAiQualityWorker } from "./rabbit-ai-quality-worker.js";
+import { RabbitAnnotationWorker } from "../video-annotation/rabbit-annotation-worker.js";
 
 async function start(): Promise<void> {
   const rabbitUrl = process.env.RABBITMQ_URL?.trim();
@@ -22,8 +26,14 @@ async function start(): Promise<void> {
     AiQualityWorkerModule,
   );
   const worker = application.get(RabbitAiQualityWorker);
+  const annotationWorker = application.get(RabbitAnnotationWorker);
   await worker.start(rabbitUrl, concurrency);
+  await annotationWorker.start(
+    rabbitUrl,
+    aiAnnotationConcurrency(process.env.AI_ANNOTATION_CONCURRENCY),
+  );
   const shutdown = async () => {
+    await annotationWorker.close();
     await worker.close();
     await application.close();
   };

@@ -240,10 +240,8 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
     request: VideoAnnotationRequest,
     signal?: AbortSignal,
   ): Promise<VideoAnnotationCandidate> {
-    let release: (() => void) | undefined;
     try {
-      release = await this.acquirePermit(signal);
-      return await this.annotateOrThrow(request, signal);
+      return await this.annotateStrict(request, signal);
     } catch (error) {
       if (signal?.aborted) throw error;
       return {
@@ -255,6 +253,18 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
         model: this.options.prompt.model,
         error: safeError(error),
       };
+    }
+  }
+
+  /** 独立 Worker 使用：保留 Provider 错误类型，交由运行状态机决定重试或终止。 */
+  async annotateStrict(
+    request: VideoAnnotationRequest,
+    signal?: AbortSignal,
+  ): Promise<VideoAnnotationCandidateSuccess> {
+    let release: (() => void) | undefined;
+    try {
+      release = await this.acquirePermit(signal);
+      return await this.annotateOrThrow(request, signal);
     } finally {
       release?.();
     }

@@ -411,6 +411,105 @@ export type ClearDuplicateCandidateInput = {
   reason: string;
 };
 
+export type BackendAnnotationRun = {
+  id: string;
+  submissionId: string;
+  trigger: "initial" | "manual";
+  pipelineVersion: string;
+  schemaVersion: string;
+  evidencePolicyVersion: string;
+  promptVersion: string | null;
+  promptContentSha256: string | null;
+  model: string | null;
+  labelSetVersionId: string | null;
+  labelSetRevision: number | null;
+  executionStatus:
+    | "queued"
+    | "running"
+    | "retry_scheduled"
+    | "succeeded"
+    | "system_failed"
+    | "stuck"
+    | "cancelled";
+  reviewStatus:
+    | "pending"
+    | "accepted_unchanged"
+    | "accepted_corrected"
+    | "rejected"
+    | "unable_to_judge";
+  publicationStatus:
+    | "candidate_only"
+    | "human_verified"
+    | "auto_accepted"
+    | "rejected"
+    | "superseded";
+  attemptCount: number;
+  reviewRevision: number;
+  lastErrorCode: string | null;
+  lastErrorMessage: string | null;
+  nextRetryAt: number | null;
+  candidate: BackendVideoAnnotationCandidate | null;
+  humanResult: Record<string, unknown> | null;
+  review: {
+    id: string;
+    revision: number;
+    disposition: Exclude<BackendAnnotationRun["reviewStatus"], "pending">;
+    reviewedFields: string[];
+    reasonCodes: string[];
+    reviewDurationMs: number;
+    reason: string;
+    reviewerAccountId: string;
+    reviewerName: string;
+    createdAt: number;
+  } | null;
+  corrections: Array<{
+    id: string;
+    targetType: string;
+    targetId: string;
+    fieldPath: string;
+    previousValue: unknown;
+    nextValue: unknown;
+    reasonCode: string;
+    comment: string | null;
+    reviewerAccountId: string;
+    createdAt: number;
+  }>;
+  queuedAt: number;
+  startedAt: number | null;
+  completedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type ReviewAnnotationRunInput = {
+  expectedReviewRevision: number;
+  disposition:
+    | "accepted_unchanged"
+    | "accepted_corrected"
+    | "rejected"
+    | "unable_to_judge";
+  reviewedFields: string[];
+  reasonCodes: string[];
+  reviewDurationMs: number;
+  reason: string;
+  correctedResult?: Record<string, unknown>;
+  corrections?: Array<{
+    targetType:
+      | "scene"
+      | "task_segment"
+      | "object"
+      | "tool"
+      | "completion"
+      | "outcome"
+      | "failure_recovery"
+      | "annotation";
+    targetId: string;
+    fieldPath: string;
+    reasonCode: string;
+    comment?: string;
+  }>;
+};
+
 export type BackendSubmissionPreview = {
   url: string;
   expiresAt: number;

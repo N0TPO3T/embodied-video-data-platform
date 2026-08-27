@@ -73,11 +73,13 @@ function queueJobStatus(job: BackendQueueJob): {
 function eventLabel(eventType: string): string {
   if (eventType === "media.probe.v1") return "媒体分析";
   if (eventType === "ai.quality.v1") return "AI 质检";
+  if (eventType === "ai.annotation.v1") return "结构化标注";
   return eventType;
 }
 
 function workerKindLabel(kind: BackendWorkerHeartbeat["kind"]): string {
   if (kind === "media") return "媒体 Worker";
+  if (kind === "ai_annotation") return "结构化标注 Worker";
   return "AI 质检 Worker";
 }
 
@@ -340,7 +342,7 @@ export function AiQueuePage() {
         {liveSummary ? (
           <>
             <MetricCard label="等待发布" value={String(liveSummary.pending)} detail={`最近 ${liveSummary.total} 条队列记录`} icon={Clock3} tone="amber" />
-            <MetricCard label="AI 质检事件" value={String(liveSummary.ai)} detail={`媒体分析事件 ${liveSummary.media} 条`} icon={Cpu} />
+            <MetricCard label="AI 质检事件" value={String(liveSummary.ai)} detail={`结构化标注 ${liveSummary.annotation ?? 0} 条 · 媒体分析 ${liveSummary.media} 条`} icon={Cpu} />
             <MetricCard label="已发布" value={String(liveSummary.published)} detail={`平均发布 ${formatDurationMs(liveSummary.averagePublishLatencyMs)}`} icon={CheckCircle2} tone="green" />
             <MetricCard label="发布异常" value={String(liveSummary.failed)} detail="保留失败原因和重试次数" icon={CircleX} tone="red" />
           </>
