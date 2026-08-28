@@ -142,7 +142,7 @@ pnpm build
 pnpm start:local
 ```
 
-完整视频处理应使用 `docker compose up -d --build`，因为 `media-worker`、`ai-quality-worker` 和独立的 `ai-annotation-worker` 容器均已包含 FFprobe/FFmpeg。质检和结构化标注使用独立队列、重试/DLQ 与心跳，任一 Worker 停止不会改变另一条链路的健康状态。自动准入能力默认关闭（`ANNOTATION_AUTO_ACCEPT_ENABLED=false`）；必须先用同一镜像在测试/预发以 `ANNOTATION_AUTO_ACCEPT_ENABLED=true`、`ANNOTATION_AUTO_ACCEPT_AUDIT_RATE=1` 完成 20–50 条非敏感视频验收，再在生产配置中开启，生产抽检比例为 `0.05`。关闭该开关只影响之后完成的 Run，不撤销已有正式结果。
+完整视频处理应使用 `docker compose up -d --build`，因为 `media-worker`、`ai-quality-worker` 和独立的 `ai-annotation-worker` 容器均已包含 FFprobe/FFmpeg。质检和结构化标注使用独立队列、重试/DLQ 与心跳，任一 Worker 停止不会改变另一条链路的健康状态。结构化标注默认全量运行（`AI_ANNOTATION_SHADOW_ENABLED=true`、`AI_ANNOTATION_SAMPLE_RATE=1`），自动准入默认开启（`ANNOTATION_AUTO_ACCEPT_ENABLED=true`）：Gate 判定为 eligible 的结果直接发布为 `auto_accepted`。默认不启用人工 Audit（`ANNOTATION_AUTO_ACCEPT_AUDIT_RATE=0`）；后续需要抽检时再提高该比例。关闭自动准入只影响之后完成的 Run，不撤销已有正式结果。
 
 ### 本地健康自愈与故障预防
 

@@ -10,13 +10,13 @@ import {
 } from "../src/ai-quality/ai-quality.config.js";
 
 describe("AI annotation rollout config", () => {
-  it("defaults to full eligible coverage with automatic acceptance off", () => {
-    expect(aiAnnotationShadowEnabled(undefined)).toBe(false);
+  it("defaults to full eligible coverage with automatic acceptance on", () => {
+    expect(aiAnnotationShadowEnabled(undefined)).toBe(true);
     expect(aiAnnotationSampleRate(undefined)).toBe(1);
     expect(aiAnnotationConcurrency(undefined)).toBe(1);
     expect(aiAnnotationModelTimeoutMs(undefined)).toBe(180_000);
-    expect(annotationAutoAcceptEnabled(undefined)).toBe(false);
-    expect(annotationAutoAcceptAuditRate(undefined)).toBe(0.05);
+    expect(annotationAutoAcceptEnabled(undefined)).toBe(true);
+    expect(annotationAutoAcceptAuditRate(undefined)).toBe(0);
   });
 
   it("rejects unsafe rollout values", () => {
