@@ -1,0 +1,159 @@
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryColumn,
+  UpdateDateColumn,
+} from "typeorm";
+
+import { AnnotationRunEntity } from "./annotation-run.entity.js";
+import { SubmissionEntity } from "./submission.entity.js";
+
+export type TaskSegmentGenerationStatus =
+  | "queued"
+  | "processing"
+  | "ready"
+  | "failed"
+  | "skipped";
+
+@Entity({ name: "task_segment_assets" })
+@Index("uq_task_segment_assets_run_task", ["annotationRunId", "taskIndex"], {
+  unique: true,
+})
+@Index("idx_task_segment_assets_submission_created", ["submissionId", "createdAt", "id"])
+@Index("idx_task_segment_assets_status_created", ["generationStatus", "createdAt", "id"])
+export class TaskSegmentAssetEntity {
+  @PrimaryColumn({ type: "varchar", length: 64 })
+  id!: string;
+
+  @Column({ name: "submission_id", type: "varchar", length: 64 })
+  submissionId!: string;
+
+  @ManyToOne(() => SubmissionEntity, { onDelete: "RESTRICT" })
+  @JoinColumn({ name: "submission_id" })
+  submission?: SubmissionEntity;
+
+  @Column({ name: "annotation_run_id", type: "varchar", length: 64 })
+  annotationRunId!: string;
+
+  @ManyToOne(() => AnnotationRunEntity, { onDelete: "RESTRICT" })
+  @JoinColumn({ name: "annotation_run_id" })
+  annotationRun?: AnnotationRunEntity;
+
+  @Column({ name: "task_index", type: "integer" })
+  taskIndex!: number;
+
+  @Column({ name: "pipeline_version", type: "varchar", length: 80 })
+  pipelineVersion!: string;
+
+  @Column({ name: "prompt_version", type: "varchar", length: 120 })
+  promptVersion!: string;
+
+  @Column({ name: "schema_version", type: "varchar", length: 80 })
+  schemaVersion!: string;
+
+  @Column({ name: "evidence_policy_version", type: "varchar", length: 80 })
+  evidencePolicyVersion!: string;
+
+  @Column({ name: "ontology_version", type: "varchar", length: 80, nullable: true })
+  ontologyVersion: string | null = null;
+
+  @Column({ name: "task_label", type: "varchar", length: 200 })
+  taskLabel!: string;
+
+  @Column({ name: "task_verb", type: "varchar", length: 80 })
+  taskVerb!: string;
+
+  @Column({ type: "varchar", length: 32 })
+  completion!: string;
+
+  @Column({ name: "result_status", type: "varchar", length: 32 })
+  resultStatus!: string;
+
+  @Column({ name: "source_start_ms", type: "double precision" })
+  sourceStartMs!: number;
+
+  @Column({ name: "source_end_ms", type: "double precision" })
+  sourceEndMs!: number;
+
+  @Column({ name: "clip_start_ms", type: "double precision" })
+  clipStartMs!: number;
+
+  @Column({ name: "clip_end_ms", type: "double precision" })
+  clipEndMs!: number;
+
+  @Column({ name: "coverage_snapshot", type: "jsonb" })
+  coverageSnapshot!: unknown;
+
+  @Column({ name: "evidence_snapshot", type: "jsonb" })
+  evidenceSnapshot!: unknown;
+
+  @Column({ name: "validation_warnings", type: "jsonb", default: () => "'[]'::jsonb" })
+  validationWarnings: string[] = [];
+
+  @Column({ name: "source_object_key", type: "text" })
+  sourceObjectKey!: string;
+
+  @Column({ name: "source_sha256", type: "char", length: 64 })
+  sourceSha256!: string;
+
+  @Column({ name: "clip_object_key", type: "text", nullable: true })
+  clipObjectKey: string | null = null;
+
+  @Column({ name: "clip_sha256", type: "char", length: 64, nullable: true })
+  clipSha256: string | null = null;
+
+  @Column({ name: "clip_size_bytes", type: "bigint", nullable: true })
+  clipSizeBytes: string | null = null;
+
+  @Column({ name: "clip_duration_ms", type: "integer", nullable: true })
+  clipDurationMs: number | null = null;
+
+  @Column({ type: "varchar", length: 64, nullable: true })
+  codec: string | null = null;
+
+  @Column({ type: "integer", nullable: true })
+  width: number | null = null;
+
+  @Column({ type: "integer", nullable: true })
+  height: number | null = null;
+
+  @Column({ name: "frame_rate", type: "double precision", nullable: true })
+  frameRate: number | null = null;
+
+  @Column({ name: "has_audio", type: "boolean", nullable: true })
+  hasAudio: boolean | null = null;
+
+  @Column({ name: "generation_status", type: "varchar", length: 24 })
+  generationStatus!: TaskSegmentGenerationStatus;
+
+  @Column({ name: "attempt_count", type: "integer", default: 0 })
+  attemptCount = 0;
+
+  @Column({ name: "failure_code", type: "varchar", length: 80, nullable: true })
+  failureCode: string | null = null;
+
+  @Column({ name: "failure_message", type: "text", nullable: true })
+  failureMessage: string | null = null;
+
+  @Column({ name: "usage_status", type: "varchar", length: 24, default: "internal_only" })
+  usageStatus: "internal_only" = "internal_only";
+
+  @Column({ name: "generation_policy_version", type: "varchar", length: 80 })
+  generationPolicyVersion!: string;
+
+  @Column({ name: "started_at", type: "timestamptz", nullable: true })
+  startedAt: Date | null = null;
+
+  @Column({ name: "completed_at", type: "timestamptz", nullable: true })
+  completedAt: Date | null = null;
+
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
+  createdAt!: Date;
+
+  @UpdateDateColumn({ name: "updated_at", type: "timestamptz" })
+  updatedAt!: Date;
+}
