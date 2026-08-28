@@ -5,10 +5,67 @@ import type {
 } from "amqplib";
 import { vi } from "vitest";
 
-import { MEDIA_QUEUE } from "../src/messaging/rabbitmq-topology.js";
+import {
+  MEDIA_QUEUE,
+  TASK_SEGMENT_QUEUE,
+} from "../src/messaging/rabbitmq-topology.js";
 import { RabbitMediaWorker } from "../src/media/rabbit-media-worker.js";
 
 describe("media worker", () => {
+  it("consumes task segment jobs in the existing media worker", async () => {
+    const consumers = new Map<string, (message: ConsumeMessage | null) => void>();
+    const ack = vi.fn();
+    const channel = {
+      assertExchange: vi.fn().mockResolvedValue(undefined),
+      assertQueue: vi.fn().mockResolvedValue(undefined),
+      bindQueue: vi.fn().mockResolvedValue(undefined),
+      prefetch: vi.fn().mockResolvedValue(undefined),
+      consume: vi.fn().mockImplementation(
+        async (queue: string, handler: (message: ConsumeMessage | null) => void) => {
+          consumers.set(queue, handler);
+          return { consumerTag: `${queue}-test` };
+        },
+      ),
+      sendToQueue: vi.fn().mockReturnValue(true),
+      waitForConfirms: vi.fn().mockResolvedValue(undefined),
+      ack,
+      close: vi.fn().mockResolvedValue(undefined),
+    } as unknown as ConfirmChannel;
+    const connection = {
+      createConfirmChannel: vi.fn().mockResolvedValue(channel),
+      close: vi.fn().mockResolvedValue(undefined),
+    } as unknown as ChannelModel;
+    const connector = vi.fn().mockResolvedValue(connection);
+    const analysis = { process: vi.fn().mockResolvedValue("processed") };
+    const taskSegments = { process: vi.fn().mockResolvedValue("ready") };
+    const worker = new RabbitMediaWorker(
+      analysis as never,
+      undefined,
+      taskSegments as never,
+    );
+    await worker.start("amqp://test", connector);
+    expect(consumers.has(MEDIA_QUEUE)).toBe(true);
+    expect(consumers.has(TASK_SEGMENT_QUEUE)).toBe(true);
+
+    const message = {
+      content: Buffer.from(JSON.stringify({
+        assetId: "TSA-WORKER",
+        submissionId: "SUB-WORKER",
+      })),
+      fields: { redelivered: false },
+      properties: { headers: {} },
+    } as unknown as ConsumeMessage;
+    consumers.get(TASK_SEGMENT_QUEUE)?.(message);
+    await vi.waitFor(() => expect(ack).toHaveBeenCalledWith(message));
+    expect(taskSegments.process).toHaveBeenCalledWith({
+      assetId: "TSA-WORKER",
+      recoverProcessing: false,
+    });
+    expect(analysis.process).not.toHaveBeenCalled();
+    expect(channel.sendToQueue).not.toHaveBeenCalled();
+    await worker.close();
+  });
+
   it("delays a lock-busy recovery delivery without exhausting retries", async () => {
     let consumer: ((message: ConsumeMessage | null) => void) | undefined;
     const waitForConfirms = vi.fn().mockResolvedValue(undefined);

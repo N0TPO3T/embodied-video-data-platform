@@ -13,9 +13,12 @@ import {
   assertAiQualityTopology,
   assertAiAnnotationTopology,
   assertMediaTopology,
+  assertTaskSegmentTopology,
   EVENTS_EXCHANGE,
   MEDIA_QUEUE,
   MEDIA_QUEUE_OPTIONS,
+  TASK_SEGMENT_QUEUE,
+  TASK_SEGMENT_QUEUE_OPTIONS,
 } from "../src/messaging/rabbitmq-topology.js";
 import { RabbitMqMessageBusService } from "../src/messaging/rabbitmq-message-bus.service.js";
 
@@ -124,6 +127,32 @@ describe("RabbitMQ AI quality topology", () => {
       AI_QUALITY_QUEUE,
       EVENTS_EXCHANGE,
       "ai.quality.v1",
+    );
+  });
+});
+
+describe("RabbitMQ task segment topology", () => {
+  it("declares a dedicated durable queue with dead-letter routing", async () => {
+    const channel = {
+      assertExchange: vi.fn().mockResolvedValue(undefined),
+      assertQueue: vi.fn().mockResolvedValue(undefined),
+      bindQueue: vi.fn().mockResolvedValue(undefined),
+    } as unknown as ConfirmChannel;
+
+    await assertTaskSegmentTopology(channel);
+
+    expect(TASK_SEGMENT_QUEUE).not.toBe(MEDIA_QUEUE);
+    expect(channel.assertQueue).toHaveBeenCalledWith(
+      TASK_SEGMENT_QUEUE,
+      TASK_SEGMENT_QUEUE_OPTIONS,
+    );
+    expect(TASK_SEGMENT_QUEUE_OPTIONS.arguments).toEqual({
+      "x-dead-letter-exchange": "evdp.events.dead",
+    });
+    expect(channel.bindQueue).toHaveBeenCalledWith(
+      TASK_SEGMENT_QUEUE,
+      EVENTS_EXCHANGE,
+      "task.segment.generate.v1",
     );
   });
 });

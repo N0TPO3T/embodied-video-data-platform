@@ -11,6 +11,9 @@ export const AI_QUALITY_ROUTING_KEY = "ai.quality.v1";
 export const AI_ANNOTATION_QUEUE = "evdp.ai.annotation.v1";
 export const DEAD_AI_ANNOTATION_QUEUE = `${AI_ANNOTATION_QUEUE}.dead`;
 export const AI_ANNOTATION_ROUTING_KEY = "ai.annotation.v1";
+export const TASK_SEGMENT_QUEUE = "evdp.task.segment.generate.v1";
+export const DEAD_TASK_SEGMENT_QUEUE = `${TASK_SEGMENT_QUEUE}.dead`;
+export const TASK_SEGMENT_ROUTING_KEY = "task.segment.generate.v1";
 export const MEDIA_QUEUE_OPTIONS = {
   durable: true,
   arguments: {
@@ -24,6 +27,12 @@ export const AI_QUALITY_QUEUE_OPTIONS = {
   },
 } as const;
 export const AI_ANNOTATION_QUEUE_OPTIONS = {
+  durable: true,
+  arguments: {
+    "x-dead-letter-exchange": DEAD_EVENTS_EXCHANGE,
+  },
+} as const;
+export const TASK_SEGMENT_QUEUE_OPTIONS = {
   durable: true,
   arguments: {
     "x-dead-letter-exchange": DEAD_EVENTS_EXCHANGE,
@@ -91,5 +100,24 @@ export async function assertAiAnnotationTopology(
     AI_ANNOTATION_QUEUE,
     EVENTS_EXCHANGE,
     AI_ANNOTATION_ROUTING_KEY,
+  );
+}
+
+export async function assertTaskSegmentTopology(
+  channel: ConfirmChannel,
+): Promise<void> {
+  await channel.assertExchange(EVENTS_EXCHANGE, "topic", { durable: true });
+  await channel.assertExchange(DEAD_EVENTS_EXCHANGE, "topic", { durable: true });
+  await channel.assertQueue(DEAD_TASK_SEGMENT_QUEUE, { durable: true });
+  await channel.bindQueue(
+    DEAD_TASK_SEGMENT_QUEUE,
+    DEAD_EVENTS_EXCHANGE,
+    TASK_SEGMENT_ROUTING_KEY,
+  );
+  await channel.assertQueue(TASK_SEGMENT_QUEUE, TASK_SEGMENT_QUEUE_OPTIONS);
+  await channel.bindQueue(
+    TASK_SEGMENT_QUEUE,
+    EVENTS_EXCHANGE,
+    TASK_SEGMENT_ROUTING_KEY,
   );
 }
