@@ -133,7 +133,8 @@ export const navigationByRole: Record<Role, NavigationGroup[]> = {
       label: "配置",
       items: [
         { label: "用户与团队", path: "/admin/people", icon: Users },
-        { label: "标签与规则", path: "/admin/rules", icon: Tags },
+        { label: "标签体系", path: "/admin/labels", icon: Tags },
+        { label: "规则与提示词", path: "/admin/rules", icon: ScrollText },
         { label: "积分规则", path: "/admin/settlements", icon: Receipt },
         { label: "公开数据配置", path: "/admin/public", icon: Globe },
       ],

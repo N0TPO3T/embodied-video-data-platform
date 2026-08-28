@@ -12,6 +12,7 @@ import { AuditLogPage } from "../features/admin/AuditLogPage";
 import { PublicConfigPage } from "../features/admin/PublicConfigPage";
 import { AdminReviewDetailPage } from "../features/admin/AdminReviewDetailPage";
 import { QualityReviewPage } from "../features/admin/QualityReviewPage";
+import { LabelSetPage } from "../features/admin/LabelSetPage";
 import { RulesPage } from "../features/admin/RulesPage";
 import { SettlementPage } from "../features/admin/SettlementPage";
 import { SubmissionsAdminPage } from "../features/admin/SubmissionsAdminPage";
@@ -143,6 +144,7 @@ function AuthenticatedPlatformContent({
     else if (safePath === "/admin/assets") page = <AssetsPage />;
     else if (safePath === "/admin/tasks") page = <TasksPage />;
     else if (safePath === "/admin/people") page = <UsersTeamsPage />;
+    else if (safePath === "/admin/labels") page = <LabelSetPage />;
     else if (safePath === "/admin/rules") page = <RulesPage />;
     else if (safePath === "/admin/settlements") page = <SettlementPage />;
     else if (safePath === "/admin/public") page = <PublicConfigPage />;
