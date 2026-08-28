@@ -12,6 +12,7 @@ import { OperationsModule } from "./operations/operations.module.js";
 import { PointsModule } from "./points/points.module.js";
 import { PublicSiteModule } from "./public-site/public-site.module.js";
 import { ScenePricingModule } from "./scene-pricing/scene-pricing.module.js";
+import { SceneSystemModule } from "./scene-system/scene-system.module.js";
 import { SubmissionsModule } from "./submissions/submissions.module.js";
 import { TasksModule } from "./tasks/tasks.module.js";
 import { VideoAnnotationModule } from "./video-annotation/video-annotation.module.js";
@@ -32,6 +33,7 @@ import { WalletModule } from "./wallet/wallet.module.js";
     AiQualityModule,
     PublicSiteModule,
     ScenePricingModule,
+    SceneSystemModule,
     HealthModule,
     TasksModule,
     VideoAnnotationModule,

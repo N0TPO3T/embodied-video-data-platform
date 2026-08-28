@@ -13,6 +13,7 @@ import { AdminReviewDetailPage } from "../features/admin/AdminReviewDetailPage";
 import { AnnotationReviewDetailPage } from "../features/admin/AnnotationReviewDetailPage";
 import { QualityReviewPage } from "../features/admin/QualityReviewPage";
 import { LabelSetPage } from "../features/admin/LabelSetPage";
+import { SceneSystemPage } from "../features/admin/SceneSystemPage";
 import { RulesPage } from "../features/admin/RulesPage";
 import { SettlementPage } from "../features/admin/SettlementPage";
 import { SubmissionsAdminPage } from "../features/admin/SubmissionsAdminPage";
@@ -141,6 +142,7 @@ function AuthenticatedPlatformContent({
     else if (safePath === "/admin/tasks") page = <TasksPage />;
     else if (safePath === "/admin/people") page = <UsersTeamsPage />;
     else if (safePath === "/admin/labels") page = <LabelSetPage />;
+    else if (safePath === "/admin/scenes") page = <SceneSystemPage />;
     else if (safePath === "/admin/rules") page = <RulesPage />;
     else if (safePath === "/admin/settlements") page = <SettlementPage />;
     else if (safePath === "/admin/public") page = <PublicConfigPage />;
