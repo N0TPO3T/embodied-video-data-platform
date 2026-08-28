@@ -12,6 +12,7 @@ import {
 } from "../src/database/data-source.js";
 import { AuditLogEntity } from "../src/database/entities/audit-log.entity.js";
 import { AnnotationRunEntity } from "../src/database/entities/annotation-run.entity.js";
+import { AnnotationModelCallEntity } from "../src/database/entities/annotation-model-call.entity.js";
 import { JobOutboxEntity } from "../src/database/entities/job-outbox.entity.js";
 import { MediaMetadataEntity } from "../src/database/entities/media-metadata.entity.js";
 import { PointCycleItemEntity } from "../src/database/entities/point-cycle-item.entity.js";
@@ -214,6 +215,18 @@ describe("operations API", () => {
         executionStatus: "succeeded",
         reviewStatus: "pending",
         publicationStatus: "candidate_only",
+        autoEligibility: "manual_required",
+        autoGateVersion: "annotation_auto_gate_v1",
+        autoGateEvaluatedAt: new Date("2026-08-28T08:01:00Z"),
+        autoGateIssues: [{
+          code: "NO_TASK_DETECTED",
+          level: "manual_review",
+          fieldPath: null,
+          taskIndex: null,
+          message: "视频未识别到任何可见任务",
+          evidenceTimestampsMs: [],
+          resolution: "not_applicable",
+        }],
         inputTokens: 100,
         outputTokens: 20,
         totalTokens: 120,
@@ -252,7 +265,37 @@ describe("operations API", () => {
         reviewStatus: "pending",
         publicationStatus: "candidate_only",
       },
+      {
+        ...annotationBase,
+        id: "ANR-OPS-AUDIT",
+        submissionId: "SUB-OPS-FAILED",
+        trigger: "manual",
+        executionStatus: "succeeded",
+        reviewStatus: "not_required",
+        publicationStatus: "auto_accepted",
+        autoEligibility: "eligible",
+        autoGateVersion: "annotation_auto_gate_v1",
+        autoGateIssues: [],
+        wouldAutoAccept: true,
+        autoAcceptEnabledSnapshot: true,
+        autoGateEvaluatedAt: new Date("2026-08-28T08:04:00Z"),
+        auditStatus: "pending",
+        auditSelectedAt: new Date("2026-08-28T08:04:00Z"),
+        completedAt: new Date("2026-08-28T08:04:00Z"),
+      },
     ]);
+    await dataSource.getRepository(AnnotationModelCallEntity).save({
+      id: "AMC-OPS-PENDING",
+      annotationRunId: "ANR-OPS-PENDING",
+      logicalFullAttempt: 1,
+      callKind: "full",
+      callStatus: "succeeded",
+      httpStatus: 200,
+      inputTokens: 100,
+      outputTokens: 20,
+      totalTokens: 120,
+      latencyMs: 2_000,
+    });
     await dataSource.query(
       `UPDATE annotation_runs SET updated_at = $1 WHERE id IN ($2, $3)`,
       [new Date("2026-08-28T08:03:00Z"), "ANR-OPS-FAILED", "ANR-OPS-STUCK"],
@@ -535,14 +578,18 @@ describe("operations API", () => {
       }),
     ]);
     expect(response.body.summary).toMatchObject({
-      runs: { historicalTotal: 4, succeeded: 2, systemFailed: 1, stuck: 1 },
+      runs: { historicalTotal: 5, succeeded: 3, systemFailed: 1, stuck: 1 },
       reviews: { pending: 1, acceptedCorrected: 1 },
+      gate: { gateEvaluated: 2, eligible: 1, manualRequired: 1, autoAccepted: 1, auditPending: 1 },
       usage: {
-        scope: "successful_final_response_only",
-        runsWithReportedUsage: 1,
+        scope: "all_reported_model_calls",
+        providerCalls: 1,
+        succeededCalls: 1,
+        failedCalls: 0,
+        callsWithReportedUsage: 1,
         totalReportedInputTokens: 100,
         totalReportedOutputTokens: 20,
-        averageReportedTokensPerSuccessfulRun: 120,
+        totalReportedTokens: 120,
         averageReportedModelLatencyMs: 2000,
       },
     });
@@ -555,6 +602,23 @@ describe("operations API", () => {
       succeededRate: 1,
       verifiedRate: 1,
     });
+  });
+
+  it("returns only currently published pending audits in the audit view", async () => {
+    const adminCookie = await login("ops-admin");
+    const response = await request(app.getHttpServer())
+      .get("/api/v1/operations/annotation-runs?view=audit_pending&page=1&pageSize=50&includeSummary=false")
+      .set("Cookie", adminCookie)
+      .expect(200);
+
+    expect(response.body.runs).toEqual([
+      expect.objectContaining({
+        id: "ANR-OPS-AUDIT",
+        publicationStatus: "auto_accepted",
+        auditStatus: "pending",
+        autoEligibility: "eligible",
+      }),
+    ]);
   });
 
   it("maps failure views, omits expensive summary, and redacts stored errors", async () => {

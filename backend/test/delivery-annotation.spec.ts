@@ -95,4 +95,42 @@ describe("acceptedAnnotationRun", () => {
     (run.normalizedResult as Record<string, unknown>).promptContentSha256 = "b".repeat(64);
     expect(acceptedAnnotationRun(run, review)).toBeNull();
   });
+
+  it("accepts only an automatic publication with a complete non-blocking gate snapshot", () => {
+    const { run } = verifiedRun();
+    run.evidencePolicyVersion = "ego_annotation_evidence_policy_v3";
+    (run.normalizedResult as Record<string, unknown>).policyVersion =
+      "ego_annotation_evidence_policy_v3";
+    run.reviewStatus = "not_required";
+    run.publicationStatus = "auto_accepted";
+    run.reviewRevision = 0;
+    run.autoEligibility = "eligible";
+    run.autoGateVersion = "annotation_auto_gate_v1";
+    run.autoGateIssues = [];
+    run.wouldAutoAccept = true;
+    run.autoAcceptEnabledSnapshot = true;
+    run.autoGateEvaluatedAt = new Date("2026-08-28T12:00:00Z");
+    run.auditStatus = "pending";
+
+    expect(acceptedAnnotationRun(run, null)).toMatchObject({
+      source: "candidate",
+      acceptance: {
+        mode: "automatic",
+        acceptedAt: Date.parse("2026-08-28T12:00:00Z"),
+        autoGateVersion: "annotation_auto_gate_v1",
+      },
+      review: null,
+    });
+
+    run.autoGateIssues = [{
+      code: "NO_TASK_DETECTED",
+      level: "manual_review",
+      fieldPath: null,
+      taskIndex: null,
+      message: "视频未识别到任务",
+      evidenceTimestampsMs: [],
+      resolution: "not_applicable",
+    }];
+    expect(acceptedAnnotationRun(run, null)).toBeNull();
+  });
 });

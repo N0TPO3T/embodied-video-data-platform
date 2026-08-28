@@ -10,6 +10,7 @@ import {
 } from "typeorm";
 
 import type { LabelSetSnapshot } from "../../rules/rule-calculator.js";
+import type { AnnotationGateIssue } from "../../video-annotation/annotation-auto-gate.js";
 import { SubmissionEntity } from "./submission.entity.js";
 
 export type AnnotationExecutionStatus =
@@ -23,6 +24,7 @@ export type AnnotationExecutionStatus =
 
 export type AnnotationReviewStatus =
   | "pending"
+  | "not_required"
   | "accepted_unchanged"
   | "accepted_corrected"
   | "rejected"
@@ -35,14 +37,21 @@ export type AnnotationPublicationStatus =
   | "rejected"
   | "superseded";
 
+export type AnnotationAutoEligibility =
+  | "not_evaluated"
+  | "eligible"
+  | "manual_required";
+
+export type AnnotationAuditStatus = "not_selected" | "pending" | "completed";
+
 @Entity({ name: "annotation_runs" })
 @Index("idx_annotation_runs_submission_created", ["submissionId", "createdAt"])
 @Index("idx_annotation_runs_execution_retry", ["executionStatus", "nextRetryAt"])
 @Index("idx_annotation_runs_execution_updated", ["executionStatus", "updatedAt", "id"])
 @Index("idx_annotation_runs_review_publication_updated", ["reviewStatus", "publicationStatus", "updatedAt", "id"])
-@Index("uq_annotation_runs_current_human_verified", ["submissionId"], {
+@Index("uq_annotation_runs_current_published", ["submissionId"], {
   unique: true,
-  where: `"publication_status" = 'human_verified'`,
+  where: `"publication_status" IN ('human_verified', 'auto_accepted')`,
 })
 @Index("uq_annotation_runs_pending_candidate", ["submissionId"], {
   unique: true,
@@ -107,6 +116,21 @@ export class AnnotationRunEntity {
   @Column({ name: "attempt_count", type: "integer", default: 0 })
   attemptCount = 0;
 
+  @Column({ name: "full_model_attempts", type: "integer", default: 0 })
+  fullModelAttempts = 0;
+
+  @Column({ name: "schema_repair_calls", type: "integer", default: 0 })
+  schemaRepairCalls = 0;
+
+  @Column({ name: "targeted_repair_calls", type: "integer", default: 0 })
+  targetedRepairCalls = 0;
+
+  @Column({ name: "infrastructure_retry_count", type: "integer", default: 0 })
+  infrastructureRetryCount = 0;
+
+  @Column({ name: "provider_call_count", type: "integer", default: 0 })
+  providerCallCount = 0;
+
   @Column({ name: "review_revision", type: "integer", default: 0 })
   reviewRevision = 0;
 
@@ -133,6 +157,30 @@ export class AnnotationRunEntity {
 
   @Column({ name: "human_result", type: "jsonb", nullable: true })
   humanResult: Record<string, unknown> | null = null;
+
+  @Column({ name: "auto_eligibility", type: "varchar", length: 24, default: "not_evaluated" })
+  autoEligibility: AnnotationAutoEligibility = "not_evaluated";
+
+  @Column({ name: "auto_gate_version", type: "varchar", length: 80, nullable: true })
+  autoGateVersion: string | null = null;
+
+  @Column({ name: "auto_gate_issues", type: "jsonb", default: () => "'[]'::jsonb" })
+  autoGateIssues: AnnotationGateIssue[] = [];
+
+  @Column({ name: "would_auto_accept", type: "boolean", default: false })
+  wouldAutoAccept = false;
+
+  @Column({ name: "auto_accept_enabled_snapshot", type: "boolean", default: false })
+  autoAcceptEnabledSnapshot = false;
+
+  @Column({ name: "auto_gate_evaluated_at", type: "timestamptz", nullable: true })
+  autoGateEvaluatedAt: Date | null = null;
+
+  @Column({ name: "audit_status", type: "varchar", length: 24, default: "not_selected" })
+  auditStatus: AnnotationAuditStatus = "not_selected";
+
+  @Column({ name: "audit_selected_at", type: "timestamptz", nullable: true })
+  auditSelectedAt: Date | null = null;
 
   @Column({ name: "input_tokens", type: "integer", nullable: true })
   inputTokens: number | null = null;

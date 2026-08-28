@@ -1,10 +1,15 @@
 import { z } from "zod";
 
 import type { TimestampedFrame } from "../video-quality/video-quality.types.js";
+import {
+  evaluateAnnotationAutoGate,
+  type AnnotationAutoGateDecision,
+  type AnnotationGateIssue,
+} from "./annotation-auto-gate.js";
 
 export const VIDEO_ANNOTATION_SCHEMA_VERSION = "ego_video_annotation_v2" as const;
 export const VIDEO_ANNOTATION_POLICY_VERSION =
-  "ego_annotation_evidence_policy_v2" as const;
+  "ego_annotation_evidence_policy_v3" as const;
 
 export const LEGACY_VIDEO_ANNOTATION_SCHEMA_VERSION =
   "ego_video_annotation_v1" as const;
@@ -263,6 +268,7 @@ export type VideoAnnotationCandidateSuccess = {
     warnings: string[];
   };
   reviewReasons: string[];
+  gate: AnnotationAutoGateDecision;
 };
 
 export type VideoAnnotationCandidateFailure = {
@@ -372,6 +378,9 @@ function validateCoverage(input: {
   let previousEndPosition = -1;
   for (const [index, segment] of input.raw.coverage_segments.entries()) {
     const context = `coverage_segments[${index}]`;
+    if (!segment.visible_activity.trim()) {
+      input.errors.push(`${context}.visible_activity 不能为空白`);
+    }
     if (segment.end_ms < segment.start_ms) {
       input.errors.push(`${context} 时间区间无效`);
     }
@@ -489,6 +498,8 @@ export function normalizeVideoAnnotation(input: {
     completionTokens: number | null;
     totalTokens: number | null;
   };
+  repairs?: AnnotationGateIssue[];
+  /** Kept for older callers; evidence gap no longer changes gate eligibility. */
   applySparseEvidencePolicy?: boolean;
   enabledLabels?: Array<{
     id: string;
@@ -498,11 +509,9 @@ export function normalizeVideoAnnotation(input: {
 }): VideoAnnotationCandidateSuccess {
   const errors: string[] = [];
   const warnings: string[] = [];
-  const reviewReasons: string[] = [];
   const sourceTimestamps = sortedUniqueTimestamps(input.frames);
   const sourceTimestampSet = new Set(sourceTimestamps);
   const gapMs = maxFrameGapMsFromTimestamps(sourceTimestamps);
-  const applySparseEvidencePolicy = input.applySparseEvidencePolicy ?? true;
 
   if (sourceTimestamps.some((timestamp) => timestamp > input.durationMs)) {
     errors.push("输入采样时间点超出视频时长");
@@ -510,6 +519,9 @@ export function normalizeVideoAnnotation(input: {
 
   if (input.raw.video_id !== input.raw.video_id.trim()) {
     errors.push("video_id 包含首尾空白");
+  }
+  if (!input.raw.assessability_reason.trim()) {
+    errors.push("assessability_reason 不能为空白");
   }
 
   validateCoverage({
@@ -523,6 +535,7 @@ export function normalizeVideoAnnotation(input: {
   const effectiveTasks = input.raw.tasks.map((task, taskIndex) => {
     const reasons: string[] = [];
     const context = `tasks[${taskIndex}]`;
+    if (!task.task_label.trim()) errors.push(`${context}.task_label 不能为空白`);
     if (task.end_ms <= task.start_ms) errors.push(`${context} 时间区间无效`);
     if (
       !sourceTimestampSet.has(task.start_ms) ||
@@ -637,24 +650,6 @@ export function normalizeVideoAnnotation(input: {
       effectiveCompletion = "uncertain";
       reasons.push("complete_task_requires_start_core_end_evidence");
     }
-    if (applySparseEvidencePolicy && gapMs !== null && gapMs > 1_000) {
-      if (task.completion !== "uncertain") {
-        effectiveCompletion = "uncertain";
-        reasons.push("sparse_sampling_cannot_verify_completion");
-      }
-      if (
-        task.result_status !== "unknown" &&
-        task.result_status !== "not_applicable"
-      ) {
-        effectiveResult = "unknown";
-        reasons.push("sparse_sampling_cannot_verify_outcome");
-      }
-      if (task.failure_recovery !== "not_assessable") {
-        effectiveRecovery = "not_assessable";
-        reasons.push("sparse_sampling_cannot_verify_failure_recovery");
-      }
-    }
-
     if (
       task.result_status === "success" ||
       task.result_status === "failure"
@@ -742,25 +737,12 @@ export function normalizeVideoAnnotation(input: {
       effectiveRecovery = "not_assessable";
       reasons.push("none_observed_contains_failure_recovery_evidence");
     }
-    if (
-      task.failure_recovery === "possible_failure" ||
-      task.failure_recovery === "ambiguous" ||
-      task.failure_recovery === "not_assessable"
-    ) {
-      reasons.push("failure_recovery_requires_human_review");
-    }
-    if (task.evidence_level === "uncertain" || task.confidence < 0.75) {
-      reasons.push("semantic_annotation_low_confidence");
-    }
     const effectiveSignals = effectiveComplexitySignals(
       task,
       effectiveRecovery,
       warnings,
       context,
     );
-    if (reasons.length > 0) {
-      reviewReasons.push(`${context}: ${[...new Set(reasons)].join(",")}`);
-    }
     return {
       ...task,
       effective_completion: effectiveCompletion,
@@ -777,40 +759,21 @@ export function normalizeVideoAnnotation(input: {
     context: "scene.evidence_timestamps_ms",
     errors,
   });
-  if (input.raw.scene.confidence < 0.75) reviewReasons.push("scene: low_confidence");
-  if (input.raw.tasks.length === 0) reviewReasons.push("未识别到可见任务");
 
   let effectiveAssessability = input.raw.model_assessability;
   let effectiveAssessabilityReason = input.raw.assessability_reason;
-  if (applySparseEvidencePolicy && gapMs !== null && gapMs > 1_000) {
-    effectiveAssessability = "needs_review";
-    effectiveAssessabilityReason = `最大采样间隔 ${gapMs}ms，不能排除帧间短暂动作、失败或结果变化。`;
-    warnings.push(
-      `最大采样间隔 ${gapMs}ms，完成度、结果和失败恢复已按证据策略保守降级`,
-    );
-  }
   if (errors.length > 0) {
     effectiveAssessability = "needs_review";
-    effectiveAssessabilityReason = "候选标注存在结构或证据一致性错误，必须人工修正。";
+    effectiveAssessabilityReason = "候选标注存在结构或证据一致性错误，需要模型重试。";
   }
-  if (effectiveAssessability === "needs_review") {
-    reviewReasons.push(`model_assessability: ${effectiveAssessabilityReason}`);
-  }
-  if (input.raw.uncertain_fields.length > 0) {
-    reviewReasons.push(`uncertain_fields: ${input.raw.uncertain_fields.join(",")}`);
-  }
-  if (errors.length > 0) reviewReasons.push("候选标注证据校验未通过");
 
   const labelMappings = mapControlledLabels(
     input.raw,
     input.enabledLabels ?? [],
   );
 
-  return {
-    status:
-      errors.length > 0 || reviewReasons.length > 0
-        ? "review_required"
-        : "candidate",
+  const candidate: Omit<VideoAnnotationCandidateSuccess, "gate"> = {
+    status: "candidate",
     schemaVersion: VIDEO_ANNOTATION_SCHEMA_VERSION,
     policyVersion: VIDEO_ANNOTATION_POLICY_VERSION,
     promptVersion: input.promptVersion,
@@ -836,7 +799,24 @@ export function normalizeVideoAnnotation(input: {
       tasks: effectiveTasks,
     },
     validation: { errors: [...new Set(errors)], warnings: [...new Set(warnings)] },
-    reviewReasons: [...new Set(reviewReasons)],
+    reviewReasons: [],
+  };
+  const gate = evaluateAnnotationAutoGate({
+    candidate,
+    repairs: input.repairs,
+  });
+  const blockingReasons = gate.issues
+    .filter(
+      (issue) =>
+        issue.level === "manual_review" ||
+        (issue.level === "retryable" && issue.resolution === "unresolved"),
+    )
+    .map((issue) => `${issue.code}: ${issue.message}`);
+  return {
+    ...candidate,
+    status: gate.eligibility === "eligible" ? "candidate" : "review_required",
+    reviewReasons: [...new Set(blockingReasons)],
+    gate,
   };
 }
 

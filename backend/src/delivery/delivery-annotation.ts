@@ -10,12 +10,22 @@ export type AcceptedDeliveryAnnotation = {
   source: "candidate" | "human_correction";
   effective: Record<string, unknown>;
   labelMappings: unknown[];
+  acceptance:
+    | {
+        mode: "automatic";
+        acceptedAt: number;
+        autoGateVersion: string;
+      }
+    | {
+        mode: "human";
+        acceptedAt: number;
+      };
   review: {
     reviewedByAccountId: string;
     reviewedByName: string;
     reviewedAt: number;
     reason: string;
-  };
+  } | null;
 };
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -32,15 +42,34 @@ export function acceptedAnnotationRun(
   run: AnnotationRunEntity | null | undefined,
   review: AnnotationReviewEntity | null | undefined,
 ): AcceptedDeliveryAnnotation | null {
+  if (!run || run.executionStatus !== "succeeded") return null;
+  const automatic = run.publicationStatus === "auto_accepted";
+  const human = run.publicationStatus === "human_verified";
+  if (!automatic && !human) return null;
   if (
-    !run ||
-    !review ||
-    review.annotationRunId !== run.id ||
-    run.executionStatus !== "succeeded" ||
-    run.publicationStatus !== "human_verified" ||
-    !["accepted_unchanged", "accepted_corrected"].includes(run.reviewStatus) ||
-    review.revision !== run.reviewRevision ||
-    review.disposition !== run.reviewStatus
+    human &&
+    (!review ||
+      review.annotationRunId !== run.id ||
+      !["accepted_unchanged", "accepted_corrected"].includes(run.reviewStatus) ||
+      review.revision !== run.reviewRevision ||
+      review.disposition !== run.reviewStatus)
+  ) {
+    return null;
+  }
+  if (
+    automatic &&
+    (review !== null && review !== undefined ||
+      run.reviewStatus !== "not_required" ||
+      run.autoEligibility !== "eligible" ||
+      !run.autoGateVersion ||
+      !run.autoGateEvaluatedAt ||
+      !run.wouldAutoAccept ||
+      !run.autoAcceptEnabledSnapshot ||
+      run.autoGateIssues.some(
+        (issue) =>
+          issue.level === "manual_review" ||
+          (issue.level === "retryable" && issue.resolution === "unresolved"),
+      ))
   ) {
     return null;
   }
@@ -63,17 +92,19 @@ export function acceptedAnnotationRun(
     run.reviewStatus === "accepted_corrected" ? record(run.humanResult) : candidate;
   if (!selected) return null;
   if (
+    human &&
     run.reviewStatus === "accepted_unchanged" &&
-    (run.humanResult !== null || review.correctedResult !== null)
+    (run.humanResult !== null || review!.correctedResult !== null)
   ) {
     return null;
   }
   if (
+    human &&
     run.reviewStatus === "accepted_corrected" &&
     (selected.source !== "human_correction" ||
       selected.schemaVersion !== run.schemaVersion ||
       selected.policyVersion !== run.evidencePolicyVersion ||
-      JSON.stringify(review.correctedResult) !== JSON.stringify(run.humanResult))
+      JSON.stringify(review!.correctedResult) !== JSON.stringify(run.humanResult))
   ) {
     return null;
   }
@@ -89,9 +120,11 @@ export function acceptedAnnotationRun(
     !nonEmptyString(run.promptContentSha256) ||
     !/^[a-f0-9]{64}$/u.test(run.promptContentSha256) ||
     !nonEmptyString(run.model) ||
-    !nonEmptyString(review.reviewerAccountId) ||
-    !nonEmptyString(review.reviewerName) ||
-    !Number.isFinite(review.createdAt.getTime())
+    (human &&
+      (!review ||
+        !nonEmptyString(review.reviewerAccountId) ||
+        !nonEmptyString(review.reviewerName) ||
+        !Number.isFinite(review.createdAt.getTime())))
   ) {
     return null;
   }
@@ -105,11 +138,23 @@ export function acceptedAnnotationRun(
       run.reviewStatus === "accepted_corrected" ? "human_correction" : "candidate",
     effective,
     labelMappings: selected.labelMappings,
-    review: {
-      reviewedByAccountId: review.reviewerAccountId,
-      reviewedByName: review.reviewerName,
-      reviewedAt: review.createdAt.getTime(),
-      reason: review.reason,
-    },
+    acceptance: automatic
+      ? {
+          mode: "automatic",
+          acceptedAt: run.autoGateEvaluatedAt!.getTime(),
+          autoGateVersion: run.autoGateVersion!,
+        }
+      : {
+          mode: "human",
+          acceptedAt: review!.createdAt.getTime(),
+        },
+    review: human
+      ? {
+          reviewedByAccountId: review!.reviewerAccountId,
+          reviewedByName: review!.reviewerName,
+          reviewedAt: review!.createdAt.getTime(),
+          reason: review!.reason,
+        }
+      : null,
   };
 }

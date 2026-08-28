@@ -84,14 +84,16 @@ describe("qwen video annotation provider", () => {
     const prompt = await loadVideoAnnotationPrompt(
       resolve(process.cwd(), "../docs/quality/prompts/ego-video-annotation-v2"),
     );
+    const fetcher = vi.fn().mockResolvedValue(new Response("not found", { status: 404 }));
     const provider = new QwenVideoAnnotationProvider({
       apiKey: "test-key",
       baseUrl: "https://example.invalid/v1",
       timeoutMs: 1_000,
       prompt,
-      fetcher: vi.fn().mockResolvedValue(new Response("not found", { status: 404 })),
+      fetcher,
     });
 
+    const calls: Array<{ callKind: string; callStatus: string; httpStatus: number | null }> = [];
     await expect(
       provider.annotateStrict({
         videoId: "video-1",
@@ -101,8 +103,115 @@ describe("qwen video annotation provider", () => {
           dataUrl: "data:image/jpeg;base64,AA==",
         })),
         enabledLabels: [],
+      }, undefined, {
+        logicalFullAttempt: 1,
+        onModelCall: async (call) => {
+          calls.push(call);
+        },
       }),
     ).rejects.toBeInstanceOf(VideoAnnotationProviderError);
+    expect(calls).toEqual([
+      expect.objectContaining({ callKind: "full", callStatus: "failed", httpStatus: 404 }),
+    ]);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses at most one schema repair and records every actual provider call", async () => {
+    const prompt = await loadVideoAnnotationPrompt(
+      resolve(process.cwd(), "../docs/quality/prompts/ego-video-annotation-v2"),
+    );
+    const response = (content: string, requestId: string) =>
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content } }],
+          request_id: requestId,
+          usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(response("not-json", "request-full"))
+      .mockResolvedValueOnce(response(JSON.stringify(modelOutput()), "request-schema"));
+    const calls: Array<{ callKind: string; callStatus: string; totalTokens: number | null }> = [];
+    const provider = new QwenVideoAnnotationProvider({
+      apiKey: "test-key",
+      baseUrl: "https://example.invalid/v1",
+      timeoutMs: 1_000,
+      prompt,
+      fetcher,
+    });
+
+    const result = await provider.annotateStrict({
+      videoId: "video-1",
+      durationMs: 750,
+      frames: [0, 250, 500, 750].map((timestampMs) => ({
+        timestampMs,
+        dataUrl: "data:image/jpeg;base64,AA==",
+      })),
+      enabledLabels: [],
+    }, undefined, {
+      logicalFullAttempt: 1,
+      onModelCall: async (call) => {
+        calls.push(call);
+      },
+    });
+
+    expect(result.status).toBe("candidate");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(calls).toEqual([
+      expect.objectContaining({ callKind: "full", callStatus: "succeeded", totalTokens: 30 }),
+      expect.objectContaining({ callKind: "schema_repair", callStatus: "succeeded", totalTokens: 30 }),
+    ]);
+  });
+
+  it("performs one targeted repair for structurally valid evidence conflicts", async () => {
+    const prompt = await loadVideoAnnotationPrompt(
+      resolve(process.cwd(), "../docs/quality/prompts/ego-video-annotation-v2"),
+    );
+    const invalid = modelOutput();
+    invalid.coverage_segments[0]!.end_ms = 500;
+    invalid.coverage_segments[0]!.evidence_timestamps_ms = [0, 250, 500];
+    const response = (output: ReturnType<typeof modelOutput>) =>
+      new Response(
+        JSON.stringify({ choices: [{ message: { content: JSON.stringify(output) } }] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(response(invalid))
+      .mockResolvedValueOnce(response(modelOutput()));
+    const callKinds: string[] = [];
+    const provider = new QwenVideoAnnotationProvider({
+      apiKey: "test-key",
+      baseUrl: "https://example.invalid/v1",
+      timeoutMs: 1_000,
+      prompt,
+      fetcher,
+    });
+
+    const result = await provider.annotateStrict({
+      videoId: "video-1",
+      durationMs: 750,
+      frames: [0, 250, 500, 750].map((timestampMs) => ({
+        timestampMs,
+        dataUrl: "data:image/jpeg;base64,AA==",
+      })),
+      enabledLabels: [],
+    }, undefined, {
+      logicalFullAttempt: 1,
+      onModelCall: async (call) => {
+        callKinds.push(call.callKind);
+      },
+    });
+
+    expect(result.gate.eligibility).toBe("eligible");
+    expect(callKinds).toEqual(["full", "targeted_repair"]);
+    expect(result.gate.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ level: "retryable", resolution: "retried" }),
+      ]),
+    );
   });
 
   it("loads versioned prompt assets and sends only task-blind annotation context", async () => {
@@ -227,10 +336,52 @@ describe("qwen video annotation provider", () => {
     const prompt = await loadVideoAnnotationPrompt(
       resolve(process.cwd(), "../docs/quality/prompts/ego-video-annotation-v2"),
     );
+    const sourceFrames = Array.from({ length: 96 }, (_, index) => ({
+      timestampMs: index * 250,
+      dataUrl: "data:image/jpeg;base64,AA==",
+    }));
+    const selectedTimestamps = Array.from({ length: 80 }, (_, index) =>
+      sourceFrames[Math.round((index * 95) / 79)]!.timestampMs,
+    );
+    const output = modelOutput();
+    output.tasks[0]!.end_ms = 23_750;
+    output.tasks[0]!.evidence_timestamps_ms = [
+      selectedTimestamps[0]!,
+      selectedTimestamps[26]!,
+      selectedTimestamps[52]!,
+      selectedTimestamps[79]!,
+    ];
+    output.tasks[0]!.atomic_action_sequence = [
+      {
+        order: 1,
+        verb: "move",
+        object: "杯子",
+        evidence_timestamps_ms: [selectedTimestamps[0]!, selectedTimestamps[26]!],
+      },
+      {
+        order: 2,
+        verb: "release",
+        object: "杯子",
+        evidence_timestamps_ms: [selectedTimestamps[79]!],
+      },
+    ];
+    output.tasks[0]!.result_evidence_timestamps_ms = [
+      selectedTimestamps[52]!,
+      selectedTimestamps[79]!,
+    ];
+    output.scene.evidence_timestamps_ms = [selectedTimestamps[0]!, selectedTimestamps[79]!];
+    output.coverage_segments[0] = {
+      start_ms: selectedTimestamps[0]!,
+      end_ms: selectedTimestamps[79]!,
+      segment_type: "task",
+      linked_task_index: 0,
+      visible_activity: "拿起并放置杯子",
+      evidence_timestamps_ms: selectedTimestamps,
+    };
     const fetcher = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
-          choices: [{ message: { content: JSON.stringify(modelOutput()) } }],
+          choices: [{ message: { content: JSON.stringify(output) } }],
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       ),
@@ -246,14 +397,11 @@ describe("qwen video annotation provider", () => {
     const result = await provider.annotate({
       videoId: "video-1",
       durationMs: 23_750,
-      frames: Array.from({ length: 96 }, (_, index) => ({
-        timestampMs: index * 250,
-        dataUrl: "data:image/jpeg;base64,AA==",
-      })),
+      frames: sourceFrames,
       enabledLabels: [],
     });
 
-    expect(result.status).toBe("review_required");
+    expect(result.status).toBe("candidate");
     if (result.status !== "system_failed") {
       expect(result.frameCount).toBe(80);
       expect(result.sampling.sourceTimestampsMs).toHaveLength(80);

@@ -200,7 +200,29 @@ export class OperationsService {
         model: run.model,
         promptVersion: run.promptVersion,
         attemptCount: run.attemptCount,
+        fullModelAttempts: run.fullModelAttempts,
+        schemaRepairCalls: run.schemaRepairCalls,
+        targetedRepairCalls: run.targetedRepairCalls,
+        infrastructureRetryCount: run.infrastructureRetryCount,
+        providerCallCount: run.providerCallCount,
         reviewRevision: run.reviewRevision,
+        autoEligibility: run.autoEligibility,
+        autoGateVersion: run.autoGateVersion,
+        wouldAutoAccept: run.wouldAutoAccept,
+        autoAcceptEnabledSnapshot: run.autoAcceptEnabledSnapshot,
+        autoGateEvaluatedAt: run.autoGateEvaluatedAt?.getTime() ?? null,
+        auditStatus: run.auditStatus,
+        auditSelectedAt: run.auditSelectedAt?.getTime() ?? null,
+        blockingReasons: run.autoGateIssues.filter(
+          (issue) =>
+            issue.level === "manual_review" ||
+            (issue.level === "retryable" && issue.resolution === "unresolved"),
+        ),
+        advisories: run.autoGateIssues.filter((issue) => issue.level === "advisory"),
+        repairs: run.autoGateIssues.filter(
+          (issue) =>
+            issue.level === "repairable" || issue.resolution === "retried",
+        ),
         lastErrorCode: run.lastErrorCode,
         lastErrorMessage: redactAnnotationError(run.lastErrorMessage),
         queuedAt: run.queuedAt.getTime(),
@@ -230,6 +252,23 @@ export class OperationsService {
         .andWhere("run.executionStatus = :succeeded", { succeeded: "succeeded" })
         .andWhere("run.reviewStatus = :pending", { pending: "pending" })
         .andWhere("run.publicationStatus = :candidate", { candidate: "candidate_only" });
+      query.andWhere("run.autoEligibility = :manualRequired", {
+        manualRequired: "manual_required",
+      });
+      return;
+    }
+    if (view === "audit_pending") {
+      query
+        .andWhere("run.publicationStatus = :published", {
+          published: "auto_accepted",
+        })
+        .andWhere("run.auditStatus = :pending", { pending: "pending" });
+      return;
+    }
+    if (view === "auto_published") {
+      query.andWhere("run.publicationStatus = :published", {
+        published: "auto_accepted",
+      });
       return;
     }
     if (view === "execution_failed") {
@@ -271,25 +310,45 @@ export class OperationsService {
         WHERE run.executionStatus = 'succeeded'
           AND run.reviewStatus = 'pending'
           AND run.publicationStatus = 'candidate_only'
+          AND run.autoEligibility = 'manual_required'
       )`, "pending")
       .addSelect("COUNT(*) FILTER (WHERE run.reviewStatus = 'accepted_unchanged')", "acceptedUnchanged")
       .addSelect("COUNT(*) FILTER (WHERE run.reviewStatus = 'accepted_corrected')", "acceptedCorrected")
       .addSelect("COUNT(*) FILTER (WHERE run.reviewStatus = 'rejected')", "rejected")
       .addSelect("COUNT(*) FILTER (WHERE run.reviewStatus = 'unable_to_judge')", "unableToJudge")
+      .addSelect("COUNT(*) FILTER (WHERE run.autoGateEvaluatedAt IS NOT NULL)", "gateEvaluated")
+      .addSelect("COUNT(*) FILTER (WHERE run.autoEligibility = 'eligible')", "eligible")
+      .addSelect("COUNT(*) FILTER (WHERE run.autoEligibility = 'manual_required')", "manualRequired")
       .addSelect(`COUNT(*) FILTER (
         WHERE run.executionStatus = 'succeeded'
-          AND (run.inputTokens IS NOT NULL OR run.outputTokens IS NOT NULL)
-      )`, "runsWithReportedUsage")
-      .addSelect("COALESCE(SUM(run.inputTokens) FILTER (WHERE run.executionStatus = 'succeeded'), 0)", "totalReportedInputTokens")
-      .addSelect("COALESCE(SUM(run.outputTokens) FILTER (WHERE run.executionStatus = 'succeeded'), 0)", "totalReportedOutputTokens")
-      .addSelect(`AVG(COALESCE(run.inputTokens, 0) + COALESCE(run.outputTokens, 0)) FILTER (
-        WHERE run.executionStatus = 'succeeded'
-          AND (run.inputTokens IS NOT NULL OR run.outputTokens IS NOT NULL)
-      )`, "averageReportedTokensPerSuccessfulRun")
-      .addSelect("AVG(run.latencyMs) FILTER (WHERE run.executionStatus = 'succeeded')", "averageReportedModelLatencyMs")
+          AND run.autoEligibility = 'eligible'
+          AND run.autoAcceptEnabledSnapshot = true
+      )`, "autoAccepted")
+      .addSelect("COUNT(*) FILTER (WHERE run.auditStatus = 'pending')", "auditPending")
+      .addSelect("COUNT(*) FILTER (WHERE run.auditStatus = 'completed')", "auditCompleted")
+      .addSelect("COUNT(*) FILTER (WHERE run.publicationStatus = 'auto_accepted')", "publishedByAuto")
+      .addSelect("COUNT(*) FILTER (WHERE run.publicationStatus = 'human_verified')", "publishedByHuman")
+      .addSelect("COALESCE(SUM(run.providerCallCount), 0)", "providerCalls")
+      .addSelect("COALESCE(SUM(run.schemaRepairCalls), 0)", "schemaRepairCalls")
+      .addSelect("COALESCE(SUM(run.targetedRepairCalls), 0)", "targetedRepairCalls")
+      .addSelect("COALESCE(SUM(run.infrastructureRetryCount), 0)", "infrastructureRetries")
       .getRawOne<Record<string, string | null>>();
+    const callRows = (await this.annotationRunsRepository.manager.query(`
+      SELECT
+        COUNT(*) AS "providerCalls",
+        COUNT(*) FILTER (WHERE call_status = 'succeeded') AS "succeededCalls",
+        COUNT(*) FILTER (WHERE call_status = 'failed') AS "failedCalls",
+        COUNT(*) FILTER (
+          WHERE input_tokens IS NOT NULL OR output_tokens IS NOT NULL OR total_tokens IS NOT NULL
+        ) AS "callsWithReportedUsage",
+        COALESCE(SUM(input_tokens), 0) AS "totalReportedInputTokens",
+        COALESCE(SUM(output_tokens), 0) AS "totalReportedOutputTokens",
+        COALESCE(SUM(total_tokens), 0) AS "totalReportedTokens",
+        AVG(latency_ms) AS "averageReportedModelLatencyMs"
+      FROM annotation_model_calls
+    `)) as Array<Record<string, string | null>>;
+    const calls = callRows[0] ?? {};
     const number = (key: string) => Number(row?.[key] ?? 0);
-    const nullableAverage = (key: string) => row?.[key] == null ? null : Math.round(Number(row[key]));
     return {
       runs: {
         historicalTotal: number("historicalTotal"),
@@ -308,13 +367,33 @@ export class OperationsService {
         rejected: number("rejected"),
         unableToJudge: number("unableToJudge"),
       },
+      gate: {
+        gateEvaluated: number("gateEvaluated"),
+        eligible: number("eligible"),
+        manualRequired: number("manualRequired"),
+        autoAccepted: number("autoAccepted"),
+        auditPending: number("auditPending"),
+        auditCompleted: number("auditCompleted"),
+        publishedByAuto: number("publishedByAuto"),
+        publishedByHuman: number("publishedByHuman"),
+      },
       usage: {
-        scope: "successful_final_response_only" as const,
-        runsWithReportedUsage: number("runsWithReportedUsage"),
-        totalReportedInputTokens: number("totalReportedInputTokens"),
-        totalReportedOutputTokens: number("totalReportedOutputTokens"),
-        averageReportedTokensPerSuccessfulRun: nullableAverage("averageReportedTokensPerSuccessfulRun"),
-        averageReportedModelLatencyMs: nullableAverage("averageReportedModelLatencyMs"),
+        scope: "all_reported_model_calls" as const,
+        providerCalls: Number(calls.providerCalls ?? 0),
+        succeededCalls: Number(calls.succeededCalls ?? 0),
+        failedCalls: Number(calls.failedCalls ?? 0),
+        callsWithReportedUsage: Number(calls.callsWithReportedUsage ?? 0),
+        totalReportedInputTokens: Number(calls.totalReportedInputTokens ?? 0),
+        totalReportedOutputTokens: Number(calls.totalReportedOutputTokens ?? 0),
+        totalReportedTokens: Number(calls.totalReportedTokens ?? 0),
+        averageReportedModelLatencyMs:
+          calls.averageReportedModelLatencyMs === null ||
+          calls.averageReportedModelLatencyMs === undefined
+            ? null
+            : Math.round(Number(calls.averageReportedModelLatencyMs)),
+        schemaRepairCalls: number("schemaRepairCalls"),
+        targetedRepairCalls: number("targetedRepairCalls"),
+        infrastructureRetries: number("infrastructureRetries"),
       },
     };
   }

@@ -2,6 +2,7 @@ import type { DataSource } from "typeorm";
 
 import { createDataSource } from "../src/database/data-source.js";
 import { AnnotationCorrectionEntity } from "../src/database/entities/annotation-correction.entity.js";
+import { AnnotationModelCallEntity } from "../src/database/entities/annotation-model-call.entity.js";
 import { AnnotationReviewEntity } from "../src/database/entities/annotation-review.entity.js";
 import { AnnotationRunEntity } from "../src/database/entities/annotation-run.entity.js";
 import { SubmissionEntity } from "../src/database/entities/submission.entity.js";
@@ -37,7 +38,7 @@ describe("annotation lifecycle migration", () => {
 
   it("migrates down/up and refuses historical publication conflicts", async () => {
     expect(await indexNames()).toEqual(expect.arrayContaining([
-      "uq_annotation_runs_current_human_verified",
+      "uq_annotation_runs_current_published",
       "uq_annotation_runs_pending_candidate",
       "idx_annotation_runs_execution_updated",
       "idx_annotation_runs_review_publication_updated",
@@ -109,15 +110,26 @@ describe("annotation lifecycle migration", () => {
     });
 
     await dataSource.undoLastMigration();
+    expect(await indexNames()).toEqual(expect.arrayContaining([
+      "uq_annotation_runs_current_human_verified",
+      "uq_annotation_runs_pending_candidate",
+    ]));
+    await dataSource.undoLastMigration();
     expect(await indexNames()).not.toEqual(expect.arrayContaining([
       "uq_annotation_runs_current_human_verified",
       "uq_annotation_runs_pending_candidate",
     ]));
-    await dataSource.getRepository(AnnotationRunEntity).save({
-      ...baseRun,
-      id: "ANR-MIG-CONFLICT",
-      trigger: "manual",
-    });
+    await dataSource.query(`
+      INSERT INTO annotation_runs (
+        id, submission_id, trigger, pipeline_version, schema_version,
+        evidence_policy_version, execution_status, review_status,
+        publication_status, attempt_count, review_revision, queued_at
+      ) VALUES (
+        'ANR-MIG-CONFLICT', 'SUB-MIG-AN', 'manual', 'pipeline-v1', 'schema-v1',
+        'evidence-v1', 'succeeded', 'accepted_unchanged',
+        'human_verified', 1, 1, now()
+      )
+    `);
 
     await expect(dataSource.runMigrations()).rejects.toThrow(
       /duplicate human_verified runs/u,
@@ -128,9 +140,20 @@ describe("annotation lifecycle migration", () => {
     await dataSource.getRepository(AnnotationRunEntity).delete({ id: "ANR-MIG-CONFLICT" });
     await dataSource.runMigrations();
     expect(await indexNames()).toEqual(expect.arrayContaining([
-      "uq_annotation_runs_current_human_verified",
+      "uq_annotation_runs_current_published",
       "uq_annotation_runs_pending_candidate",
     ]));
     expect(await dataSource.getRepository(AnnotationCorrectionEntity).count()).toBe(1);
+    await dataSource.getRepository(AnnotationModelCallEntity).save({
+      id: "AMC-MIG-1",
+      annotationRunId: "ANR-MIG-1",
+      logicalFullAttempt: 1,
+      callKind: "full",
+      callStatus: "succeeded",
+      latencyMs: 10,
+    });
+    await expect(dataSource.undoLastMigration()).rejects.toThrow(
+      /migration down blocked/u,
+    );
   });
 });

@@ -166,6 +166,8 @@ services:
       NODE_ENV: production
       AI_ANNOTATION_CONCURRENCY: 1
       AI_ANNOTATION_MODEL_TIMEOUT_MS: 180000
+      ANNOTATION_AUTO_ACCEPT_ENABLED: ${ANNOTATION_AUTO_ACCEPT_ENABLED:-false}
+      ANNOTATION_AUTO_ACCEPT_AUDIT_RATE: ${ANNOTATION_AUTO_ACCEPT_AUDIT_RATE:-0.05}
       VIDEO_ANNOTATION_PROMPT_PATH: /quality/prompts/ego-video-annotation-v2/manifest.json
     read_only: true
     tmpfs:

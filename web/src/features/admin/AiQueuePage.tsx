@@ -118,7 +118,9 @@ function formatDurationMs(milliseconds?: number): string {
 }
 
 const annotationViews: Array<{ value: AnnotationOperationsView; label: string }> = [
-  { value: "pending_review", label: "待复核" },
+  { value: "pending_review", label: "待人工复核" },
+  { value: "audit_pending", label: "待抽检" },
+  { value: "auto_published", label: "自动发布" },
   { value: "execution_failed", label: "执行失败" },
   { value: "in_progress", label: "执行中" },
   { value: "resolved", label: "已处理" },
@@ -127,6 +129,11 @@ const annotationViews: Array<{ value: AnnotationOperationsView; label: string }>
 
 function annotationRunStatus(run: BackendAnnotationRunListItem) {
   if (run.publicationStatus === "human_verified") return { label: "正式发布", tone: "success" as const };
+  if (run.publicationStatus === "auto_accepted") {
+    return run.auditStatus === "pending"
+      ? { label: "自动发布·待抽检", tone: "info" as const }
+      : { label: "自动发布", tone: "success" as const };
+  }
   if (run.publicationStatus === "superseded") return { label: "已替代/废弃", tone: "neutral" as const };
   if (run.reviewStatus === "rejected") return { label: "人工拒绝", tone: "danger" as const };
   if (run.reviewStatus === "unable_to_judge") return { label: "无法判断", tone: "warning" as const };
@@ -387,7 +394,7 @@ export function AiQueuePage({ navigate }: { navigate?(path: string): void } = {}
           <MetricCard
             label="待人工复核"
             value={annotationSnapshot?.summary ? String(annotationSnapshot.summary.reviews.pending) : "—"}
-            detail="仅成功、未替代的 candidate_only Run"
+            detail="仅统计具有确定 reason code 的 manual_required Run"
             icon={Clock3}
             tone={(annotationSnapshot?.summary?.reviews.pending ?? 0) > 0 ? "amber" : "green"}
           />
@@ -398,9 +405,9 @@ export function AiQueuePage({ navigate }: { navigate?(path: string): void } = {}
             icon={CopyCheck}
           />
           <MetricCard
-            label="最终成功响应用量"
-            value={annotationSnapshot?.summary?.usage.averageReportedTokensPerSuccessfulRun == null ? "—" : Math.round(annotationSnapshot.summary.usage.averageReportedTokensPerSuccessfulRun).toLocaleString()}
-            detail={annotationSnapshot?.summary ? `${annotationSnapshot.summary.usage.runsWithReportedUsage} 个 Run 报告 Token · 平均模型耗时 ${formatDurationMs(annotationSnapshot.summary.usage.averageReportedModelLatencyMs ?? undefined)}；不含失败/重试成本` : "首版仅统计最终成功响应"}
+            label="模型调用"
+            value={annotationSnapshot?.summary ? String(annotationSnapshot.summary.usage.providerCalls) : "—"}
+            detail={annotationSnapshot?.summary ? `成功 ${annotationSnapshot.summary.usage.succeededCalls} · 失败 ${annotationSnapshot.summary.usage.failedCalls} · 修复 ${annotationSnapshot.summary.usage.schemaRepairCalls + annotationSnapshot.summary.usage.targetedRepairCalls}；所有已报告调用累计` : "包含失败与修复调用"}
             icon={Cpu}
           />
         </div>
@@ -436,14 +443,14 @@ export function AiQueuePage({ navigate }: { navigate?(path: string): void } = {}
                     <td>{run.fileName}</td>
                     <td><StatusBadge label={status.label} tone={status.tone} /><br/><small>{run.executionStatus} / {run.reviewStatus} / {run.publicationStatus}</small></td>
                     <td>{run.model ?? "待锁定"}<br/><small>{run.promptVersion ?? "待锁定"}</small></td>
-                    <td>{run.attemptCount}</td>
+                    <td>{run.attemptCount}<br/><small>模型 {run.fullModelAttempts} · 调用 {run.providerCallCount} · 基础设施重试 {run.infrastructureRetryCount}</small></td>
                     <td>{formatQueueTime(run.updatedAt)}<br/><small>入队 {formatQueueTime(run.queuedAt)}</small></td>
                     <td>{run.lastErrorMessage ?? "—"}</td>
                     <td><button className="table-action" type="button" onClick={() => {
                       const path = `/admin/ai/annotation-runs/${encodeURIComponent(run.id)}/review`;
                       if (navigate) navigate(path);
                       else window.location.assign(path);
-                    }}>{run.executionStatus === "succeeded" && run.reviewStatus === "pending" && run.publicationStatus === "candidate_only" ? "打开复核" : "查看 Run"}</button></td>
+                    }}>{run.executionStatus === "succeeded" && ((run.reviewStatus === "pending" && run.publicationStatus === "candidate_only") || run.auditStatus === "pending") ? "打开复核" : "查看 Run"}</button></td>
                   </tr>
                 );
               })}

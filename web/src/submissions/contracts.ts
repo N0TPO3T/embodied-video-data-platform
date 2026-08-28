@@ -107,6 +107,16 @@ export type BackendVideoAnnotationTask = {
   policy_reasons: string[];
 };
 
+export type BackendAnnotationGateIssue = {
+  code: string;
+  level: "repairable" | "retryable" | "manual_review" | "advisory";
+  fieldPath: string | null;
+  taskIndex: number | null;
+  message: string;
+  evidenceTimestampsMs: number[];
+  resolution: "repaired" | "retried" | "unresolved" | "not_applicable";
+};
+
 export type BackendVideoAnnotationCandidate =
   | {
       status: "system_failed";
@@ -176,6 +186,11 @@ export type BackendVideoAnnotationCandidate =
       };
       validation: { errors: string[]; warnings: string[] };
       reviewReasons: string[];
+      gate?: {
+        version: string;
+        eligibility: "eligible" | "manual_required";
+        issues: BackendAnnotationGateIssue[];
+      };
     };
 
 export type BackendQualityResult = {
@@ -431,6 +446,7 @@ export type BackendAnnotationRun = {
     | "cancelled";
   reviewStatus:
     | "pending"
+    | "not_required"
     | "accepted_unchanged"
     | "accepted_corrected"
     | "rejected"
@@ -442,7 +458,20 @@ export type BackendAnnotationRun = {
     | "rejected"
     | "superseded";
   attemptCount: number;
+  fullModelAttempts: number;
+  schemaRepairCalls: number;
+  targetedRepairCalls: number;
+  infrastructureRetryCount: number;
+  providerCallCount: number;
   reviewRevision: number;
+  autoEligibility: "not_evaluated" | "eligible" | "manual_required";
+  autoGateVersion: string | null;
+  autoGateIssues: BackendAnnotationGateIssue[];
+  wouldAutoAccept: boolean;
+  autoAcceptEnabledSnapshot: boolean;
+  autoGateEvaluatedAt: number | null;
+  auditStatus: "not_selected" | "pending" | "completed";
+  auditSelectedAt: number | null;
   lastErrorCode: string | null;
   lastErrorMessage: string | null;
   nextRetryAt: number | null;
@@ -451,7 +480,8 @@ export type BackendAnnotationRun = {
   review: {
     id: string;
     revision: number;
-    disposition: Exclude<BackendAnnotationRun["reviewStatus"], "pending">;
+    disposition: Exclude<BackendAnnotationRun["reviewStatus"], "pending" | "not_required">;
+    reviewKind: "blocking" | "audit";
     reviewedFields: string[];
     reasonCodes: string[];
     reviewDurationMs: number;
@@ -460,6 +490,22 @@ export type BackendAnnotationRun = {
     reviewerName: string;
     createdAt: number;
   } | null;
+  modelCalls: Array<{
+    id: string;
+    logicalFullAttempt: number;
+    callKind: "full" | "schema_repair" | "targeted_repair";
+    callStatus: "succeeded" | "failed";
+    httpStatus: number | null;
+    providerRequestId: string | null;
+    responseModel: string | null;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    totalTokens: number | null;
+    latencyMs: number;
+    errorCode: string | null;
+    errorMessage: string | null;
+    createdAt: number;
+  }>;
   corrections: Array<{
     id: string;
     targetType: string;

@@ -3,6 +3,8 @@ import { IsBoolean, IsIn, IsInt, IsOptional, Max, Min } from "class-validator";
 
 export const ANNOTATION_OPERATION_VIEWS = [
   "pending_review",
+  "audit_pending",
+  "auto_published",
   "execution_failed",
   "in_progress",
   "resolved",

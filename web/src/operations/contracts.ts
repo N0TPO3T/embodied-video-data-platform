@@ -117,6 +117,8 @@ export type BackendOperationsStatus = {
 
 export type AnnotationOperationsView =
   | "pending_review"
+  | "audit_pending"
+  | "auto_published"
   | "execution_failed"
   | "in_progress"
   | "resolved"
@@ -136,7 +138,22 @@ export type BackendAnnotationRunListItem = {
   model: string | null;
   promptVersion: string | null;
   attemptCount: number;
+  fullModelAttempts: number;
+  schemaRepairCalls: number;
+  targetedRepairCalls: number;
+  infrastructureRetryCount: number;
+  providerCallCount: number;
   reviewRevision: number;
+  autoEligibility: "not_evaluated" | "eligible" | "manual_required";
+  autoGateVersion: string | null;
+  wouldAutoAccept: boolean;
+  autoAcceptEnabledSnapshot: boolean;
+  autoGateEvaluatedAt: number | null;
+  auditStatus: "not_selected" | "pending" | "completed";
+  auditSelectedAt: number | null;
+  blockingReasons: AnnotationGateIssue[];
+  advisories: AnnotationGateIssue[];
+  repairs: AnnotationGateIssue[];
   lastErrorCode: string | null;
   lastErrorMessage: string | null;
   queuedAt: number;
@@ -166,13 +183,29 @@ export type BackendAnnotationOperations = {
       rejected: number;
       unableToJudge: number;
     };
+    gate: {
+      gateEvaluated: number;
+      eligible: number;
+      manualRequired: number;
+      autoAccepted: number;
+      auditPending: number;
+      auditCompleted: number;
+      publishedByAuto: number;
+      publishedByHuman: number;
+    };
     usage: {
-      scope: "successful_final_response_only";
-      runsWithReportedUsage: number;
+      scope: "all_reported_model_calls";
+      providerCalls: number;
+      succeededCalls: number;
+      failedCalls: number;
+      callsWithReportedUsage: number;
       totalReportedInputTokens: number;
       totalReportedOutputTokens: number;
-      averageReportedTokensPerSuccessfulRun: number | null;
+      totalReportedTokens: number;
       averageReportedModelLatencyMs: number | null;
+      schemaRepairCalls: number;
+      targetedRepairCalls: number;
+      infrastructureRetries: number;
     };
   };
   coverage?: {
@@ -191,4 +224,16 @@ export type BackendAnnotationOperations = {
     totalPages: number;
   };
   runs: BackendAnnotationRunListItem[];
+};
+
+export type AnnotationGateIssue = {
+  code: string;
+  level: "repairable" | "retryable" | "manual_review" | "advisory";
+  fieldPath: string | null;
+  taskIndex: number | null;
+  message: string;
+  evidenceTimestampsMs: number[];
+  resolution: "repaired" | "retried" | "unresolved" | "not_applicable";
+  previousValue?: unknown;
+  nextValue?: unknown;
 };

@@ -3,6 +3,7 @@ import "reflect-metadata";
 import { DataSource } from "typeorm";
 
 import { AnnotationCorrectionEntity } from "./entities/annotation-correction.entity.js";
+import { AnnotationModelCallEntity } from "./entities/annotation-model-call.entity.js";
 import { AnnotationReviewEntity } from "./entities/annotation-review.entity.js";
 import { AnnotationRunEntity } from "./entities/annotation-run.entity.js";
 import { AuditLogEntity } from "./entities/audit-log.entity.js";
@@ -35,6 +36,7 @@ import { AddTaskTypeToCollectionTasks2026083000001 } from "./migrations/20260830
 import { AiQualityProgressStuck2026081700001 } from "./migrations/202608170001-ai-quality-progress-stuck.js";
 import { AnnotationRuns2026083000002 } from "./migrations/202608300002-annotation-runs.js";
 import { AnnotationRunLifecycle2026083000003 } from "./migrations/202608300003-annotation-run-lifecycle.js";
+import { AnnotationAutoGate2026083000004 } from "./migrations/202608300004-annotation-auto-gate.js";
 import { CollectionTasks2026082400001 } from "./migrations/202608240001-collection-tasks.js";
 import { ScarcityConfigAndMediaScene2026081900001 } from "./migrations/202608190001-scarcity-config-and-media-scene.js";
 import { DeliveryPackages2026081300006 } from "./migrations/202608130006-delivery-packages.js";
@@ -70,6 +72,7 @@ export const identityEntities = [
   SessionEntity,
   AuditLogEntity,
   AnnotationRunEntity,
+  AnnotationModelCallEntity,
   AnnotationReviewEntity,
   AnnotationCorrectionEntity,
   SubmissionEntity,
@@ -139,6 +142,7 @@ export function createDataSource(
       AddTaskTypeToCollectionTasks2026083000001,
       AnnotationRuns2026083000002,
       AnnotationRunLifecycle2026083000003,
+      AnnotationAutoGate2026083000004,
     ],
     synchronize: false,
     logging: false,

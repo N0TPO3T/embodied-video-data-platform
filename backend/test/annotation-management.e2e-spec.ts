@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 
-import type { DataSource } from "typeorm";
+import { In, type DataSource } from "typeorm";
 import { vi } from "vitest";
 
 import type { PublicUser } from "../src/auth/auth.types.js";
@@ -129,9 +129,9 @@ describe("annotation management", () => {
       id: "ANR-INITIAL",
       submissionId: "SUB-AN",
       trigger: "initial",
-      pipelineVersion: "ego_video_annotation_pipeline_v1",
+      pipelineVersion: "ego_video_annotation_pipeline_v2",
       schemaVersion: "ego_video_annotation_v2",
-      evidencePolicyVersion: "ego_annotation_evidence_policy_v2",
+      evidencePolicyVersion: "ego_annotation_evidence_policy_v3",
       promptVersion: prompt.promptVersion,
       promptContentSha256: prompt.contentSha256,
       systemPromptSnapshot: prompt.systemPrompt,
@@ -356,5 +356,62 @@ describe("annotation management", () => {
     ]);
     expect(concurrent.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     expect(concurrent.filter((result) => result.status === "rejected")).toHaveLength(1);
+
+    const queuedAuto = concurrent.find(
+      (result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof service.createNewVersion>>> =>
+        result.status === "fulfilled",
+    )!.value.run;
+    const autoRun = await repository.findOneByOrFail({ id: queuedAuto.id });
+    const currentHuman = await repository.findOneByOrFail({ id: runB.id });
+    currentHuman.publicationStatus = "superseded";
+    await repository.save(currentHuman);
+    Object.assign(autoRun, {
+      executionStatus: "succeeded",
+      reviewStatus: "not_required",
+      publicationStatus: "auto_accepted",
+      autoEligibility: "eligible",
+      autoGateVersion: "annotation_auto_gate_v1",
+      autoGateIssues: [],
+      wouldAutoAccept: true,
+      autoAcceptEnabledSnapshot: true,
+      autoGateEvaluatedAt: new Date(),
+      auditStatus: "pending",
+      auditSelectedAt: new Date(),
+      promptVersion: publishedA.promptVersion,
+      promptContentSha256: publishedA.promptContentSha256,
+      systemPromptSnapshot: publishedA.systemPromptSnapshot,
+      outputExampleSnapshot: publishedA.outputExampleSnapshot,
+      model: publishedA.model,
+      rawResult: publishedA.rawResult,
+      normalizedResult: publishedA.normalizedResult,
+      sourceTimestampsMs: publishedA.sourceTimestampsMs,
+      completedAt: new Date(),
+    });
+    await repository.save(autoRun);
+    await service.review(actor, autoRun.id, {
+      expectedReviewRevision: 0,
+      disposition: "rejected",
+      reviewedFields: ["video_summary"],
+      reasonCodes: ["SEMANTIC_ERROR"],
+      reviewDurationMs: 100,
+      reason: "抽检发现严重语义错误",
+    });
+    expect(await repository.findOneByOrFail({ id: autoRun.id })).toMatchObject({
+      reviewStatus: "rejected",
+      publicationStatus: "rejected",
+      auditStatus: "completed",
+    });
+    expect(await repository.findOneByOrFail({ id: currentHuman.id })).toMatchObject({
+      publicationStatus: "superseded",
+    });
+    expect(
+      await repository.countBy({
+        submissionId: "SUB-AN",
+        publicationStatus: In(["human_verified", "auto_accepted"]),
+      }),
+    ).toBe(0);
+    expect(await dataSource.getRepository(AnnotationReviewEntity).findOneByOrFail({
+      annotationRunId: autoRun.id,
+    })).toMatchObject({ reviewKind: "audit" });
   });
 });

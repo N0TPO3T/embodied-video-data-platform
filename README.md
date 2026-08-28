@@ -142,7 +142,7 @@ pnpm build
 pnpm start:local
 ```
 
-完整视频处理应使用 `docker compose up -d --build`，因为 `media-worker`、`ai-quality-worker` 和独立的 `ai-annotation-worker` 容器均已包含 FFprobe/FFmpeg。质检和结构化标注使用独立队列、重试/DLQ 与心跳，任一 Worker 停止不会改变另一条链路的健康状态。
+完整视频处理应使用 `docker compose up -d --build`，因为 `media-worker`、`ai-quality-worker` 和独立的 `ai-annotation-worker` 容器均已包含 FFprobe/FFmpeg。质检和结构化标注使用独立队列、重试/DLQ 与心跳，任一 Worker 停止不会改变另一条链路的健康状态。自动准入能力默认关闭（`ANNOTATION_AUTO_ACCEPT_ENABLED=false`）；必须先用同一镜像在测试/预发以 `ANNOTATION_AUTO_ACCEPT_ENABLED=true`、`ANNOTATION_AUTO_ACCEPT_AUDIT_RATE=1` 完成 20–50 条非敏感视频验收，再在生产配置中开启，生产抽检比例为 `0.05`。关闭该开关只影响之后完成的 Run，不撤销已有正式结果。
 
 ### 独立 AI 视频质检与融合标注实验页
 
@@ -157,7 +157,7 @@ docker compose --profile ai-test up --build ai-quality-lab ai-annotation-lab
 - `http://127.0.0.1:4010`：原业务 AI 质检基线，只运行 D1–D5、条件复核和服务端规则复算。
 - `http://127.0.0.1:4011`：融合 AI 标注实验页，对同一视频并行运行原业务质检与 `ego_video_annotation_v2` 结构化语义标注，后者不参与质检分数或结算。
 
-v2 标注会输出任务粒度、执行模式、原子步骤、手物交互、完成度、可见结果、失败恢复、复杂度信号和逐采样点 coverage；服务端会复算证据一致性，稀疏证据默认进入人工复核。业务复核可原样接受、退回修正，或提交修正后的 v2 JSON；只有通过服务端校验且人工接受的候选/修正版才会进入交付快照。
+v2 标注会输出任务粒度、执行模式、原子步骤、手物交互、完成度、可见结果、失败恢复、复杂度信号和逐采样点 coverage。正式业务链路使用 `ego_annotation_evidence_policy_v3` 和 `annotation_auto_gate_v1`：服务端先做不改变语义的确定性规范化，结构/证据引用错误进入有预算的模型修复或重试；只有固定、可解释的核心任务风险进入人工复核。约 5 秒抽帧间隔、低 confidence 及允许保守输出的 completion/result/failure 字段不会单独阻断。人工确认或具有完整 Gate 快照的自动准入结果可进入之后生成的交付快照；旧影子结果、候选、拒绝和已替代 Run 不可正式导出。
 
 两个页面均可一次选择多个 MP4/MOV；浏览器和服务端都最多同时处理 2 条。业务质检提示词可直接在页面编辑并发布新版本；每个新任务会锁定创建时的提示词版本，之后的修改不会影响已上传或历史任务。融合结构化标注使用仓库中版本化的独立提示词，并在结果 JSON 中记录 Prompt、Schema、证据策略和模型版本。
 

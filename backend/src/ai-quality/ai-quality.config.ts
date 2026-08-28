@@ -70,9 +70,25 @@ export function aiAnnotationConcurrency(value: string | undefined): number {
 }
 
 export function aiAnnotationSampleRate(value: string | undefined): number {
-  const parsed = Number(value?.trim() || 0.1);
+  const parsed = Number(value?.trim() || 1);
   if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
     throw new Error("AI_ANNOTATION_SAMPLE_RATE 必须是 0 到 1 之间的数字");
+  }
+  return parsed;
+}
+
+export function annotationAutoAcceptEnabled(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return false;
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  throw new Error("ANNOTATION_AUTO_ACCEPT_ENABLED 必须是 true 或 false");
+}
+
+export function annotationAutoAcceptAuditRate(value: string | undefined): number {
+  const parsed = Number(value?.trim() || 0.05);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+    throw new Error("ANNOTATION_AUTO_ACCEPT_AUDIT_RATE 必须是 0 到 1 之间的数字");
   }
   return parsed;
 }

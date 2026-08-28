@@ -32,7 +32,10 @@ export class AnnotationReviewEntity {
   revision!: number;
 
   @Column({ type: "varchar", length: 32 })
-  disposition!: Exclude<AnnotationReviewStatus, "pending">;
+  disposition!: Exclude<AnnotationReviewStatus, "pending" | "not_required">;
+
+  @Column({ name: "review_kind", type: "varchar", length: 16, default: "blocking" })
+  reviewKind: "blocking" | "audit" = "blocking";
 
   @Column({ name: "reviewed_fields", type: "jsonb", default: () => "'[]'::jsonb" })
   reviewedFields: string[] = [];

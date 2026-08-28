@@ -5,14 +5,18 @@ import {
   aiAnnotationModelTimeoutMs,
   aiAnnotationSampleRate,
   aiAnnotationShadowEnabled,
+  annotationAutoAcceptAuditRate,
+  annotationAutoAcceptEnabled,
 } from "../src/ai-quality/ai-quality.config.js";
 
 describe("AI annotation rollout config", () => {
-  it("defaults to an off, ten-percent, single-call rollout", () => {
+  it("defaults to full eligible coverage with automatic acceptance off", () => {
     expect(aiAnnotationShadowEnabled(undefined)).toBe(false);
-    expect(aiAnnotationSampleRate(undefined)).toBe(0.1);
+    expect(aiAnnotationSampleRate(undefined)).toBe(1);
     expect(aiAnnotationConcurrency(undefined)).toBe(1);
     expect(aiAnnotationModelTimeoutMs(undefined)).toBe(180_000);
+    expect(annotationAutoAcceptEnabled(undefined)).toBe(false);
+    expect(annotationAutoAcceptAuditRate(undefined)).toBe(0.05);
   });
 
   it("rejects unsafe rollout values", () => {
@@ -20,5 +24,7 @@ describe("AI annotation rollout config", () => {
     expect(() => aiAnnotationConcurrency("0")).toThrow(/1 到 8/u);
     expect(() => aiAnnotationModelTimeoutMs("9999")).toThrow(/10000/u);
     expect(() => aiAnnotationShadowEnabled("perhaps")).toThrow(/true 或 false/u);
+    expect(() => annotationAutoAcceptEnabled("perhaps")).toThrow(/true 或 false/u);
+    expect(() => annotationAutoAcceptAuditRate("1.1")).toThrow(/0 到 1/u);
   });
 });

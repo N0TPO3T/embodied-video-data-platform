@@ -3,6 +3,11 @@ import { ZodError } from "zod";
 import type { TimestampedFrame } from "../video-quality/video-quality.types.js";
 import type { LoadedVideoAnnotationPrompt } from "./prompt-loader.js";
 import {
+  canonicalizeVideoAnnotation,
+  unresolvedRetryableIssues,
+  type AnnotationGateIssue,
+} from "./annotation-auto-gate.js";
+import {
   VIDEO_ANNOTATION_POLICY_VERSION,
   VIDEO_ANNOTATION_SCHEMA_VERSION,
   normalizeVideoAnnotation,
@@ -25,6 +30,26 @@ type ModelCallResult = {
   requestId: string | null;
   responseModel: string | null;
   usage?: ModelUsage;
+};
+
+export type AnnotationModelCallTelemetry = {
+  logicalFullAttempt: number;
+  callKind: "full" | "schema_repair" | "targeted_repair";
+  callStatus: "succeeded" | "failed";
+  httpStatus: number | null;
+  providerRequestId: string | null;
+  responseModel: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  latencyMs: number;
+  errorCode: string | null;
+  errorMessage: string | null;
+};
+
+export type AnnotationModelCallContext = {
+  logicalFullAttempt: number;
+  onModelCall?: (call: AnnotationModelCallTelemetry) => Promise<void>;
 };
 
 type ChatContentPart =
@@ -60,6 +85,7 @@ export class VideoAnnotationProviderError extends Error {
     message: string,
     readonly status: number | null,
     readonly requestId: string | null,
+    readonly kind: "transport" | "invalid_output" = "transport",
   ) {
     super(message);
   }
@@ -213,7 +239,6 @@ function schemaIssues(error: unknown): string[] {
 export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
   private readonly endpoint: string;
   private readonly fetcher: Fetcher;
-  private readonly sleep: (milliseconds: number) => Promise<void>;
   private readonly pendingPermits: Array<() => void> = [];
   private activeCalls = 0;
 
@@ -225,15 +250,12 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
       prompt: LoadedVideoAnnotationPrompt;
       maxConcurrency?: number;
       fetcher?: Fetcher;
+      /** Kept for older tests; transport retries are owned by the queue worker. */
       sleep?: (milliseconds: number) => Promise<void>;
     },
   ) {
     this.endpoint = `${stripTrailingSlash(options.baseUrl)}/chat/completions`;
     this.fetcher = options.fetcher ?? fetch;
-    this.sleep =
-      options.sleep ??
-      ((milliseconds) =>
-        new Promise((resolve) => setTimeout(resolve, milliseconds)));
   }
 
   async annotate(
@@ -260,11 +282,12 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
   async annotateStrict(
     request: VideoAnnotationRequest,
     signal?: AbortSignal,
+    context: AnnotationModelCallContext = { logicalFullAttempt: 1 },
   ): Promise<VideoAnnotationCandidateSuccess> {
     let release: (() => void) | undefined;
     try {
       release = await this.acquirePermit(signal);
-      return await this.annotateOrThrow(request, signal);
+      return await this.annotateOrThrow(request, signal, context);
     } finally {
       release?.();
     }
@@ -314,6 +337,7 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
   private async annotateOrThrow(
     request: VideoAnnotationRequest,
     signal?: AbortSignal,
+    context: AnnotationModelCallContext = { logicalFullAttempt: 1 },
   ): Promise<VideoAnnotationCandidateSuccess> {
     if (request.frames.length < 4 || request.frames.length > 8_000) {
       throw new VideoAnnotationProviderError(
@@ -326,8 +350,9 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
     const selectedRequest = { ...request, frames: selectedFrames };
     const startedAt = Date.now();
     const messages = this.analysisMessages(selectedRequest);
-    const first = await this.call(messages, signal);
+    const first = await this.call(messages, "full", context, signal);
     let raw;
+    let finalContent = first.content;
     let finalRequestId = first.requestId;
     let finalResponseModel = first.responseModel;
     let totalUsage = first.usage;
@@ -351,7 +376,13 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
           ],
         },
       ];
-      const repaired = await this.call(repairMessages, signal);
+      const repaired = await this.call(
+        repairMessages,
+        "schema_repair",
+        context,
+        signal,
+      );
+      finalContent = repaired.content;
       finalRequestId = repaired.requestId;
       finalResponseModel = repaired.responseModel;
       totalUsage = mergeUsage(first.usage, repaired.usage);
@@ -362,6 +393,7 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
           `候选标注结构修复失败：${schemaIssues(repairError).join("; ").slice(0, 1_500)}`,
           null,
           finalRequestId,
+          "invalid_output",
         );
       }
     }
@@ -370,10 +402,12 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
         "候选标注返回的 video_id 与请求不一致",
         null,
         finalRequestId,
+        "invalid_output",
       );
     }
-    return normalizeVideoAnnotation({
-      raw,
+    let canonical = canonicalizeVideoAnnotation(raw);
+    let normalized = normalizeVideoAnnotation({
+      raw: canonical.raw,
       frames: selectedFrames,
       durationMs: request.durationMs,
       promptVersion: this.options.prompt.promptVersion,
@@ -383,8 +417,90 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
       requestId: finalRequestId,
       modelDurationMs: Date.now() - startedAt,
       ...(totalUsage ? { usage: totalUsage } : {}),
+      repairs: canonical.repairs,
       enabledLabels: request.enabledLabels,
     });
+    const retryableIssues = unresolvedRetryableIssues(normalized.gate);
+    if (retryableIssues.length > 0) {
+      const targetedMessages: ChatMessage[] = [
+        ...messages,
+        { role: "assistant", content: finalContent },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: [
+                "上一个JSON已通过Schema，但存在以下结构化证据一致性错误。只修复列出的问题并返回完整合法JSON；不得改变无关任务语义。",
+                ...retryableIssues.slice(0, 20).map(
+                  (issue) =>
+                    `${issue.code} | ${issue.fieldPath ?? "result"} | ${issue.message}`,
+                ),
+                `output_contract=${JSON.stringify(this.options.prompt.outputExample)}`,
+              ].join("\n"),
+            },
+          ],
+        },
+      ];
+      const repaired = await this.call(
+        targetedMessages,
+        "targeted_repair",
+        context,
+        signal,
+      );
+      finalRequestId = repaired.requestId;
+      finalResponseModel = repaired.responseModel;
+      totalUsage = mergeUsage(totalUsage, repaired.usage);
+      let repairedRaw;
+      try {
+        repairedRaw = parseRawVideoAnnotation(extractJson(repaired.content));
+      } catch (error) {
+        throw new VideoAnnotationProviderError(
+          `候选标注定向修复返回无效Schema：${schemaIssues(error).join("; ").slice(0, 1_500)}`,
+          null,
+          finalRequestId,
+          "invalid_output",
+        );
+      }
+      if (repairedRaw.video_id !== request.videoId) {
+        throw new VideoAnnotationProviderError(
+          "候选标注定向修复返回的 video_id 与请求不一致",
+          null,
+          finalRequestId,
+          "invalid_output",
+        );
+      }
+      canonical = canonicalizeVideoAnnotation(repairedRaw);
+      const resolvedIssues: AnnotationGateIssue[] = retryableIssues.map((issue) => ({
+        ...issue,
+        resolution: "retried",
+      }));
+      normalized = normalizeVideoAnnotation({
+        raw: canonical.raw,
+        frames: selectedFrames,
+        durationMs: request.durationMs,
+        promptVersion: this.options.prompt.promptVersion,
+        promptContentSha256: this.options.prompt.contentSha256,
+        model: this.options.prompt.model,
+        responseModel: finalResponseModel,
+        requestId: finalRequestId,
+        modelDurationMs: Date.now() - startedAt,
+        ...(totalUsage ? { usage: totalUsage } : {}),
+        repairs: [...resolvedIssues, ...canonical.repairs],
+        enabledLabels: request.enabledLabels,
+      });
+      if (unresolvedRetryableIssues(normalized.gate).length > 0) {
+        throw new VideoAnnotationProviderError(
+          `候选标注定向修复后仍存在结构化证据错误：${unresolvedRetryableIssues(normalized.gate)
+            .map((issue) => issue.code)
+            .join(",")}`,
+          null,
+          finalRequestId,
+          "invalid_output",
+        );
+      }
+    }
+    return normalized;
   }
 
   private analysisMessages(request: VideoAnnotationRequest): ChatMessage[] {
@@ -434,15 +550,25 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
 
   private async call(
     messages: ChatMessage[],
+    callKind: AnnotationModelCallTelemetry["callKind"],
+    context: AnnotationModelCallContext,
     signal?: AbortSignal,
   ): Promise<ModelCallResult> {
-    const delays = [0, 500, 1_500];
-    let lastError: unknown;
-    for (let attempt = 0; attempt < delays.length; attempt += 1) {
-      if (signal?.aborted) throw signal.reason;
-      const delay = delays[attempt] ?? 0;
-      if (delay > 0) await this.sleep(delay);
-      try {
+    if (signal?.aborted) throw signal.reason;
+    const startedAt = Date.now();
+    let telemetrySent = false;
+    const report = async (
+      input: Omit<AnnotationModelCallTelemetry, "logicalFullAttempt" | "callKind" | "latencyMs">,
+    ) => {
+      telemetrySent = true;
+      await context.onModelCall?.({
+        logicalFullAttempt: context.logicalFullAttempt,
+        callKind,
+        latencyMs: Date.now() - startedAt,
+        ...input,
+      });
+    };
+    try {
         const timeout = AbortSignal.timeout(this.options.timeoutMs);
         const requestSignal = signal
           ? AbortSignal.any([signal, timeout])
@@ -466,29 +592,115 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
         });
         if (!response.ok) {
           const requestId = responseRequestId(response);
-          const retryable = response.status === 429 || response.status >= 500;
+          await report({
+            callStatus: "failed",
+            httpStatus: response.status,
+            providerRequestId: requestId,
+            responseModel: null,
+            inputTokens: null,
+            outputTokens: null,
+            totalTokens: null,
+            errorCode: `MODEL_HTTP_${response.status}`,
+            errorMessage: `百炼候选标注请求失败（HTTP ${response.status}）`,
+          });
           const error = new VideoAnnotationProviderError(
             `百炼候选标注请求失败（HTTP ${response.status}）`,
             response.status,
             requestId,
           );
-          if (retryable && attempt < delays.length - 1) {
-            lastError = error;
-            continue;
-          }
           throw error;
         }
-        const document = (await response.json()) as unknown;
+        let document: unknown;
+        try {
+          document = (await response.json()) as unknown;
+        } catch (error) {
+          const message = `百炼候选标注响应不是合法JSON：${safeError(error)}`;
+          await report({
+            callStatus: "failed",
+            httpStatus: response.status,
+            providerRequestId: responseRequestId(response),
+            responseModel: null,
+            inputTokens: null,
+            outputTokens: null,
+            totalTokens: null,
+            errorCode: "MODEL_RESPONSE_INVALID",
+            errorMessage: message,
+          });
+          throw new VideoAnnotationProviderError(
+            message,
+            null,
+            responseRequestId(response),
+            "invalid_output",
+          );
+        }
         const usage = responseUsage(document);
+        const requestId = responseRequestId(response, document);
+        const model = responseModel(document);
+        let content: string;
+        try {
+          content = responseContent(document);
+        } catch (error) {
+          const message = `百炼候选标注响应无效：${safeError(error)}`;
+          await report({
+            callStatus: "failed",
+            httpStatus: response.status,
+            providerRequestId: requestId,
+            responseModel: model,
+            inputTokens: usage?.promptTokens ?? null,
+            outputTokens: usage?.completionTokens ?? null,
+            totalTokens: usage?.totalTokens ?? null,
+            errorCode: "MODEL_RESPONSE_INVALID",
+            errorMessage: message,
+          });
+          throw new VideoAnnotationProviderError(
+            message,
+            null,
+            requestId,
+            "invalid_output",
+          );
+        }
+        await report({
+          callStatus: "succeeded",
+          httpStatus: response.status,
+          providerRequestId: requestId,
+          responseModel: model,
+          inputTokens: usage?.promptTokens ?? null,
+          outputTokens: usage?.completionTokens ?? null,
+          totalTokens: usage?.totalTokens ?? null,
+          errorCode: null,
+          errorMessage: null,
+        });
         return {
-          content: responseContent(document),
-          requestId: responseRequestId(response, document),
-          responseModel: responseModel(document),
+          content,
+          requestId,
+          responseModel: model,
           ...(usage ? { usage } : {}),
         };
-      } catch (error) {
+    } catch (error) {
         if (signal?.aborted) throw signal.reason;
         if (error instanceof VideoAnnotationProviderError) throw error;
+        const status =
+          error instanceof Error &&
+          (error.name === "TimeoutError" || error.name === "AbortError")
+            ? 408
+            : null;
+        const message =
+          status === 408
+            ? `百炼候选标注请求超时：${safeError(error)}`
+            : `百炼候选标注网络请求失败：${safeError(error)}`;
+        if (!telemetrySent) {
+          await report({
+            callStatus: "failed",
+            httpStatus: status,
+            providerRequestId: null,
+            responseModel: null,
+            inputTokens: null,
+            outputTokens: null,
+            totalTokens: null,
+            errorCode: status === 408 ? "MODEL_HTTP_408" : "MODEL_NETWORK",
+            errorMessage: message,
+          });
+        }
         if (
           error instanceof Error &&
           (error.name === "TimeoutError" || error.name === "AbortError")
@@ -499,14 +711,7 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
             null,
           );
         }
-        lastError = error;
-        if (attempt >= delays.length - 1) break;
-      }
+        throw new VideoAnnotationProviderError(message, null, null);
     }
-    throw new VideoAnnotationProviderError(
-      `百炼候选标注网络请求失败：${safeError(lastError)}`,
-      null,
-      null,
-    );
   }
 }

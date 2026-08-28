@@ -5,6 +5,7 @@ import {
   parseRawVideoAnnotation,
   type RawVideoAnnotation,
 } from "../src/video-annotation/video-annotation.js";
+import { canonicalizeVideoAnnotation } from "../src/video-annotation/annotation-auto-gate.js";
 
 function rawAnnotation(): RawVideoAnnotation {
   return {
@@ -110,7 +111,7 @@ describe("video annotation evidence policy", () => {
     });
   });
 
-  it("conservatively downgrades outcome claims under sparse sampling", () => {
+  it("records sparse sampling as advisory without making it a manual gate", () => {
     const raw = rawAnnotation();
     raw.tasks[0]!.end_ms = 5_000;
     raw.tasks[0]!.evidence_timestamps_ms = [0, 5_000];
@@ -147,17 +148,19 @@ describe("video annotation evidence policy", () => {
       modelDurationMs: 12,
     });
 
-    expect(result.status).toBe("review_required");
+    expect(result.status).toBe("candidate");
     expect(result.effective.tasks[0]).toMatchObject({
       effective_completion: "uncertain",
       effective_result_status: "unknown",
-      effective_failure_recovery: "not_assessable",
+      effective_failure_recovery: "none_observed",
     });
     expect(result.effective.tasks[0]!.policy_reasons).toEqual(
+      expect.not.arrayContaining(["sparse_sampling_cannot_verify_completion"]),
+    );
+    expect(result.gate).toMatchObject({ eligibility: "eligible" });
+    expect(result.gate.issues).toEqual(
       expect.arrayContaining([
-        "sparse_sampling_cannot_verify_completion",
-        "sparse_sampling_cannot_verify_outcome",
-        "sparse_sampling_cannot_verify_failure_recovery",
+        expect.objectContaining({ code: "SPARSE_SAMPLING_OBSERVED", level: "advisory" }),
       ]),
     );
   });
@@ -256,20 +259,18 @@ describe("video annotation evidence policy", () => {
     );
   });
 
-  it("retains evidence-backed possible failure as an explicit review state", () => {
+  it("retains evidence-backed possible failure without forcing manual review", () => {
     const raw = rawAnnotation();
     raw.tasks[0]!.failure_recovery = "possible_failure";
     raw.tasks[0]!.failure_evidence_timestamps_ms = [500];
 
     const result = normalize(raw, [0, 500, 1_000]);
 
-    expect(result.status).toBe("review_required");
+    expect(result.status).toBe("candidate");
     expect(result.effective.tasks[0]).toMatchObject({
       effective_failure_recovery: "possible_failure",
     });
-    expect(result.effective.tasks[0]!.policy_reasons).toContain(
-      "failure_recovery_requires_human_review",
-    );
+    expect(result.gate.eligibility).toBe("eligible");
   });
 
   it("rejects hallucinated evidence timestamps into human review", () => {
@@ -408,5 +409,69 @@ describe("video annotation evidence policy", () => {
     expect(result.effective.tasks[0]!.effective_complexity_signals).not.toContain(
       "bimanual_coordination",
     );
+  });
+
+  it("uses only deterministic manual reason codes for core task uncertainty", () => {
+    const raw = rawAnnotation();
+    raw.tasks[0]!.task_verb = "uncertain";
+    raw.uncertain_fields = ["tasks[0].completion", "tasks[0].task_label"];
+
+    const result = normalize(raw, [0, 500, 1_000]);
+
+    expect(result.gate.eligibility).toBe("manual_required");
+    expect(
+      result.gate.issues
+        .filter((issue) => issue.level === "manual_review")
+        .map((issue) => issue.code),
+    ).toEqual([
+      "UNRESOLVED_CORE_TASK_UNCERTAINTY",
+      "UNRESOLVED_CORE_TASK_UNCERTAINTY",
+    ]);
+    expect(result.gate.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "OPTIONAL_FIELD_UNCERTAINTY",
+          fieldPath: "tasks[0].completion",
+          level: "advisory",
+        }),
+      ]),
+    );
+  });
+
+  it("canonicalizes local arrays but does not remove a shared cross-task boundary", () => {
+    const raw = rawAnnotation();
+    raw.scene.evidence_timestamps_ms = [1_000, 0, 1_000];
+    raw.tasks[0]!.tools = [" 刀 ", "刀"];
+    raw.tasks.push({
+      ...structuredClone(raw.tasks[0]!),
+      start_ms: 500,
+      task_label: "第二个任务",
+      evidence_timestamps_ms: [500, 1_000],
+    });
+    raw.coverage_segments = [
+      {
+        start_ms: 0,
+        end_ms: 500,
+        segment_type: "task",
+        linked_task_index: 0,
+        visible_activity: "第一段",
+        evidence_timestamps_ms: [0, 500],
+      },
+      {
+        start_ms: 500,
+        end_ms: 1_000,
+        segment_type: "task",
+        linked_task_index: 1,
+        visible_activity: "第二段",
+        evidence_timestamps_ms: [500, 1_000],
+      },
+    ];
+
+    const canonical = canonicalizeVideoAnnotation(raw);
+
+    expect(canonical.raw.scene.evidence_timestamps_ms).toEqual([0, 1_000]);
+    expect(canonical.raw.tasks[0]!.tools).toEqual(["刀"]);
+    expect(canonical.raw.coverage_segments[0]!.evidence_timestamps_ms).toEqual([0, 500]);
+    expect(canonical.raw.coverage_segments[1]!.evidence_timestamps_ms).toEqual([500, 1_000]);
   });
 });

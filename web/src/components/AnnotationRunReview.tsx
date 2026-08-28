@@ -74,6 +74,11 @@ function annotationStatus(run: BackendAnnotationRun) {
     if (run.publicationStatus === "human_verified") {
       return { label: "人工已确认", tone: "success" as const };
     }
+    if (run.publicationStatus === "auto_accepted") {
+      return run.auditStatus === "pending"
+        ? { label: "自动发布·待抽检", tone: "info" as const }
+        : { label: "自动发布", tone: "success" as const };
+    }
     if (run.reviewStatus === "rejected") {
       return { label: "人工已拒绝", tone: "danger" as const };
     }
@@ -395,8 +400,10 @@ export function AnnotationRunReview({
   const canReview =
     !readOnly &&
     run.executionStatus === "succeeded" &&
-    run.reviewStatus === "pending" &&
-    run.publicationStatus === "candidate_only" &&
+    ((run.reviewStatus === "pending" && run.publicationStatus === "candidate_only") ||
+      (run.reviewStatus === "not_required" &&
+        run.publicationStatus === "auto_accepted" &&
+        run.auditStatus === "pending")) &&
     candidateRaw !== null &&
     editedRaw !== null;
 
@@ -410,6 +417,24 @@ export function AnnotationRunReview({
         {run.id} · {run.promptVersion ?? "配置待锁定"} · 尝试 {run.attemptCount} 次
       </small>
       {run.lastErrorMessage ? <p className="form-message error">{run.lastErrorMessage}</p> : null}
+      {run.auditStatus === "pending" ? (
+        <p className="form-message info">这是自动发布结果的抽检；等待抽检不会阻塞当前交付，提交结论后会立即影响后续交付。</p>
+      ) : null}
+      {run.autoGateIssues.length > 0 ? (
+        <details open={run.autoGateIssues.some((issue) => issue.level === "manual_review" || (issue.level === "retryable" && issue.resolution === "unresolved"))}>
+          <summary>Auto Gate 判定（{run.autoGateVersion ?? "未评估"}）</summary>
+          <div className="review-issues">
+            {run.autoGateIssues.map((issue, index) => (
+              <p key={`${issue.code}-${issue.fieldPath ?? "result"}-${index}`}>
+                <strong>{issue.code}</strong> · {issue.fieldPath ?? "全局"}
+                {issue.taskIndex === null ? "" : ` · Task ${issue.taskIndex + 1}`}
+                {issue.evidenceTimestampsMs.length ? ` · ${issue.evidenceTimestampsMs.join("、")}ms` : ""}
+                <br/>{issue.message}
+              </p>
+            ))}
+          </div>
+        </details>
+      ) : null}
       {candidate ? (
         <>
           <p>{candidate.effective.video_summary}</p>
@@ -482,7 +507,7 @@ export function AnnotationRunReview({
                 </select>
               </label>
               <label><span>标注审核依据</span><textarea rows={3} value={reason} onChange={(event) => setReason(event.target.value)} /></label>
-              {currentAccount.role === "admin" ? (
+              {currentAccount.role === "admin" && run.publicationStatus === "candidate_only" ? (
                 <label>
                   <span>废弃候选原因类型</span>
                   <select value={discardReasonCode} onChange={(event) => setDiscardReasonCode(event.target.value as typeof discardReasonCode)}>
@@ -494,7 +519,7 @@ export function AnnotationRunReview({
               ) : null}
               {error ? <p className="form-message error">{error}</p> : null}
               <button className="button button-primary" disabled={saving} type="button" onClick={() => void submitReview()}><CheckCircle2 size={16} />{saving ? "保存中" : "保存标注审核"}</button>
-              {currentAccount.role === "admin" ? <button className="table-action" disabled={saving} type="button" onClick={() => void discard()}>废弃当前候选</button> : null}
+              {currentAccount.role === "admin" && run.publicationStatus === "candidate_only" ? <button className="table-action" disabled={saving} type="button" onClick={() => void discard()}>废弃当前候选</button> : null}
             </>
           ) : null}
           <details>

@@ -1,6 +1,7 @@
 import { extname, join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 
 import { Inject, Injectable } from "@nestjs/common";
 import { DataSource, type QueryRunner } from "typeorm";
@@ -8,8 +9,11 @@ import { DataSource, type QueryRunner } from "typeorm";
 import { LabelSetService } from "../ai-quality/label-set.service.js";
 import {
   aiAnnotationModelTimeoutMs,
+  annotationAutoAcceptAuditRate,
+  annotationAutoAcceptEnabled,
   videoAnnotationPromptPath,
 } from "../ai-quality/ai-quality.config.js";
+import { AnnotationModelCallEntity } from "../database/entities/annotation-model-call.entity.js";
 import { AnnotationRunEntity } from "../database/entities/annotation-run.entity.js";
 import { MediaMetadataEntity } from "../database/entities/media-metadata.entity.js";
 import { SubmissionEntity } from "../database/entities/submission.entity.js";
@@ -22,8 +26,10 @@ import { VideoQualityMediaPreprocessor } from "../video-quality/media-preprocess
 import { loadVideoAnnotationPrompt } from "./prompt-loader.js";
 import {
   QwenVideoAnnotationProvider,
+  type AnnotationModelCallTelemetry,
   VideoAnnotationProviderError,
 } from "./qwen-video-annotation.provider.js";
+import { unresolvedRetryableIssues } from "./annotation-auto-gate.js";
 
 export type AnnotationRunProcessOutcome = "processed" | "skipped" | "lock_busy";
 
@@ -50,6 +56,9 @@ function safeError(value: unknown): string {
 
 function errorCode(error: unknown): string {
   if (error instanceof VideoAnnotationProviderError) {
+    if (error.kind === "invalid_output") {
+      return "MODEL_RESPONSE_INVALID";
+    }
     return error.status === null ? "MODEL_RESPONSE_INVALID" : `MODEL_HTTP_${error.status}`;
   }
   if (error instanceof TerminalAnnotationRunError) return "ANNOTATION_TERMINAL";
@@ -61,6 +70,9 @@ function classify(error: unknown): TerminalAnnotationRunError | RetryableAnnotat
     return error;
   }
   if (error instanceof VideoAnnotationProviderError) {
+    if (error.kind === "invalid_output") {
+      return new RetryableAnnotationRunError(safeError(error));
+    }
     if (error.status === 408 || error.status === 429 || (error.status ?? 0) >= 500) {
       return new RetryableAnnotationRunError(safeError(error));
     }
@@ -124,6 +136,11 @@ export class AnnotationRunService {
 
       let directory: string | null = null;
       try {
+        if (await this.markFullBudgetExhausted(input.runId)) {
+          throw new TerminalAnnotationRunError(
+            "候选标注完整模型调用预算已耗尽",
+          );
+        }
         const task = await this.begin(input.runId);
         if (!task) return "skipped";
         directory = await mkdtemp(join(tmpdir(), "evdp-annotation-"));
@@ -175,14 +192,31 @@ export class AnnotationRunService {
             enabledLabels,
           },
           input.signal,
+          {
+            logicalFullAttempt: task.run.fullModelAttempts + 1,
+            onModelCall: (call) => this.recordModelCall(task.run.id, call),
+          },
         );
+        if (unresolvedRetryableIssues(result.gate).length > 0) {
+          throw new VideoAnnotationProviderError(
+            "候选标注仍包含未解决的结构化证据错误",
+            null,
+            result.requestId,
+            "invalid_output",
+          );
+        }
         await this.complete(task.run.id, result);
         return "processed";
       } catch (error) {
         const classified = classify(error);
+        const fullBudgetExhausted =
+          error instanceof VideoAnnotationProviderError &&
+          error.kind === "invalid_output" &&
+          (await this.fullModelAttempts(input.runId)) >= 2;
         await this.fail(input.runId, error, {
           terminal:
             classified instanceof TerminalAnnotationRunError ||
+            fullBudgetExhausted ||
             input.terminalOnRetryableFailure === true,
           retryDelayMs: input.retryDelayMs ?? 0,
         });
@@ -292,16 +326,49 @@ export class AnnotationRunService {
         !["queued", "retry_scheduled", "stuck", "running"].includes(run.executionStatus)
       ) return;
       run.executionStatus = "succeeded";
-      run.reviewStatus = "pending";
-      run.publicationStatus = "candidate_only";
+      const autoAcceptEnabled = annotationAutoAcceptEnabled(
+        process.env.ANNOTATION_AUTO_ACCEPT_ENABLED,
+      );
+      const auditRate = annotationAutoAcceptAuditRate(
+        process.env.ANNOTATION_AUTO_ACCEPT_AUDIT_RATE,
+      );
+      const eligible = result.gate.eligibility === "eligible";
+      run.autoEligibility = result.gate.eligibility;
+      run.autoGateVersion = result.gate.version;
+      run.autoGateIssues = result.gate.issues;
+      run.wouldAutoAccept = eligible;
+      run.autoAcceptEnabledSnapshot = autoAcceptEnabled;
+      run.autoGateEvaluatedAt = new Date();
+      if (eligible && autoAcceptEnabled) {
+        await repository
+          .createQueryBuilder()
+          .update(AnnotationRunEntity)
+          .set({ publicationStatus: "superseded" })
+          .where("submission_id = :submissionId", { submissionId: submission.id })
+          .andWhere("id <> :runId", { runId })
+          .andWhere("publication_status IN (:...statuses)", {
+            statuses: ["human_verified", "auto_accepted"],
+          })
+          .execute();
+        run.reviewStatus = "not_required";
+        run.publicationStatus = "auto_accepted";
+        if (auditSelected(run.id, result.gate.version, auditRate)) {
+          run.auditStatus = "pending";
+          run.auditSelectedAt = new Date();
+        } else {
+          run.auditStatus = "not_selected";
+          run.auditSelectedAt = null;
+        }
+      } else {
+        run.reviewStatus = "pending";
+        run.publicationStatus = "candidate_only";
+        run.auditStatus = "not_selected";
+        run.auditSelectedAt = null;
+      }
       run.providerRequestId = result.requestId;
       run.responseModel = result.responseModel ?? null;
       run.rawResult = jsonRecord(result.raw);
       run.normalizedResult = jsonRecord(result);
-      run.inputTokens = result.usage?.promptTokens ?? null;
-      run.outputTokens = result.usage?.completionTokens ?? null;
-      run.totalTokens = result.usage?.totalTokens ?? null;
-      run.latencyMs = result.durationMs;
       run.frameCount = result.frameCount;
       run.sourceTimestampsMs = result.sampling.sourceTimestampsMs;
       run.completedAt = new Date();
@@ -337,7 +404,132 @@ export class AnnotationRunService {
         ? null
         : new Date(Date.now() + Math.max(0, input.retryDelayMs));
       if (input.terminal) run.completedAt = new Date();
+      else run.infrastructureRetryCount += 1;
       await repository.save(run);
     });
   }
+
+  private async fullModelAttempts(runId: string): Promise<number> {
+    return (
+      await this.dataSource.getRepository(AnnotationRunEntity).findOne({
+        where: { id: runId },
+        select: { id: true, fullModelAttempts: true },
+      })
+    )?.fullModelAttempts ?? 0;
+  }
+
+  private async markFullBudgetExhausted(runId: string): Promise<boolean> {
+    const existing = await this.dataSource
+      .getRepository(AnnotationRunEntity)
+      .findOneBy({ id: runId });
+    if (
+      !existing ||
+      existing.fullModelAttempts < 2 ||
+      !["queued", "retry_scheduled", "stuck"].includes(existing.executionStatus)
+    ) {
+      return false;
+    }
+    return this.dataSource.transaction(async (manager) => {
+      const submission = await manager.getRepository(SubmissionEntity).findOne({
+        where: { id: existing.submissionId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!submission) return false;
+      const repository = manager.getRepository(AnnotationRunEntity);
+      const run = await repository.findOne({
+        where: { id: runId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (
+        !run ||
+        run.submissionId !== submission.id ||
+        run.fullModelAttempts < 2 ||
+        !["queued", "retry_scheduled", "stuck"].includes(run.executionStatus)
+      ) {
+        return false;
+      }
+      run.executionStatus = "system_failed";
+      run.lastErrorCode = "MODEL_RESPONSE_INVALID";
+      run.lastErrorMessage = "候选标注完整模型调用预算已耗尽";
+      run.nextRetryAt = null;
+      run.completedAt = new Date();
+      await repository.save(run);
+      return true;
+    });
+  }
+
+  private async recordModelCall(
+    runId: string,
+    call: AnnotationModelCallTelemetry,
+  ): Promise<void> {
+    const existing = await this.dataSource
+      .getRepository(AnnotationRunEntity)
+      .findOneBy({ id: runId });
+    if (!existing) throw new TerminalAnnotationRunError("候选标注运行不存在");
+    await this.dataSource.transaction(async (manager) => {
+      const submission = await manager.getRepository(SubmissionEntity).findOne({
+        where: { id: existing.submissionId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!submission) throw new TerminalAnnotationRunError("视频提交不存在");
+      const runs = manager.getRepository(AnnotationRunEntity);
+      const run = await runs.findOne({
+        where: { id: runId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!run || run.submissionId !== submission.id) {
+        throw new TerminalAnnotationRunError("候选标注运行不存在");
+      }
+      await manager.getRepository(AnnotationModelCallEntity).save({
+        id: `AMC-${randomUUID()}`,
+        annotationRunId: runId,
+        logicalFullAttempt: call.logicalFullAttempt,
+        callKind: call.callKind,
+        callStatus: call.callStatus,
+        httpStatus: call.httpStatus,
+        providerRequestId: call.providerRequestId,
+        responseModel: call.responseModel,
+        inputTokens: call.inputTokens,
+        outputTokens: call.outputTokens,
+        totalTokens: call.totalTokens,
+        latencyMs: call.latencyMs,
+        errorCode: call.errorCode,
+        errorMessage: call.errorMessage ? safeError(call.errorMessage) : null,
+      });
+      run.providerCallCount += 1;
+      if (
+        call.callKind === "full" &&
+        (call.callStatus === "succeeded" ||
+          (call.httpStatus !== null && call.httpStatus >= 200 && call.httpStatus < 300))
+      ) {
+        run.fullModelAttempts += 1;
+      } else if (call.callKind === "schema_repair") {
+        run.schemaRepairCalls += 1;
+      } else if (call.callKind === "targeted_repair") {
+        run.targetedRepairCalls += 1;
+      }
+      const accumulate = (current: number | null, reported: number | null) =>
+        reported === null ? current : (current ?? 0) + reported;
+      run.inputTokens = accumulate(run.inputTokens, call.inputTokens);
+      run.outputTokens = accumulate(run.outputTokens, call.outputTokens);
+      run.totalTokens = accumulate(run.totalTokens, call.totalTokens);
+      run.latencyMs = (run.latencyMs ?? 0) + call.latencyMs;
+      await runs.save(run);
+    });
+  }
+}
+
+export function auditSelected(
+  runId: string,
+  gateVersion: string,
+  rate: number,
+): boolean {
+  if (rate <= 0) return false;
+  if (rate >= 1) return true;
+  let hash = 2_166_136_261;
+  for (const character of `${runId}:${gateVersion}`) {
+    hash ^= character.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 16_777_619);
+  }
+  return (hash >>> 0) / 4_294_967_296 < rate;
 }

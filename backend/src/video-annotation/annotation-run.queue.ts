@@ -5,6 +5,8 @@ import type { EntityManager } from "typeorm";
 import { aiAnnotationSampleRate, aiAnnotationShadowEnabled } from "../ai-quality/ai-quality.config.js";
 import { AnnotationRunEntity } from "../database/entities/annotation-run.entity.js";
 import { JobOutboxEntity } from "../database/entities/job-outbox.entity.js";
+import { MediaMetadataEntity } from "../database/entities/media-metadata.entity.js";
+import { SubmissionEntity } from "../database/entities/submission.entity.js";
 import { AI_ANNOTATION_ROUTING_KEY } from "../messaging/rabbitmq-topology.js";
 import {
   VIDEO_ANNOTATION_POLICY_VERSION,
@@ -12,7 +14,7 @@ import {
 } from "./video-annotation.js";
 
 export const VIDEO_ANNOTATION_PIPELINE_VERSION =
-  "ego_video_annotation_pipeline_v1";
+  "ego_video_annotation_pipeline_v2";
 
 export function annotationSampleSelected(
   submissionId: string,
@@ -92,6 +94,25 @@ export async function enqueueInitialAnnotationRun(
       submissionId,
       aiAnnotationSampleRate(process.env.AI_ANNOTATION_SAMPLE_RATE),
     )
+  ) {
+    return null;
+  }
+  const submission = await manager.getRepository(SubmissionEntity).findOneBy({
+    id: submissionId,
+  });
+  if (
+    !submission ||
+    submission.uploadStatus !== "uploaded" ||
+    submission.storageStatus !== "available" ||
+    submission.assetStatus !== "active" ||
+    submission.isTestData
+  ) {
+    return null;
+  }
+  if (
+    !(await manager.getRepository(MediaMetadataEntity).existsBy({
+      submissionId,
+    }))
   ) {
     return null;
   }

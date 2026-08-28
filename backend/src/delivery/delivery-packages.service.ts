@@ -120,7 +120,7 @@ function publicItem(item: DeliveryPackageItemEntity) {
           schemaVersion: annotation.schemaVersion,
           policyVersion: annotation.policyVersion,
           promptVersion: annotation.promptVersion,
-          reviewedAt: annotation.review.reviewedAt,
+          reviewedAt: annotation.acceptance.acceptedAt,
         }
       : { available: false },
   };
@@ -1399,7 +1399,7 @@ export class DeliveryPackagesService {
         : await manager.getRepository(AnnotationRunEntity).find({
             where: {
               submissionId: In(submissionIds),
-              publicationStatus: "human_verified",
+              publicationStatus: In(["human_verified", "auto_accepted"]),
             },
             order: { createdAt: "DESC", id: "DESC" },
           });

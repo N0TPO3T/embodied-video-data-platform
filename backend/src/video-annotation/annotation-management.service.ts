@@ -6,6 +6,7 @@ import { DataSource, In, Not } from "typeorm";
 import { AuditService } from "../audit/audit.service.js";
 import type { PublicUser } from "../auth/auth.types.js";
 import { AnnotationCorrectionEntity } from "../database/entities/annotation-correction.entity.js";
+import { AnnotationModelCallEntity } from "../database/entities/annotation-model-call.entity.js";
 import { AnnotationReviewEntity } from "../database/entities/annotation-review.entity.js";
 import { AnnotationRunEntity } from "../database/entities/annotation-run.entity.js";
 import { MediaMetadataEntity } from "../database/entities/media-metadata.entity.js";
@@ -41,6 +42,7 @@ function publicRun(
   run: AnnotationRunEntity,
   review?: AnnotationReviewEntity,
   corrections: AnnotationCorrectionEntity[] = [],
+  modelCalls: AnnotationModelCallEntity[] = [],
 ) {
   return {
     id: run.id,
@@ -58,7 +60,20 @@ function publicRun(
     reviewStatus: run.reviewStatus,
     publicationStatus: run.publicationStatus,
     attemptCount: run.attemptCount,
+    fullModelAttempts: run.fullModelAttempts,
+    schemaRepairCalls: run.schemaRepairCalls,
+    targetedRepairCalls: run.targetedRepairCalls,
+    infrastructureRetryCount: run.infrastructureRetryCount,
+    providerCallCount: run.providerCallCount,
     reviewRevision: run.reviewRevision,
+    autoEligibility: run.autoEligibility,
+    autoGateVersion: run.autoGateVersion,
+    autoGateIssues: run.autoGateIssues,
+    wouldAutoAccept: run.wouldAutoAccept,
+    autoAcceptEnabledSnapshot: run.autoAcceptEnabledSnapshot,
+    autoGateEvaluatedAt: run.autoGateEvaluatedAt?.getTime() ?? null,
+    auditStatus: run.auditStatus,
+    auditSelectedAt: run.auditSelectedAt?.getTime() ?? null,
     lastErrorCode: run.lastErrorCode,
     lastErrorMessage: run.lastErrorMessage,
     nextRetryAt: run.nextRetryAt?.getTime() ?? null,
@@ -69,6 +84,7 @@ function publicRun(
           id: review.id,
           revision: review.revision,
           disposition: review.disposition,
+          reviewKind: review.reviewKind,
           reviewedFields: review.reviewedFields,
           reasonCodes: review.reasonCodes,
           reviewDurationMs: review.reviewDurationMs,
@@ -78,6 +94,22 @@ function publicRun(
           createdAt: review.createdAt.getTime(),
         }
       : null,
+    modelCalls: modelCalls.map((call) => ({
+      id: call.id,
+      logicalFullAttempt: call.logicalFullAttempt,
+      callKind: call.callKind,
+      callStatus: call.callStatus,
+      httpStatus: call.httpStatus,
+      providerRequestId: call.providerRequestId,
+      responseModel: call.responseModel,
+      inputTokens: call.inputTokens,
+      outputTokens: call.outputTokens,
+      totalTokens: call.totalTokens,
+      latencyMs: call.latencyMs,
+      errorCode: call.errorCode,
+      errorMessage: call.errorMessage,
+      createdAt: call.createdAt.getTime(),
+    })),
     corrections: corrections.map((correction) => ({
       id: correction.id,
       targetType: correction.targetType,
@@ -225,7 +257,6 @@ function normalizedHumanResult(input: {
     model: input.run.model ?? "",
     requestId: null,
     modelDurationMs: 0,
-    applySparseEvidencePolicy: false,
     enabledLabels: (input.run.labelSetSnapshot?.labels ?? []).flatMap((label) =>
       label.enabled &&
       (label.type === "scene" || label.type === "action" || label.type === "object")
@@ -305,7 +336,7 @@ export class AnnotationManagementService {
     });
     if (!submission) throw new SubmissionFailure("NOT_FOUND", "视频提交不存在", 404);
     requireRead(actor, submission);
-    const [review, corrections] = await Promise.all([
+    const [review, corrections, modelCalls] = await Promise.all([
       this.dataSource.getRepository(AnnotationReviewEntity).findOne({
         where: { annotationRunId: run.id },
         order: { revision: "DESC" },
@@ -314,8 +345,12 @@ export class AnnotationManagementService {
         where: { annotationRunId: run.id },
         order: { createdAt: "ASC", id: "ASC" },
       }),
+      this.dataSource.getRepository(AnnotationModelCallEntity).find({
+        where: { annotationRunId: run.id },
+        order: { createdAt: "ASC", id: "ASC" },
+      }),
     ]);
-    return { run: publicRun(run, review ?? undefined, corrections) };
+    return { run: publicRun(run, review ?? undefined, corrections, modelCalls) };
   }
 
   async createNewVersion(actor: PublicUser, submissionId: string, reason: string) {
@@ -392,6 +427,13 @@ export class AnnotationManagementService {
       }
       if (!["system_failed", "stuck"].includes(run.executionStatus)) {
         throw new SubmissionFailure("ANNOTATION_RETRY_INVALID", "当前运行状态不允许重试", 409);
+      }
+      if (run.fullModelAttempts >= 2) {
+        throw new SubmissionFailure(
+          "ANNOTATION_FULL_MODEL_BUDGET_EXHAUSTED",
+          "完整模型调用预算已耗尽，请创建新版本运行",
+          409,
+        );
       }
       const otherActive = await repository.findOne({
         where: {
@@ -502,11 +544,26 @@ export class AnnotationManagementService {
         throw new SubmissionFailure("ANNOTATION_RUN_CONFLICT", "候选标注所属视频已变化", 409);
       }
       requireReview(actor, submission);
-      if (run.reviewStatus !== "pending") {
+      const reviewKind =
+        run.reviewStatus === "not_required" &&
+        run.publicationStatus === "auto_accepted" &&
+        run.auditStatus === "pending"
+          ? "audit"
+          : "blocking";
+      if (
+        reviewKind === "blocking" &&
+        run.reviewStatus !== "pending"
+      ) {
         throw new SubmissionFailure("ANNOTATION_ALREADY_REVIEWED", "该运行已有不可变人工结论，请创建新版本运行", 409);
       }
-      if (run.publicationStatus !== "candidate_only") {
+      if (
+        reviewKind === "blocking" &&
+        run.publicationStatus !== "candidate_only"
+      ) {
         throw new SubmissionFailure("ANNOTATION_CANDIDATE_SUPERSEDED", "候选标注已被废弃或替代", 409);
+      }
+      if (reviewKind === "audit" && run.auditStatus !== "pending") {
+        throw new SubmissionFailure("ANNOTATION_AUDIT_RESOLVED", "该自动发布运行已完成抽检", 409);
       }
       if (run.executionStatus !== "succeeded" || !run.rawResult || !run.normalizedResult) {
         throw new SubmissionFailure("ANNOTATION_CANDIDATE_NOT_READY", "候选标注尚未成功生成", 409);
@@ -602,6 +659,7 @@ export class AnnotationManagementService {
         annotationRunId: run.id,
         revision: nextRevision,
         disposition: input.disposition,
+        reviewKind,
         reviewedFields: [...new Set(input.reviewedFields)],
         reasonCodes: [...new Set(input.reasonCodes)],
         reviewDurationMs: input.reviewDurationMs,
@@ -645,6 +703,7 @@ export class AnnotationManagementService {
       run.reviewStatus = input.disposition;
       run.reviewRevision = nextRevision;
       run.humanResult = humanResult;
+      if (reviewKind === "audit") run.auditStatus = "completed";
       await repository.save(run);
       await this.audit.record(
         manager,
@@ -652,7 +711,12 @@ export class AnnotationManagementService {
         "annotation.run.review",
         { id: submission.id, name: submission.originalFileName },
         input.reason.trim(),
-        { runId: run.id, reviewRevision: nextRevision - 1, reviewStatus: "pending" },
+        {
+          runId: run.id,
+          reviewRevision: nextRevision - 1,
+          reviewStatus: reviewKind === "audit" ? "not_required" : "pending",
+          reviewKind,
+        },
         {
           runId: run.id,
           reviewRevision: nextRevision,
@@ -661,6 +725,7 @@ export class AnnotationManagementService {
           reviewedFields: review.reviewedFields,
           reasonCodes: review.reasonCodes,
           correctionCount: corrections.length,
+          reviewKind,
         },
       );
       return { run: publicRun(run) };
