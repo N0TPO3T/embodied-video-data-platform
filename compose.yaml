@@ -150,6 +150,35 @@ services:
       - ./docs/quality:/quality:ro
     restart: unless-stopped
 
+  ai-annotation-worker:
+    image: evdp-ai-annotation-worker:${EVDP_RELEASE_VERSION:-dev}
+    init: true
+    build:
+      context: ./backend
+      target: ai-annotation-worker
+      args:
+        EVDP_RELEASE_VERSION: ${EVDP_RELEASE_VERSION:-dev}
+        EVDP_GIT_SHA: ${EVDP_GIT_SHA:-unknown}
+        EVDP_BUILD_TIME: ${EVDP_BUILD_TIME:-unknown}
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      AI_ANNOTATION_CONCURRENCY: 1
+      AI_ANNOTATION_MODEL_TIMEOUT_MS: 180000
+      VIDEO_ANNOTATION_PROMPT_PATH: /quality/prompts/ego-video-annotation-v2/manifest.json
+    read_only: true
+    tmpfs:
+      - /tmp:size=3221225472,mode=1777
+    depends_on:
+      api:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ./docs/quality:/quality:ro
+    restart: unless-stopped
+
   ai-quality-lab:
     image: evdp-ai-quality-lab:${EVDP_RELEASE_VERSION:-dev}
     profiles: ["ai-test"]

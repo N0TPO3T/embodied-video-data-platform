@@ -142,7 +142,7 @@ pnpm build
 pnpm start:local
 ```
 
-完整视频处理应使用 `docker compose up -d --build`，因为 `media-worker` 和 `ai-quality-worker` 容器均已包含 FFprobe/FFmpeg。正式 AI Worker 默认只启动一个实例，总并发固定为 2。
+完整视频处理应使用 `docker compose up -d --build`，因为 `media-worker`、`ai-quality-worker` 和独立的 `ai-annotation-worker` 容器均已包含 FFprobe/FFmpeg。质检和结构化标注使用独立队列、重试/DLQ 与心跳，任一 Worker 停止不会改变另一条链路的健康状态。
 
 ### 独立 AI 视频质检与融合标注实验页
 

@@ -36,6 +36,27 @@ export class AnnotationRunReasonDto {
   reason!: string;
 }
 
+export class DiscardAnnotationRunDto {
+  @IsInt()
+  @Min(0)
+  expectedReviewRevision!: number;
+
+  @IsIn([
+    "version_replaced",
+    "configuration_error",
+    "operator_cancelled",
+  ])
+  reasonCode!:
+    | "version_replaced"
+    | "configuration_error"
+    | "operator_cancelled";
+
+  @IsString()
+  @MinLength(2)
+  @MaxLength(2_000)
+  reason!: string;
+}
+
 export class AnnotationCorrectionDto {
   @IsIn(correctionTargets)
   targetType!: (typeof correctionTargets)[number];

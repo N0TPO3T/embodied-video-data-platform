@@ -218,19 +218,23 @@ export class AnnotationRunService {
       : await this.labelSets.getActiveLabelSetForWorker();
 
     return this.dataSource.transaction(async (manager) => {
+      const submission = await manager.getRepository(SubmissionEntity).findOne({
+        where: { id: existing.submissionId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!submission) throw new TerminalAnnotationRunError("视频提交不存在");
       const repository = manager.getRepository(AnnotationRunEntity);
       const run = await repository.findOne({
         where: { id: runId },
         lock: { mode: "pessimistic_write" },
       });
       if (!run) throw new TerminalAnnotationRunError("候选标注运行不存在");
+      if (run.submissionId !== submission.id) {
+        throw new TerminalAnnotationRunError("候选标注所属视频已变化");
+      }
       if (!["queued", "retry_scheduled", "stuck"].includes(run.executionStatus)) {
         return null;
       }
-      const submission = await manager.getRepository(SubmissionEntity).findOneBy({
-        id: run.submissionId,
-      });
-      if (!submission) throw new TerminalAnnotationRunError("视频提交不存在");
       if (submission.uploadStatus !== "uploaded") {
         throw new TerminalAnnotationRunError("视频对象尚未完成上传");
       }
@@ -269,7 +273,14 @@ export class AnnotationRunService {
     runId: string,
     result: Awaited<ReturnType<QwenVideoAnnotationProvider["annotateStrict"]>>,
   ): Promise<void> {
+    const existing = await this.dataSource.getRepository(AnnotationRunEntity).findOneBy({ id: runId });
+    if (!existing) return;
     await this.dataSource.transaction(async (manager) => {
+      const submission = await manager.getRepository(SubmissionEntity).findOne({
+        where: { id: existing.submissionId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!submission) return;
       const repository = manager.getRepository(AnnotationRunEntity);
       const run = await repository.findOne({
         where: { id: runId },
@@ -277,6 +288,7 @@ export class AnnotationRunService {
       });
       if (
         !run ||
+        run.submissionId !== submission.id ||
         !["queued", "retry_scheduled", "stuck", "running"].includes(run.executionStatus)
       ) return;
       run.executionStatus = "succeeded";
@@ -304,13 +316,20 @@ export class AnnotationRunService {
     error: unknown,
     input: { terminal: boolean; retryDelayMs: number },
   ): Promise<void> {
+    const existing = await this.dataSource.getRepository(AnnotationRunEntity).findOneBy({ id: runId });
+    if (!existing) return;
     await this.dataSource.transaction(async (manager) => {
+      const submission = await manager.getRepository(SubmissionEntity).findOne({
+        where: { id: existing.submissionId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!submission) return;
       const repository = manager.getRepository(AnnotationRunEntity);
       const run = await repository.findOne({
         where: { id: runId },
         lock: { mode: "pessimistic_write" },
       });
-      if (!run || run.executionStatus !== "running") return;
+      if (!run || run.submissionId !== submission.id || run.executionStatus !== "running") return;
       run.executionStatus = input.terminal ? "system_failed" : "retry_scheduled";
       run.lastErrorCode = errorCode(error);
       run.lastErrorMessage = safeError(error);

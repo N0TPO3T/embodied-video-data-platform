@@ -47,12 +47,6 @@ import {
   OBJECT_STORAGE,
   type ObjectStoragePort,
 } from "../storage/object-storage.port.js";
-import {
-  VIDEO_ANNOTATION_POLICY_VERSION,
-  VIDEO_ANNOTATION_SCHEMA_VERSION,
-  normalizeVideoAnnotation,
-  parseRawVideoAnnotation,
-} from "../video-annotation/video-annotation.js";
 import type {
   CompleteUploadDto,
   CreateUploadDto,
@@ -84,12 +78,6 @@ export type SubmissionTaskStat = {
   effectiveMinutes: number;
   lockedPoints: number;
 };
-
-function objectRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
 
 export const UPLOAD_PART_SIZE_BYTES = 16 * 1024 * 1024;
 export const UPLOAD_POLICY_VERSION = "DATA-AUTH-2026-08";
@@ -1270,13 +1258,6 @@ export class SubmissionsService {
         reviewRevision: quality.reviewRevision,
         assetStatus: submission.assetStatus,
         quarantineReason: submission.quarantineReason,
-        annotationDecision:
-          quality.normalizedResult &&
-          typeof quality.normalizedResult.annotationReview === "object" &&
-          quality.normalizedResult.annotationReview !== null
-            ? (quality.normalizedResult.annotationReview as Record<string, unknown>)
-                .decision
-            : null,
       };
 
       quality.manualFinalScore = decimal(finalScore, 1);
@@ -1290,172 +1271,6 @@ export class SubmissionsService {
       quality.manualReviewedByAccountId = actor.id;
       quality.manualReviewedByName = actor.displayName;
       quality.manualReviewedAt = new Date();
-      if (
-        input.annotationCorrection &&
-        input.annotationDecision !== "accepted"
-      ) {
-        throw new SubmissionFailure(
-          "ANNOTATION_CORRECTION_DECISION_INVALID",
-          "提交人工修正标注时必须同时选择接受修正结果",
-          400,
-        );
-      }
-      if (input.annotationDecision) {
-        const normalizedResult = quality.normalizedResult ?? {};
-        const candidate = normalizedResult.candidateAnnotation;
-        if (
-          !candidate ||
-          typeof candidate !== "object" ||
-          !["candidate", "review_required"].includes(
-            String((candidate as Record<string, unknown>).status),
-          )
-        ) {
-          throw new SubmissionFailure(
-            "ANNOTATION_CANDIDATE_NOT_FOUND",
-            "当前视频没有可供确认的候选内容标注",
-            409,
-          );
-        }
-        const candidateRecord = candidate as Record<string, unknown>;
-        const validation =
-          candidateRecord.validation &&
-          typeof candidateRecord.validation === "object" &&
-          !Array.isArray(candidateRecord.validation)
-            ? (candidateRecord.validation as Record<string, unknown>)
-            : null;
-        if (
-          input.annotationDecision === "accepted" &&
-          !input.annotationCorrection &&
-          (!validation ||
-            !Array.isArray(validation.errors) ||
-            validation.errors.length > 0)
-        ) {
-          throw new SubmissionFailure(
-            "ANNOTATION_VALIDATION_FAILED",
-            "候选标注存在结构或证据错误，不能直接接受，请标记为需要修正",
-            409,
-          );
-        }
-        let correctedAnnotation: Record<string, unknown> | undefined;
-        if (input.annotationCorrection) {
-          if (
-            candidateRecord.schemaVersion !== VIDEO_ANNOTATION_SCHEMA_VERSION ||
-            candidateRecord.policyVersion !== VIDEO_ANNOTATION_POLICY_VERSION
-          ) {
-            throw new SubmissionFailure(
-              "ANNOTATION_CORRECTION_VERSION_UNSUPPORTED",
-              "只有当前 v2 候选标注支持在线修正",
-              409,
-            );
-          }
-          let correctedRaw;
-          try {
-            correctedRaw = parseRawVideoAnnotation(input.annotationCorrection);
-          } catch (error) {
-            throw new SubmissionFailure(
-              "ANNOTATION_CORRECTION_INVALID",
-              `修正标注不符合 v2 Schema：${
-                error instanceof Error ? error.message.slice(0, 1_000) : "unknown"
-              }`,
-              400,
-            );
-          }
-          const candidateRaw = objectRecord(candidateRecord.raw);
-          if (
-            !candidateRaw ||
-            correctedRaw.video_id !== candidateRaw.video_id
-          ) {
-            throw new SubmissionFailure(
-              "ANNOTATION_CORRECTION_VIDEO_MISMATCH",
-              "修正标注的 video_id 与原候选不一致",
-              400,
-            );
-          }
-          const sampling = objectRecord(candidateRecord.sampling);
-          const sourceTimestamps = Array.isArray(
-            sampling?.sourceTimestampsMs,
-          )
-            ? sampling.sourceTimestampsMs.filter(
-                (value): value is number =>
-                  typeof value === "number" &&
-                  Number.isFinite(value) &&
-                  value >= 0,
-              )
-            : [];
-          if (sourceTimestamps.length < 4 || durationMs === null) {
-            throw new SubmissionFailure(
-              "ANNOTATION_CORRECTION_EVIDENCE_MISSING",
-              "原候选缺少可验证的采样时间或视频时长",
-              409,
-            );
-          }
-          const normalizedCorrection = normalizeVideoAnnotation({
-            raw: correctedRaw,
-            frames: sourceTimestamps.map((timestampMs) => ({
-              timestampMs,
-              dataUrl: "data:image/jpeg;base64,",
-            })),
-            durationMs,
-            promptVersion: String(candidateRecord.promptVersion ?? ""),
-            promptContentSha256: String(
-              candidateRecord.promptContentSha256 ?? "",
-            ),
-            model: String(candidateRecord.model ?? ""),
-            requestId: null,
-            modelDurationMs: 0,
-            applySparseEvidencePolicy: false,
-            enabledLabels: (quality.labelSetSnapshot?.labels ?? []).flatMap(
-              (label) =>
-                label.enabled &&
-                (label.type === "scene" ||
-                  label.type === "action" ||
-                  label.type === "object")
-                  ? [
-                      {
-                        id: label.id,
-                        name: label.name,
-                        type: label.type,
-                      },
-                    ]
-                  : [],
-            ),
-          });
-          if (normalizedCorrection.validation.errors.length > 0) {
-            throw new SubmissionFailure(
-              "ANNOTATION_CORRECTION_EVIDENCE_INVALID",
-              `修正标注证据校验失败：${normalizedCorrection.validation.errors
-                .slice(0, 10)
-                .join("；")}`,
-              400,
-            );
-          }
-          correctedAnnotation = {
-            source: "human_correction",
-            schemaVersion: VIDEO_ANNOTATION_SCHEMA_VERSION,
-            policyVersion: VIDEO_ANNOTATION_POLICY_VERSION,
-            raw: correctedRaw,
-            effective: normalizedCorrection.effective,
-            labelMappings: normalizedCorrection.labelMappings,
-            validation: normalizedCorrection.validation,
-          };
-        }
-        quality.normalizedResult = {
-          ...normalizedResult,
-          annotationReview: {
-            decision: input.annotationDecision,
-            reason,
-            reviewedByAccountId: actor.id,
-            reviewedByName: actor.displayName,
-            reviewedAt: Date.now(),
-            candidateSchemaVersion: candidateRecord.schemaVersion ?? null,
-            candidatePolicyVersion: candidateRecord.policyVersion ?? null,
-            candidatePromptVersion: candidateRecord.promptVersion ?? null,
-            candidatePromptContentSha256:
-              candidateRecord.promptContentSha256 ?? null,
-            ...(correctedAnnotation ? { correctedAnnotation } : {}),
-          },
-        };
-      }
       quality.reviewRevision += 1;
       await manager.getRepository(VideoQualityResultEntity).save(quality);
 
@@ -1463,8 +1278,6 @@ export class SubmissionsService {
         finalScore,
         invalidDurationMs,
         reviewRevision: quality.reviewRevision,
-        annotationDecision: input.annotationDecision ?? before.annotationDecision,
-        annotationCorrected: Boolean(input.annotationCorrection),
       };
       const previousAssetStatus = submission.assetStatus;
       const previousQuarantineReason = submission.quarantineReason;

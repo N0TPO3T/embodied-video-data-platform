@@ -83,6 +83,7 @@ export class RabbitAnnotationWorker {
     const retryAttempt = Number(message.properties.headers?.["retry-attempt"] ?? 0);
     let runId: string | null = null;
     let taskError: string | null = null;
+    let deadLetter = false;
     try {
       const payload = JSON.parse(message.content.toString("utf8")) as {
         runId?: unknown;
@@ -120,10 +121,13 @@ export class RabbitAnnotationWorker {
             },
           );
           await channel.waitForConfirms();
+        } else {
+          deadLetter = true;
         }
       }
     } catch (error) {
       taskError = error instanceof Error ? error.message.slice(0, 1_000) : "候选标注消息无效";
+      deadLetter = true;
     } finally {
       if (runId) {
         const startedAt = this.activeRuns.get(runId);
@@ -139,7 +143,8 @@ export class RabbitAnnotationWorker {
         this.activeRuns.delete(runId);
         await this.publishHeartbeat(taskError);
       }
-      channel.ack(message);
+      if (deadLetter) channel.reject(message, false);
+      else channel.ack(message);
     }
   }
 

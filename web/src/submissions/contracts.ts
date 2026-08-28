@@ -382,8 +382,6 @@ export type ReviewSubmissionQualityInput = {
   issues: Array<{ label: string; start: number; end: number }>;
   expectedReviewRevision?: number;
   quarantine?: boolean;
-  annotationDecision?: "accepted" | "needs_correction";
-  annotationCorrection?: Record<string, unknown>;
 };
 
 export type RerunAiQualityInput = {
@@ -508,6 +506,15 @@ export type ReviewAnnotationRunInput = {
     reasonCode: string;
     comment?: string;
   }>;
+};
+
+export type DiscardAnnotationRunInput = {
+  expectedReviewRevision: number;
+  reasonCode:
+    | "version_replaced"
+    | "configuration_error"
+    | "operator_cancelled";
+  reason: string;
 };
 
 export type BackendSubmissionPreview = {

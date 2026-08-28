@@ -9,6 +9,7 @@ import { SubmissionFailureFilter } from "../submissions/submission-failure.filte
 import { AnnotationManagementService } from "./annotation-management.service.js";
 import {
   AnnotationRunReasonDto,
+  DiscardAnnotationRunDto,
   ReviewAnnotationRunDto,
 } from "./dto/annotation-run.dto.js";
 
@@ -24,6 +25,14 @@ export class AnnotationRunsController {
     @Param("submissionId") submissionId: string,
   ) {
     return this.annotations.list(actor, submissionId);
+  }
+
+  @Get("annotation-runs/:runId")
+  get(
+    @CurrentUser() actor: PublicUser,
+    @Param("runId") runId: string,
+  ) {
+    return this.annotations.get(actor, runId);
   }
 
   @Post("submissions/:submissionId/annotation-runs")
@@ -44,6 +53,16 @@ export class AnnotationRunsController {
     @Body() input: AnnotationRunReasonDto,
   ) {
     return this.annotations.retry(actor, runId, input.reason);
+  }
+
+  @Post("annotation-runs/:runId/discard")
+  @UseGuards(AllowedOriginGuard, SensitiveActionRateLimitGuard)
+  discard(
+    @CurrentUser() actor: PublicUser,
+    @Param("runId") runId: string,
+    @Body() input: DiscardAnnotationRunDto,
+  ) {
+    return this.annotations.discard(actor, runId, input);
   }
 
   @Patch("annotation-runs/:runId/review")

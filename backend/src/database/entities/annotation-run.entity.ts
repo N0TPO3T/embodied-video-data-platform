@@ -38,6 +38,16 @@ export type AnnotationPublicationStatus =
 @Entity({ name: "annotation_runs" })
 @Index("idx_annotation_runs_submission_created", ["submissionId", "createdAt"])
 @Index("idx_annotation_runs_execution_retry", ["executionStatus", "nextRetryAt"])
+@Index("idx_annotation_runs_execution_updated", ["executionStatus", "updatedAt", "id"])
+@Index("idx_annotation_runs_review_publication_updated", ["reviewStatus", "publicationStatus", "updatedAt", "id"])
+@Index("uq_annotation_runs_current_human_verified", ["submissionId"], {
+  unique: true,
+  where: `"publication_status" = 'human_verified'`,
+})
+@Index("uq_annotation_runs_pending_candidate", ["submissionId"], {
+  unique: true,
+  where: `"execution_status" = 'succeeded' AND "review_status" = 'pending' AND "publication_status" = 'candidate_only'`,
+})
 export class AnnotationRunEntity {
   @PrimaryColumn({ type: "varchar", length: 64 })
   id!: string;

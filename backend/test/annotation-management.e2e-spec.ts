@@ -252,5 +252,109 @@ describe("annotation management", () => {
       eventType: "ai.annotation.v1",
       status: "pending",
     });
+
+    run.executionStatus = "succeeded";
+    run.reviewStatus = "pending";
+    run.publicationStatus = "candidate_only";
+    run.completedAt = new Date();
+    await repository.save(run);
+    await expect(
+      service.createNewVersion(actor, "SUB-AN", "待复核候选未处理时不得再创建"),
+    ).rejects.toMatchObject({ code: "ANNOTATION_RUN_ACTIVE" });
+
+    const discarded = await service.discard(actor, runId, {
+      expectedReviewRevision: 0,
+      reasonCode: "configuration_error",
+      reason: "模型配置错误，废弃该候选",
+    });
+    expect(discarded.run).toMatchObject({
+      executionStatus: "succeeded",
+      reviewStatus: "pending",
+      publicationStatus: "superseded",
+    });
+    await expect(
+      service.review(actor, runId, {
+        expectedReviewRevision: 0,
+        disposition: "accepted_unchanged",
+        reviewedFields: ["video_summary"],
+        reasonCodes: ["HUMAN_VERIFIED"],
+        reviewDurationMs: 10,
+        reason: "废弃后不允许覆盖提交",
+      }),
+    ).rejects.toMatchObject({ code: "ANNOTATION_CANDIDATE_SUPERSEDED" });
+
+    const publishedA = await repository.findOneByOrFail({ id: "ANR-INITIAL" });
+    const candidateB = await service.createNewVersion(actor, "SUB-AN", "生成替代候选版本");
+    const runB = await repository.findOneByOrFail({ id: candidateB.run.id });
+    Object.assign(runB, {
+      executionStatus: "succeeded",
+      reviewStatus: "pending",
+      publicationStatus: "candidate_only",
+      promptVersion: publishedA.promptVersion,
+      promptContentSha256: publishedA.promptContentSha256,
+      systemPromptSnapshot: publishedA.systemPromptSnapshot,
+      outputExampleSnapshot: publishedA.outputExampleSnapshot,
+      model: publishedA.model,
+      labelSetSnapshot: publishedA.labelSetSnapshot,
+      rawResult: publishedA.rawResult,
+      normalizedResult: publishedA.normalizedResult,
+      sourceTimestampsMs: publishedA.sourceTimestampsMs,
+      completedAt: new Date(),
+    });
+    await repository.save(runB);
+    await service.review(actor, runB.id, {
+      expectedReviewRevision: 0,
+      disposition: "accepted_unchanged",
+      reviewedFields: ["video_summary"],
+      reasonCodes: ["HUMAN_VERIFIED"],
+      reviewDurationMs: 100,
+      reason: "新候选逐字段确认通过",
+    });
+    expect(await repository.findOneByOrFail({ id: "ANR-INITIAL" })).toMatchObject({
+      publicationStatus: "superseded",
+    });
+    expect(await repository.findOneByOrFail({ id: runB.id })).toMatchObject({
+      publicationStatus: "human_verified",
+    });
+
+    const candidateC = await service.createNewVersion(actor, "SUB-AN", "验证拒绝不影响正式版本");
+    const runC = await repository.findOneByOrFail({ id: candidateC.run.id });
+    Object.assign(runC, {
+      executionStatus: "succeeded",
+      reviewStatus: "pending",
+      publicationStatus: "candidate_only",
+      promptVersion: publishedA.promptVersion,
+      promptContentSha256: publishedA.promptContentSha256,
+      systemPromptSnapshot: publishedA.systemPromptSnapshot,
+      outputExampleSnapshot: publishedA.outputExampleSnapshot,
+      model: publishedA.model,
+      rawResult: publishedA.rawResult,
+      normalizedResult: publishedA.normalizedResult,
+      sourceTimestampsMs: publishedA.sourceTimestampsMs,
+      completedAt: new Date(),
+    });
+    await repository.save(runC);
+    await service.review(actor, runC.id, {
+      expectedReviewRevision: 0,
+      disposition: "rejected",
+      reviewedFields: ["video_summary"],
+      reasonCodes: ["SEMANTIC_ERROR"],
+      reviewDurationMs: 100,
+      reason: "新候选语义错误，拒绝发布",
+    });
+    expect(await repository.findOneByOrFail({ id: runB.id })).toMatchObject({
+      publicationStatus: "human_verified",
+    });
+    expect(await repository.findOneByOrFail({ id: runC.id })).toMatchObject({
+      reviewStatus: "rejected",
+      publicationStatus: "rejected",
+    });
+
+    const concurrent = await Promise.allSettled([
+      service.createNewVersion(actor, "SUB-AN", "并发创建候选一"),
+      service.createNewVersion(actor, "SUB-AN", "并发创建候选二"),
+    ]);
+    expect(concurrent.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(concurrent.filter((result) => result.status === "rejected")).toHaveLength(1);
   });
 });

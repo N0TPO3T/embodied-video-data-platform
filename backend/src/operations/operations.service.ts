@@ -14,8 +14,21 @@ import { VideoQualityResultEntity } from "../database/entities/video-quality-res
 import { OperationsFailure } from "./operations-failure.js";
 import { WorkerHeartbeatService } from "./worker-heartbeat.service.js";
 import { enqueueAnnotationRun } from "../video-annotation/annotation-run.queue.js";
+import type {
+  AnnotationOperationsQueryDto,
+  AnnotationOperationsView,
+} from "./dto/annotation-operations-query.dto.js";
 
 const MAX_AUTO_RETRY_ATTEMPTS = 3;
+
+function redactAnnotationError(value: string | null): string | null {
+  if (!value) return null;
+  return value
+    .replace(/Bearer\s+[^\s"']+/giu, "Bearer <redacted>")
+    .replace(/sk-(?:ws-)?[A-Za-z0-9._-]+/gu, "<redacted>")
+    .replace(/data:[^;,\s]+;base64,[A-Za-z0-9+/=]+/gu, "<data-url-redacted>")
+    .slice(0, 1_500);
+}
 
 const QUALITY_PASSED_SQL = `
   (
@@ -138,6 +151,8 @@ export class OperationsService {
     private readonly jobs: Repository<JobOutboxEntity>,
     @InjectRepository(SubmissionEntity)
     private readonly submissions: Repository<SubmissionEntity>,
+    @InjectRepository(AnnotationRunEntity)
+    private readonly annotationRunsRepository: Repository<AnnotationRunEntity>,
     @InjectRepository(VideoQualityResultEntity)
     private readonly qualityResults: Repository<VideoQualityResultEntity>,
     @InjectRepository(AuditLogEntity)
@@ -145,6 +160,196 @@ export class OperationsService {
     private readonly workerHeartbeats: WorkerHeartbeatService,
     private readonly audit: AuditService,
   ) {}
+
+  async annotationRuns(actor: PublicUser, input: AnnotationOperationsQueryDto) {
+    assertAdmin(actor);
+    const view = input.view ?? "pending_review";
+    const page = input.page ?? 1;
+    const pageSize = input.pageSize ?? 50;
+    const includeSummary = input.includeSummary ?? true;
+    const query = this.annotationRunsRepository
+      .createQueryBuilder("run")
+      .leftJoinAndSelect("run.submission", "submission");
+    this.applyAnnotationView(query, view);
+    query
+      .orderBy("run.updatedAt", "DESC")
+      .addOrderBy("run.id", "DESC")
+      .skip((page - 1) * pageSize)
+      .take(pageSize);
+    const [runs, total] = await query.getManyAndCount();
+    const calculatedAt = Date.now();
+    const response: Record<string, unknown> = {
+      calculatedAt,
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: total === 0 ? 0 : Math.ceil(total / pageSize),
+      },
+      runs: runs.map((run) => ({
+        id: run.id,
+        submissionId: run.submissionId,
+        fileName: run.submission?.originalFileName ?? run.submissionId,
+        executionStatus: run.executionStatus,
+        reviewStatus: run.reviewStatus,
+        publicationStatus: run.publicationStatus,
+        trigger: run.trigger,
+        pipelineVersion: run.pipelineVersion,
+        schemaVersion: run.schemaVersion,
+        evidencePolicyVersion: run.evidencePolicyVersion,
+        model: run.model,
+        promptVersion: run.promptVersion,
+        attemptCount: run.attemptCount,
+        reviewRevision: run.reviewRevision,
+        lastErrorCode: run.lastErrorCode,
+        lastErrorMessage: redactAnnotationError(run.lastErrorMessage),
+        queuedAt: run.queuedAt.getTime(),
+        startedAt: run.startedAt?.getTime() ?? null,
+        completedAt: run.completedAt?.getTime() ?? null,
+        createdAt: run.createdAt.getTime(),
+        updatedAt: run.updatedAt.getTime(),
+      })),
+    };
+    if (includeSummary) {
+      const [summary, coverage] = await Promise.all([
+        this.annotationSummary(),
+        this.annotationCoverage(),
+      ]);
+      response.summary = summary;
+      response.coverage = coverage;
+    }
+    return response;
+  }
+
+  private applyAnnotationView(
+    query: SelectQueryBuilder<AnnotationRunEntity>,
+    view: AnnotationOperationsView,
+  ): void {
+    if (view === "pending_review") {
+      query
+        .andWhere("run.executionStatus = :succeeded", { succeeded: "succeeded" })
+        .andWhere("run.reviewStatus = :pending", { pending: "pending" })
+        .andWhere("run.publicationStatus = :candidate", { candidate: "candidate_only" });
+      return;
+    }
+    if (view === "execution_failed") {
+      query.andWhere("run.executionStatus IN (:...failed)", {
+        failed: ["system_failed", "stuck"],
+      });
+      return;
+    }
+    if (view === "in_progress") {
+      query.andWhere("run.executionStatus IN (:...running)", {
+        running: ["queued", "running", "retry_scheduled"],
+      });
+      return;
+    }
+    if (view === "resolved") {
+      query.andWhere("run.reviewStatus IN (:...resolved)", {
+        resolved: [
+          "accepted_unchanged",
+          "accepted_corrected",
+          "rejected",
+          "unable_to_judge",
+        ],
+      });
+    }
+  }
+
+  private async annotationSummary() {
+    const row = await this.annotationRunsRepository
+      .createQueryBuilder("run")
+      .select("COUNT(*)", "historicalTotal")
+      .addSelect("COUNT(*) FILTER (WHERE run.executionStatus = 'queued')", "queued")
+      .addSelect("COUNT(*) FILTER (WHERE run.executionStatus = 'running')", "running")
+      .addSelect("COUNT(*) FILTER (WHERE run.executionStatus = 'retry_scheduled')", "retryScheduled")
+      .addSelect("COUNT(*) FILTER (WHERE run.executionStatus = 'succeeded')", "succeeded")
+      .addSelect("COUNT(*) FILTER (WHERE run.executionStatus = 'system_failed')", "systemFailed")
+      .addSelect("COUNT(*) FILTER (WHERE run.executionStatus = 'stuck')", "stuck")
+      .addSelect("COUNT(*) FILTER (WHERE run.executionStatus = 'cancelled')", "cancelled")
+      .addSelect(`COUNT(*) FILTER (
+        WHERE run.executionStatus = 'succeeded'
+          AND run.reviewStatus = 'pending'
+          AND run.publicationStatus = 'candidate_only'
+      )`, "pending")
+      .addSelect("COUNT(*) FILTER (WHERE run.reviewStatus = 'accepted_unchanged')", "acceptedUnchanged")
+      .addSelect("COUNT(*) FILTER (WHERE run.reviewStatus = 'accepted_corrected')", "acceptedCorrected")
+      .addSelect("COUNT(*) FILTER (WHERE run.reviewStatus = 'rejected')", "rejected")
+      .addSelect("COUNT(*) FILTER (WHERE run.reviewStatus = 'unable_to_judge')", "unableToJudge")
+      .addSelect(`COUNT(*) FILTER (
+        WHERE run.executionStatus = 'succeeded'
+          AND (run.inputTokens IS NOT NULL OR run.outputTokens IS NOT NULL)
+      )`, "runsWithReportedUsage")
+      .addSelect("COALESCE(SUM(run.inputTokens) FILTER (WHERE run.executionStatus = 'succeeded'), 0)", "totalReportedInputTokens")
+      .addSelect("COALESCE(SUM(run.outputTokens) FILTER (WHERE run.executionStatus = 'succeeded'), 0)", "totalReportedOutputTokens")
+      .addSelect(`AVG(COALESCE(run.inputTokens, 0) + COALESCE(run.outputTokens, 0)) FILTER (
+        WHERE run.executionStatus = 'succeeded'
+          AND (run.inputTokens IS NOT NULL OR run.outputTokens IS NOT NULL)
+      )`, "averageReportedTokensPerSuccessfulRun")
+      .addSelect("AVG(run.latencyMs) FILTER (WHERE run.executionStatus = 'succeeded')", "averageReportedModelLatencyMs")
+      .getRawOne<Record<string, string | null>>();
+    const number = (key: string) => Number(row?.[key] ?? 0);
+    const nullableAverage = (key: string) => row?.[key] == null ? null : Math.round(Number(row[key]));
+    return {
+      runs: {
+        historicalTotal: number("historicalTotal"),
+        queued: number("queued"),
+        running: number("running"),
+        retryScheduled: number("retryScheduled"),
+        succeeded: number("succeeded"),
+        systemFailed: number("systemFailed"),
+        stuck: number("stuck"),
+        cancelled: number("cancelled"),
+      },
+      reviews: {
+        pending: number("pending"),
+        acceptedUnchanged: number("acceptedUnchanged"),
+        acceptedCorrected: number("acceptedCorrected"),
+        rejected: number("rejected"),
+        unableToJudge: number("unableToJudge"),
+      },
+      usage: {
+        scope: "successful_final_response_only" as const,
+        runsWithReportedUsage: number("runsWithReportedUsage"),
+        totalReportedInputTokens: number("totalReportedInputTokens"),
+        totalReportedOutputTokens: number("totalReportedOutputTokens"),
+        averageReportedTokensPerSuccessfulRun: nullableAverage("averageReportedTokensPerSuccessfulRun"),
+        averageReportedModelLatencyMs: nullableAverage("averageReportedModelLatencyMs"),
+      },
+    };
+  }
+
+  private async annotationCoverage() {
+    const rows = (await this.annotationRunsRepository.manager.query(`
+      SELECT
+        COUNT(DISTINCT submission.id) AS "eligibleSubmissions",
+        COUNT(DISTINCT submission.id) FILTER (WHERE run.id IS NOT NULL) AS "submissionsWithAnyRun",
+        COUNT(DISTINCT submission.id) FILTER (WHERE run.execution_status = 'succeeded') AS "submissionsWithSucceededRun",
+        COUNT(DISTINCT submission.id) FILTER (WHERE run.publication_status = 'human_verified') AS "submissionsHumanVerified"
+      FROM submissions AS submission
+      INNER JOIN media_metadata AS media ON media.submission_id = submission.id
+      LEFT JOIN annotation_runs AS run ON run.submission_id = submission.id
+      WHERE submission.upload_status = 'uploaded'
+        AND submission.storage_status = 'available'
+        AND submission.asset_status = 'active'
+        AND submission.is_test_data = false
+    `)) as Array<Record<string, string>>;
+    const row = rows[0] ?? {};
+    const eligibleSubmissions = Number(row.eligibleSubmissions ?? 0);
+    const submissionsWithAnyRun = Number(row.submissionsWithAnyRun ?? 0);
+    const submissionsWithSucceededRun = Number(row.submissionsWithSucceededRun ?? 0);
+    const submissionsHumanVerified = Number(row.submissionsHumanVerified ?? 0);
+    const rate = (value: number) => eligibleSubmissions === 0 ? null : value / eligibleSubmissions;
+    return {
+      eligibleSubmissions,
+      submissionsWithAnyRun,
+      submissionsWithSucceededRun,
+      submissionsHumanVerified,
+      anyRunRate: rate(submissionsWithAnyRun),
+      succeededRate: rate(submissionsWithSucceededRun),
+      verifiedRate: rate(submissionsHumanVerified),
+    };
+  }
 
   async queue(actor: PublicUser) {
     assertAdmin(actor);

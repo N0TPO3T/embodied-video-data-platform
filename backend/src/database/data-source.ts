@@ -34,6 +34,7 @@ import { AddAccountPhone2026082600001 } from "./migrations/202608260001-add-acco
 import { AddTaskTypeToCollectionTasks2026083000001 } from "./migrations/202608300001-add-task-type.js";
 import { AiQualityProgressStuck2026081700001 } from "./migrations/202608170001-ai-quality-progress-stuck.js";
 import { AnnotationRuns2026083000002 } from "./migrations/202608300002-annotation-runs.js";
+import { AnnotationRunLifecycle2026083000003 } from "./migrations/202608300003-annotation-run-lifecycle.js";
 import { CollectionTasks2026082400001 } from "./migrations/202608240001-collection-tasks.js";
 import { ScarcityConfigAndMediaScene2026081900001 } from "./migrations/202608190001-scarcity-config-and-media-scene.js";
 import { DeliveryPackages2026081300006 } from "./migrations/202608130006-delivery-packages.js";
@@ -137,6 +138,7 @@ export function createDataSource(
       DeliveryAnnotationSnapshots2026082600001,
       AddTaskTypeToCollectionTasks2026083000001,
       AnnotationRuns2026083000002,
+      AnnotationRunLifecycle2026083000003,
     ],
     synchronize: false,
     logging: false,

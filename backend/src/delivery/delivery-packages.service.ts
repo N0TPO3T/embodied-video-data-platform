@@ -23,7 +23,6 @@ import { MediaMetadataEntity } from "../database/entities/media-metadata.entity.
 import { PointCycleItemEntity } from "../database/entities/point-cycle-item.entity.js";
 import { loadLatestPointCycleAdjustments } from "../points/latest-point-cycle-adjustments.js";
 import { SubmissionEntity } from "../database/entities/submission.entity.js";
-import { VideoQualityResultEntity } from "../database/entities/video-quality-result.entity.js";
 import { AnnotationRunEntity } from "../database/entities/annotation-run.entity.js";
 import { AnnotationReviewEntity } from "../database/entities/annotation-review.entity.js";
 import {
@@ -31,7 +30,6 @@ import {
   type ObjectStoragePort,
 } from "../storage/object-storage.port.js";
 import {
-  acceptedDeliveryAnnotation,
   acceptedAnnotationRun,
   type AcceptedDeliveryAnnotation,
 } from "./delivery-annotation.js";
@@ -1367,12 +1365,6 @@ export class DeliveryPackagesService {
         "metadata",
         "metadata.submissionId = submission.id",
       )
-      .leftJoinAndMapOne(
-        "submission.qualityResult",
-        VideoQualityResultEntity,
-        "qualityResult",
-        "qualityResult.submissionId = submission.id",
-      )
       .leftJoin(
         DeliveryPackageItemEntity,
         "deliveryItem",
@@ -1444,11 +1436,6 @@ export class DeliveryPackagesService {
           metadata?: MediaMetadataEntity | null;
         }
       ).metadata;
-      const qualityResult = (
-        submission as SubmissionEntity & {
-          qualityResult?: VideoQualityResultEntity | null;
-        }
-      ).qualityResult;
       const annotationRun = latestVerifiedRun.get(submission.id);
       return [
         {
@@ -1463,7 +1450,7 @@ export class DeliveryPackagesService {
               annotationRun
                 ? latestVerifiedReview.get(annotationRun.id)
                 : undefined,
-            ) ?? acceptedDeliveryAnnotation(qualityResult?.normalizedResult),
+            ),
         },
       ];
     });

@@ -6,7 +6,6 @@ import {
   IsIn,
   IsInt,
   IsNumber,
-  IsObject,
   IsOptional,
   IsString,
   Matches,
@@ -135,13 +134,6 @@ export class ReviewSubmissionQualityDto {
   @IsBoolean()
   quarantine?: boolean;
 
-  @IsOptional()
-  @IsIn(["accepted", "needs_correction"])
-  annotationDecision?: "accepted" | "needs_correction";
-
-  @IsOptional()
-  @IsObject()
-  annotationCorrection?: Record<string, unknown>;
 }
 
 export class RerunAiQualityDto {

@@ -87,11 +87,17 @@ export function ReviewDrawer({
   onClose,
   readOnly = false,
   variant = "drawer",
+  annotationOnly = false,
+  annotationRunId,
+  onAnnotationReviewed,
 }: {
   submission: Submission;
   onClose(): void;
   readOnly?: boolean;
   variant?: "drawer" | "page";
+  annotationOnly?: boolean;
+  annotationRunId?: string;
+  onAnnotationReviewed?(): void;
 }) {
   const { teams } = useIdentity();
   const { notify } = useInteractions();
@@ -99,23 +105,6 @@ export function ReviewDrawer({
   const [reason, setReason] = useState("");
   const [quarantine, setQuarantine] = useState(
     submission.assetStatus === "quarantined",
-  );
-  const [annotationDecision, setAnnotationDecision] = useState<
-    "" | "accepted" | "corrected" | "needs_correction"
-  >(
-    submission.qualityResult?.annotationReview?.correctedAnnotation
-      ? "corrected"
-      : submission.qualityResult?.annotationReview?.decision ?? "",
-  );
-  const [annotationCorrectionText, setAnnotationCorrectionText] = useState(() =>
-    submission.qualityResult?.candidateAnnotation?.status !== "system_failed"
-      ? JSON.stringify(
-          submission.qualityResult?.annotationReview?.correctedAnnotation?.raw ??
-            submission.qualityResult?.candidateAnnotation?.raw,
-          null,
-          2,
-        )
-      : "",
   );
   const [issues, setIssues] = useState<IssueDraft[]>(() =>
     initialIssueDrafts(submission),
@@ -183,6 +172,7 @@ export function ReviewDrawer({
         : "danger";
 
   useEffect(() => {
+    if (annotationOnly) return;
     let active = true;
     getPointRule()
       .then((rule) => {
@@ -196,7 +186,7 @@ export function ReviewDrawer({
     return () => {
       active = false;
     };
-  }, []);
+  }, [annotationOnly]);
 
   useEffect(() => {
     let active = true;
@@ -235,23 +225,6 @@ export function ReviewDrawer({
       start: Number(issue.start),
       end: Number(issue.end),
     }));
-    let annotationCorrection: Record<string, unknown> | undefined;
-    if (annotationDecision === "corrected") {
-      try {
-        const parsed = JSON.parse(annotationCorrectionText) as unknown;
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-          throw new Error("修正标注必须是 JSON 对象");
-        }
-        annotationCorrection = parsed as Record<string, unknown>;
-      } catch (caught) {
-        setError(
-          caught instanceof Error
-            ? `修正标注 JSON 无效：${caught.message}`
-            : "修正标注 JSON 无效",
-        );
-        return;
-      }
-    }
     try {
       setSaving(true);
       if (!submission.qualityResult) {
@@ -263,16 +236,6 @@ export function ReviewDrawer({
         issues: nextIssues,
         expectedReviewRevision: submission.qualityResult.reviewRevision,
         quarantine,
-        ...(hasIndependentAnnotation === false &&
-        submission.qualityResult.candidateAnnotation && annotationDecision
-          ? {
-              annotationDecision:
-                annotationDecision === "corrected"
-                  ? ("accepted" as const)
-                  : annotationDecision,
-              ...(annotationCorrection ? { annotationCorrection } : {}),
-            }
-          : {}),
       });
       notify("success", "复核结果已保存");
       onClose();
@@ -327,6 +290,47 @@ export function ReviewDrawer({
     </section>
   );
 
+  if (annotationOnly) {
+    const annotationContent = annotationRunId ? (
+      <AnnotationRunReview
+        submissionId={submission.id}
+        runId={annotationRunId}
+        readOnly={readOnly}
+        onReviewed={onAnnotationReviewed}
+      />
+    ) : (
+      <p className="form-message error">缺少 Annotation Run ID</p>
+    );
+    if (variant === "page") {
+      return (
+        <div className="page-stack review-page">
+          <button className="back-page" onClick={onClose}><ArrowLeft size={16} />返回 AI 标注</button>
+          <div className="page-heading">
+            <div>
+              <p className="page-kicker">{annotationRunId}</p>
+              <h1>{submission.fileName}</h1>
+              <span>{submission.id} · {submission.ownerName} · {submission.teamName} · {submission.durationSeconds} 秒</span>
+            </div>
+            <StatusBadge label={readOnly ? "标注结果" : "结构化标注复核"} tone={readOnly ? "info" : "warning"} />
+          </div>
+          <div className="detail-grid report-layout review-page-layout">
+            {videoPreview}
+            <div className="review-page-side">{annotationContent}</div>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <>
+        <button className="drawer-backdrop" aria-label="关闭标注复核" onClick={onClose} />
+        <aside className="review-drawer" aria-label="结构化标注复核面板">
+          <header><div><span>结构化标注复核</span><h2>{submission.fileName}</h2><p>{annotationRunId}</p></div><button className="icon-button" aria-label="关闭标注复核" onClick={onClose}><X size={18} /></button></header>
+          <div className="drawer-body">{videoPreview}{annotationContent}</div>
+        </aside>
+      </>
+    );
+  }
+
   const bodyContent = (
     <>
       <section className="ai-conclusion">
@@ -373,7 +377,7 @@ export function ReviewDrawer({
         submission.qualityResult.candidateAnnotation.status !== "system_failed" && (
           <section className="ai-conclusion">
             <div className="ai-conclusion-head">
-              <span>结构化内容标注（影子运行）</span>
+              <span>结构化内容标注（旧影子结果，只读）</span>
               <StatusBadge
                 label={submission.qualityResult.candidateAnnotation.status === "candidate" ? "候选可用" : "待确认"}
                 tone={submission.qualityResult.candidateAnnotation.status === "candidate" ? "info" : "warning"}
@@ -479,47 +483,6 @@ export function ReviewDrawer({
         </div>
         <label><span>调整原因</span><textarea aria-label="调整原因" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="请说明人工复核依据，必填" rows={3} /><small className="field-hint">必填，将写入审计记录留痕</small></label>
         <label className="checkbox-line"><input type="checkbox" checked={quarantine} onChange={(event) => setQuarantine(event.target.checked)} />敏感内容隔离，不进入普通资产和交付候选</label>
-        {submission.qualityResult?.candidateAnnotation &&
-          hasIndependentAnnotation === false &&
-          submission.qualityResult.candidateAnnotation.status !== "system_failed" && (
-            <label>
-              <span>候选内容标注结论</span>
-              <select
-                aria-label="候选内容标注结论"
-                value={annotationDecision}
-                onChange={(event) =>
-                  setAnnotationDecision(
-                    event.target.value as
-                      | ""
-                      | "accepted"
-                      | "corrected"
-                      | "needs_correction",
-                  )
-                }
-              >
-                <option value="">本次不处理</option>
-                <option value="accepted">接受候选标注</option>
-                {submission.qualityResult.candidateAnnotation.schemaVersion ===
-                  "ego_video_annotation_v2" && (
-                  <option value="corrected">修正后接受</option>
-                )}
-                <option value="needs_correction">需要修正</option>
-              </select>
-              <small className="field-hint">结论会连同候选 Schema、Prompt 哈希和复核原因写入审计</small>
-            </label>
-          )}
-        {hasIndependentAnnotation === false && annotationDecision === "corrected" && (
-          <label>
-            <span>修正后的结构化标注 JSON</span>
-            <textarea
-              aria-label="修正后的结构化标注 JSON"
-              rows={12}
-              value={annotationCorrectionText}
-              onChange={(event) => setAnnotationCorrectionText(event.target.value)}
-            />
-            <small className="field-hint">以当前候选 v2 JSON 为基础修正；服务端会重新执行 Schema、时间戳、coverage 和结果证据校验，通过后才可交付。</small>
-          </label>
-        )}
         {submission.issues.length > 0 && <div className="review-issues"><AlertTriangle size={15} /><span>AI 标记 {submission.issues.length} 个问题区间，人工确认无效时长 {finalInvalidSeconds} 秒</span></div>}
         {error && <p className="form-message error">{error}</p>}
         <button className="button button-primary" disabled={saving} type="submit"><CheckCircle2 size={16} />{saving ? "保存中" : "保存调整"}</button>

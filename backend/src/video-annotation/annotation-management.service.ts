@@ -22,6 +22,7 @@ import {
 } from "./annotation-run.queue.js";
 import type {
   AnnotationCorrectionDto,
+  DiscardAnnotationRunDto,
   ReviewAnnotationRunDto,
 } from "./dto/annotation-run.dto.js";
 
@@ -296,6 +297,27 @@ export class AnnotationManagementService {
     };
   }
 
+  async get(actor: PublicUser, runId: string) {
+    const run = await this.dataSource.getRepository(AnnotationRunEntity).findOneBy({ id: runId });
+    if (!run) throw new SubmissionFailure("NOT_FOUND", "候选标注运行不存在", 404);
+    const submission = await this.dataSource.getRepository(SubmissionEntity).findOneBy({
+      id: run.submissionId,
+    });
+    if (!submission) throw new SubmissionFailure("NOT_FOUND", "视频提交不存在", 404);
+    requireRead(actor, submission);
+    const [review, corrections] = await Promise.all([
+      this.dataSource.getRepository(AnnotationReviewEntity).findOne({
+        where: { annotationRunId: run.id },
+        order: { revision: "DESC" },
+      }),
+      this.dataSource.getRepository(AnnotationCorrectionEntity).find({
+        where: { annotationRunId: run.id },
+        order: { createdAt: "ASC", id: "ASC" },
+      }),
+    ]);
+    return { run: publicRun(run, review ?? undefined, corrections) };
+  }
+
   async createNewVersion(actor: PublicUser, submissionId: string, reason: string) {
     requireAdmin(actor);
     const trimmedReason = reason.trim();
@@ -311,13 +333,20 @@ export class AnnotationManagementService {
       if (submission.uploadStatus !== "uploaded" || submission.storageStatus !== "available") {
         throw new SubmissionFailure("ANNOTATION_SOURCE_UNAVAILABLE", "视频源文件当前不可用于标注", 409);
       }
-      const active = await manager.getRepository(AnnotationRunEntity).findOne({
-        where: {
-          submissionId,
-          executionStatus: In(["queued", "running", "retry_scheduled"]),
-        },
-        lock: { mode: "pessimistic_write" },
-      });
+      const active = await manager
+        .getRepository(AnnotationRunEntity)
+        .createQueryBuilder("run")
+        .setLock("pessimistic_write")
+        .where("run.submission_id = :submissionId", { submissionId })
+        .andWhere(`(
+          run.execution_status IN ('queued', 'running', 'retry_scheduled')
+          OR (
+            run.execution_status = 'succeeded'
+            AND run.review_status = 'pending'
+            AND run.publication_status = 'candidate_only'
+          )
+        )`)
+        .getOne();
       if (active) {
         throw new SubmissionFailure("ANNOTATION_RUN_ACTIVE", "当前已有未结束的候选标注运行", 409);
       }
@@ -341,17 +370,23 @@ export class AnnotationManagementService {
     if (trimmedReason.length < 2) {
       throw new SubmissionFailure("VALIDATION", "请填写重试原因", 400);
     }
+    const existing = await this.dataSource.getRepository(AnnotationRunEntity).findOneBy({ id: runId });
+    if (!existing) throw new SubmissionFailure("NOT_FOUND", "候选标注运行不存在", 404);
     return this.dataSource.transaction(async (manager) => {
+      const submission = await manager.getRepository(SubmissionEntity).findOne({
+        where: { id: existing.submissionId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!submission) throw new SubmissionFailure("NOT_FOUND", "视频提交不存在", 404);
       const repository = manager.getRepository(AnnotationRunEntity);
       const run = await repository.findOne({
         where: { id: runId },
         lock: { mode: "pessimistic_write" },
       });
       if (!run) throw new SubmissionFailure("NOT_FOUND", "候选标注运行不存在", 404);
-      const submission = await manager.getRepository(SubmissionEntity).findOneBy({
-        id: run.submissionId,
-      });
-      if (!submission) throw new SubmissionFailure("NOT_FOUND", "视频提交不存在", 404);
+      if (run.submissionId !== submission.id) {
+        throw new SubmissionFailure("ANNOTATION_RUN_CONFLICT", "候选标注所属视频已变化", 409);
+      }
       if (submission.uploadStatus !== "uploaded" || submission.storageStatus !== "available") {
         throw new SubmissionFailure("ANNOTATION_SOURCE_UNAVAILABLE", "视频源文件当前不可用于标注", 409);
       }
@@ -396,22 +431,85 @@ export class AnnotationManagementService {
     });
   }
 
-  async review(actor: PublicUser, runId: string, input: ReviewAnnotationRunDto) {
+  async discard(actor: PublicUser, runId: string, input: DiscardAnnotationRunDto) {
+    requireAdmin(actor);
+    const existing = await this.dataSource.getRepository(AnnotationRunEntity).findOneBy({ id: runId });
+    if (!existing) throw new SubmissionFailure("NOT_FOUND", "候选标注运行不存在", 404);
     return this.dataSource.transaction(async (manager) => {
+      const submission = await manager.getRepository(SubmissionEntity).findOne({
+        where: { id: existing.submissionId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!submission) throw new SubmissionFailure("NOT_FOUND", "视频提交不存在", 404);
+      const repository = manager.getRepository(AnnotationRunEntity);
+      const run = await repository.findOne({
+        where: { id: runId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!run || run.submissionId !== submission.id) {
+        throw new SubmissionFailure("ANNOTATION_RUN_CONFLICT", "候选标注运行已变化", 409);
+      }
+      if (
+        run.executionStatus !== "succeeded" ||
+        run.reviewStatus !== "pending" ||
+        run.publicationStatus !== "candidate_only"
+      ) {
+        throw new SubmissionFailure("ANNOTATION_DISCARD_INVALID", "当前运行不是可废弃的待复核候选", 409);
+      }
+      if (input.expectedReviewRevision !== run.reviewRevision) {
+        throw new SubmissionFailure("ANNOTATION_REVIEW_CONFLICT", "标注已被更新，请刷新后重试", 409);
+      }
+      run.publicationStatus = "superseded";
+      await repository.save(run);
+      await this.audit.record(
+        manager,
+        actor,
+        "annotation.run.discard",
+        { id: submission.id, name: submission.originalFileName },
+        input.reason.trim(),
+        {
+          runId: run.id,
+          executionStatus: run.executionStatus,
+          reviewStatus: run.reviewStatus,
+          publicationStatus: "candidate_only",
+        },
+        {
+          runId: run.id,
+          publicationStatus: run.publicationStatus,
+          reasonCode: input.reasonCode,
+        },
+      );
+      return { run: publicRun(run) };
+    });
+  }
+
+  async review(actor: PublicUser, runId: string, input: ReviewAnnotationRunDto) {
+    const existing = await this.dataSource.getRepository(AnnotationRunEntity).findOneBy({ id: runId });
+    if (!existing) throw new SubmissionFailure("NOT_FOUND", "候选标注运行不存在", 404);
+    return this.dataSource.transaction(async (manager) => {
+      const submission = await manager.getRepository(SubmissionEntity).findOne({
+        where: { id: existing.submissionId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!submission) throw new SubmissionFailure("NOT_FOUND", "视频提交不存在", 404);
       const repository = manager.getRepository(AnnotationRunEntity);
       const run = await repository.findOne({
         where: { id: runId },
         lock: { mode: "pessimistic_write" },
       });
       if (!run) throw new SubmissionFailure("NOT_FOUND", "候选标注运行不存在", 404);
-      const submission = await manager.getRepository(SubmissionEntity).findOneBy({ id: run.submissionId });
-      if (!submission) throw new SubmissionFailure("NOT_FOUND", "视频提交不存在", 404);
-      requireReview(actor, submission);
-      if (run.executionStatus !== "succeeded" || !run.rawResult || !run.normalizedResult) {
-        throw new SubmissionFailure("ANNOTATION_CANDIDATE_NOT_READY", "候选标注尚未成功生成", 409);
+      if (run.submissionId !== submission.id) {
+        throw new SubmissionFailure("ANNOTATION_RUN_CONFLICT", "候选标注所属视频已变化", 409);
       }
+      requireReview(actor, submission);
       if (run.reviewStatus !== "pending") {
         throw new SubmissionFailure("ANNOTATION_ALREADY_REVIEWED", "该运行已有不可变人工结论，请创建新版本运行", 409);
+      }
+      if (run.publicationStatus !== "candidate_only") {
+        throw new SubmissionFailure("ANNOTATION_CANDIDATE_SUPERSEDED", "候选标注已被废弃或替代", 409);
+      }
+      if (run.executionStatus !== "succeeded" || !run.rawResult || !run.normalizedResult) {
+        throw new SubmissionFailure("ANNOTATION_CANDIDATE_NOT_READY", "候选标注尚未成功生成", 409);
       }
       if (input.expectedReviewRevision !== run.reviewRevision) {
         throw new SubmissionFailure("ANNOTATION_REVIEW_CONFLICT", "标注已被其他审核人更新，请刷新后重试", 409);

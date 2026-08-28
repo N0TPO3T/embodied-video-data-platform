@@ -6,9 +6,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useIdentity } from "../auth/client/IdentityContext";
 import {
   createAnnotationRun,
+  discardAnnotationRun,
+  getAnnotationRun,
   listAnnotationRuns,
   retryAnnotationRun,
   reviewAnnotationRun,
+  SubmissionApiError,
 } from "../submissions/client/submissionApi";
 import type {
   BackendAnnotationRun,
@@ -64,12 +67,18 @@ function sameValue(left: unknown, right: unknown): boolean {
 }
 
 function annotationStatus(run: BackendAnnotationRun) {
+  if (run.publicationStatus === "superseded") {
+    return { label: "已废弃或替代", tone: "neutral" as const };
+  }
   if (run.executionStatus === "succeeded") {
     if (run.publicationStatus === "human_verified") {
       return { label: "人工已确认", tone: "success" as const };
     }
     if (run.reviewStatus === "rejected") {
       return { label: "人工已拒绝", tone: "danger" as const };
+    }
+    if (run.reviewStatus === "unable_to_judge") {
+      return { label: "人工无法判断", tone: "warning" as const };
     }
     return { label: "等待标注复核", tone: "warning" as const };
   }
@@ -155,12 +164,16 @@ function correctionTarget(
 
 export function AnnotationRunReview({
   submissionId,
+  runId,
   readOnly,
   onIndependentState,
+  onReviewed,
 }: {
   submissionId: string;
+  runId?: string;
   readOnly: boolean;
   onIndependentState?(hasRuns: boolean): void;
+  onReviewed?(): void;
 }) {
   const { currentAccount } = useIdentity();
   const { notify } = useInteractions();
@@ -168,15 +181,22 @@ export function AnnotationRunReview({
   const [editedRaw, setEditedRaw] = useState<EditableRecord | null>(null);
   const [decision, setDecision] = useState<ReviewDecision>("accepted");
   const [reasonCode, setReasonCode] = useState("HUMAN_VERIFIED");
+  const [discardReasonCode, setDiscardReasonCode] = useState<
+    "version_replaced" | "configuration_error" | "operator_cancelled"
+  >("operator_cancelled");
   const [reason, setReason] = useState("");
   const [loadError, setLoadError] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [reviewStartedAt, setReviewStartedAt] = useState(() => Date.now());
 
+  const fetchRuns = useCallback(async () => {
+    return runId ? [await getAnnotationRun(runId)] : await listAnnotationRuns(submissionId);
+  }, [runId, submissionId]);
+
   const load = useCallback(async () => {
     try {
-      const next = await listAnnotationRuns(submissionId);
+      const next = await fetchRuns();
       setRuns(next);
       setEditedRaw(editableResult(next[0]));
       setReviewStartedAt(Date.now());
@@ -187,11 +207,11 @@ export function AnnotationRunReview({
       setRuns([]);
       setLoadError(caught instanceof Error ? caught.message : "标注运行读取失败");
     }
-  }, [onIndependentState, submissionId]);
+  }, [fetchRuns, onIndependentState]);
 
   useEffect(() => {
     let cancelled = false;
-    void listAnnotationRuns(submissionId)
+    void fetchRuns()
       .then((next) => {
         if (cancelled) return;
         setRuns(next);
@@ -210,7 +230,7 @@ export function AnnotationRunReview({
     return () => {
       cancelled = true;
     };
-  }, [onIndependentState, submissionId]);
+  }, [fetchRuns, onIndependentState]);
 
   const run = runs?.[0] ?? null;
   const candidateRaw = useMemo(() => {
@@ -279,9 +299,45 @@ export function AnnotationRunReview({
           : {}),
       });
       notify("success", "结构化标注审核已保存");
-      await load();
+      if (onReviewed) onReviewed();
+      else await load();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "标注审核保存失败");
+      if (caught instanceof SubmissionApiError && caught.status === 409 && runId) {
+        await load();
+        setError("该 Run 已被更新、复核或替代，已重新读取当前状态，不能覆盖提交。");
+      } else {
+        setError(caught instanceof Error ? caught.message : "标注审核保存失败");
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function discard() {
+    if (!run) return;
+    const trimmedReason = reason.trim();
+    if (trimmedReason.length < 2) {
+      setError("请填写废弃候选的原因");
+      return;
+    }
+    try {
+      setSaving(true);
+      setError("");
+      await discardAnnotationRun(run.id, {
+        expectedReviewRevision: run.reviewRevision,
+        reasonCode: discardReasonCode,
+        reason: trimmedReason,
+      });
+      notify("success", "候选 Run 已废弃，不计入人工拒绝统计");
+      if (onReviewed) onReviewed();
+      else await load();
+    } catch (caught) {
+      if (caught instanceof SubmissionApiError && caught.status === 409 && runId) {
+        await load();
+        setError("该 Run 已被更新、复核或替代，不能重复废弃。");
+      } else {
+        setError(caught instanceof Error ? caught.message : "候选废弃失败");
+      }
     } finally {
       setSaving(false);
     }
@@ -340,6 +396,7 @@ export function AnnotationRunReview({
     !readOnly &&
     run.executionStatus === "succeeded" &&
     run.reviewStatus === "pending" &&
+    run.publicationStatus === "candidate_only" &&
     candidateRaw !== null &&
     editedRaw !== null;
 
@@ -425,8 +482,19 @@ export function AnnotationRunReview({
                 </select>
               </label>
               <label><span>标注审核依据</span><textarea rows={3} value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+              {currentAccount.role === "admin" ? (
+                <label>
+                  <span>废弃候选原因类型</span>
+                  <select value={discardReasonCode} onChange={(event) => setDiscardReasonCode(event.target.value as typeof discardReasonCode)}>
+                    <option value="operator_cancelled">操作员取消</option>
+                    <option value="version_replaced">版本替换</option>
+                    <option value="configuration_error">配置错误</option>
+                  </select>
+                </label>
+              ) : null}
               {error ? <p className="form-message error">{error}</p> : null}
               <button className="button button-primary" disabled={saving} type="button" onClick={() => void submitReview()}><CheckCircle2 size={16} />{saving ? "保存中" : "保存标注审核"}</button>
+              {currentAccount.role === "admin" ? <button className="table-action" disabled={saving} type="button" onClick={() => void discard()}>废弃当前候选</button> : null}
             </>
           ) : null}
           <details>
@@ -440,7 +508,7 @@ export function AnnotationRunReview({
         <>
           {!canReview ? <label><span>运行操作原因</span><textarea rows={2} value={reason} onChange={(event) => setReason(event.target.value)} /></label> : null}
           {(run.executionStatus === "system_failed" || run.executionStatus === "stuck") ? <button className="table-action" disabled={saving} type="button" onClick={() => void rerun("retry")}><RotateCcw size={15} />重试同一运行（保留配置快照）</button> : null}
-          {!["queued", "running", "retry_scheduled"].includes(run.executionStatus) ? <button className="table-action" disabled={saving} type="button" onClick={() => void rerun("new")}><RotateCcw size={15} />创建新版本运行</button> : null}
+          {!runId && !["queued", "running", "retry_scheduled"].includes(run.executionStatus) ? <button className="table-action" disabled={saving} type="button" onClick={() => void rerun("new")}><RotateCcw size={15} />创建新版本运行</button> : null}
         </>
       ) : null}
       {error && !canReview ? <p className="form-message error">{error}</p> : null}

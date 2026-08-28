@@ -11,6 +11,7 @@ import { AssetsPage } from "../features/admin/AssetsPage";
 import { AuditLogPage } from "../features/admin/AuditLogPage";
 import { PublicConfigPage } from "../features/admin/PublicConfigPage";
 import { AdminReviewDetailPage } from "../features/admin/AdminReviewDetailPage";
+import { AnnotationReviewDetailPage } from "../features/admin/AnnotationReviewDetailPage";
 import { QualityReviewPage } from "../features/admin/QualityReviewPage";
 import { RulesPage } from "../features/admin/RulesPage";
 import { SettlementPage } from "../features/admin/SettlementPage";
@@ -130,7 +131,11 @@ function AuthenticatedPlatformContent({
         />
       );
     }
-    else if (safePath === "/admin/ai") page = <AiQueuePage />;
+    else if (safePath === "/admin/ai") page = <AiQueuePage navigate={navigate} />;
+    else if (safePath.startsWith("/admin/ai/annotation-runs/") && safePath.endsWith("/review")) {
+      const segments = safePath.split("/");
+      page = <AnnotationReviewDetailPage runId={segments.at(-2) ?? ""} navigate={navigate} />;
+    }
     else if (safePath === "/admin/review") page = <QualityReviewPage navigate={navigate} />;
     else if (safePath.startsWith("/admin/review/")) {
       page = (

@@ -114,3 +114,81 @@ export type BackendOperationsStatus = {
   navigationBadges: BackendNavigationBadge[];
   notifications: BackendOperationsNotification[];
 };
+
+export type AnnotationOperationsView =
+  | "pending_review"
+  | "execution_failed"
+  | "in_progress"
+  | "resolved"
+  | "all";
+
+export type BackendAnnotationRunListItem = {
+  id: string;
+  submissionId: string;
+  fileName: string;
+  executionStatus: string;
+  reviewStatus: string;
+  publicationStatus: string;
+  trigger: "initial" | "manual";
+  pipelineVersion: string;
+  schemaVersion: string;
+  evidencePolicyVersion: string;
+  model: string | null;
+  promptVersion: string | null;
+  attemptCount: number;
+  reviewRevision: number;
+  lastErrorCode: string | null;
+  lastErrorMessage: string | null;
+  queuedAt: number;
+  startedAt: number | null;
+  completedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type BackendAnnotationOperations = {
+  calculatedAt: number;
+  summary?: {
+    runs: {
+      historicalTotal: number;
+      queued: number;
+      running: number;
+      retryScheduled: number;
+      succeeded: number;
+      systemFailed: number;
+      stuck: number;
+      cancelled: number;
+    };
+    reviews: {
+      pending: number;
+      acceptedUnchanged: number;
+      acceptedCorrected: number;
+      rejected: number;
+      unableToJudge: number;
+    };
+    usage: {
+      scope: "successful_final_response_only";
+      runsWithReportedUsage: number;
+      totalReportedInputTokens: number;
+      totalReportedOutputTokens: number;
+      averageReportedTokensPerSuccessfulRun: number | null;
+      averageReportedModelLatencyMs: number | null;
+    };
+  };
+  coverage?: {
+    eligibleSubmissions: number;
+    submissionsWithAnyRun: number;
+    submissionsWithSucceededRun: number;
+    submissionsHumanVerified: number;
+    anyRunRate: number | null;
+    succeededRate: number | null;
+    verifiedRate: number | null;
+  };
+  pagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+  };
+  runs: BackendAnnotationRunListItem[];
+};

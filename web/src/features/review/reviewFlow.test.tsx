@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PlatformApp } from "../../app/PlatformApp";
@@ -9,6 +9,7 @@ import type { BackendAnnotationRun, BackendSubmission } from "../../submissions/
 import {
   clearDuplicateCandidate,
   getSubmission,
+  getAnnotationRun,
   getSubmissionPreview,
   listAnnotationRuns,
   reviewAnnotationRun,
@@ -24,6 +25,7 @@ vi.mock("../../submissions/client/submissionApi", async (importOriginal) => {
     ...actual,
     clearDuplicateCandidate: vi.fn(),
     getSubmission: vi.fn(),
+    getAnnotationRun: vi.fn(),
     getSubmissionPreview: vi.fn(),
     listAnnotationRuns: vi.fn(),
     reviewAnnotationRun: vi.fn(),
@@ -96,6 +98,7 @@ function backendSubmission(
 beforeEach(() => {
   vi.mocked(clearDuplicateCandidate).mockReset();
   vi.mocked(getSubmission).mockReset();
+  vi.mocked(getAnnotationRun).mockReset();
   vi.mocked(getSubmissionPreview).mockReset();
   vi.mocked(listAnnotationRuns).mockReset();
   vi.mocked(reviewAnnotationRun).mockReset();
@@ -170,6 +173,58 @@ function renderAdminWithSubmissions(submissions: BackendSubmission[]) {
 }
 
 describe("review workflows", () => {
+  it("keeps annotation review pinned to the run-id route and never exposes QC controls", async () => {
+    const path = "/admin/ai/annotation-runs/ANR-PINNED/review";
+    const submission = backendSubmission({ id: "SUB-PINNED" });
+    const run: BackendAnnotationRun = {
+      id: "ANR-PINNED",
+      submissionId: submission.id,
+      trigger: "manual",
+      pipelineVersion: "pipeline-v1",
+      schemaVersion: "schema-v1",
+      evidencePolicyVersion: "evidence-v1",
+      promptVersion: "prompt-v1",
+      promptContentSha256: "a".repeat(64),
+      model: "qwen-vl-max",
+      labelSetVersionId: null,
+      labelSetRevision: null,
+      executionStatus: "system_failed",
+      reviewStatus: "pending",
+      publicationStatus: "candidate_only",
+      attemptCount: 2,
+      reviewRevision: 0,
+      lastErrorCode: "MODEL_HTTP_500",
+      lastErrorMessage: "模型调用失败",
+      nextRetryAt: null,
+      candidate: null,
+      humanResult: null,
+      review: null,
+      corrections: [],
+      queuedAt: Date.now() - 2_000,
+      startedAt: Date.now() - 1_500,
+      completedAt: Date.now() - 1_000,
+      createdAt: Date.now() - 2_000,
+      updatedAt: Date.now() - 1_000,
+    };
+    window.history.replaceState({}, "", path);
+    vi.mocked(getAnnotationRun).mockResolvedValue(run);
+    vi.mocked(getSubmission).mockResolvedValue(submission);
+    const admin = accountForRole("admin");
+    render(
+      <IdentityProvider currentAccount={admin} accounts={demoAccounts} teams={[]}>
+        <PlatformApp initialPath={path} />
+      </IdentityProvider>,
+    );
+
+    expect((await screen.findAllByText("ANR-PINNED")).length).toBeGreaterThan(0);
+    await waitFor(() => expect(getAnnotationRun).toHaveBeenCalledWith("ANR-PINNED"));
+    expect(listAnnotationRuns).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("最终评分")).not.toBeInTheDocument();
+    expect(screen.queryByText("质量系数")).not.toBeInTheDocument();
+    expect(screen.queryByText("敏感内容隔离，不进入普通资产和交付候选")).not.toBeInTheDocument();
+    expect(reviewSubmissionQuality).not.toHaveBeenCalled();
+  });
+
   it("uses the published point-rule coefficient for review estimates", async () => {
     vi.mocked(getPointRule).mockResolvedValue({
       id: "PRV-REVIEW-CUSTOM",
@@ -361,7 +416,7 @@ describe("review workflows", () => {
     );
   });
 
-  it("writes an explicit human decision for a shadow annotation candidate", async () => {
+  it("keeps a legacy shadow annotation read-only and out of quality-review writes", async () => {
     const user = userEvent.setup();
     const submission = backendSubmission({ id: "SUB-ANNOTATION-REVIEW" });
     submission.quality!.candidateAnnotation = {
@@ -392,22 +447,16 @@ describe("review workflows", () => {
     renderAdminWithSubmissions([submission]);
 
     await user.click(await screen.findByRole("button", { name: "复核" }));
-    await user.selectOptions(
-      await screen.findByLabelText("候选内容标注结论"),
-      "accepted",
-    );
+    expect(await screen.findByText("结构化内容标注（旧影子结果，只读）")).toBeVisible();
+    expect(screen.queryByLabelText("候选内容标注结论")).not.toBeInTheDocument();
     await user.type(screen.getByLabelText("调整原因"), "逐帧检查后确认标注正确");
     await user.click(screen.getByRole("button", { name: "保存调整" }));
 
-    await waitFor(() =>
-      expect(reviewSubmissionQuality).toHaveBeenCalledWith(
-        "SUB-ANNOTATION-REVIEW",
-        expect.objectContaining({
-          annotationDecision: "accepted",
-          reason: "逐帧检查后确认标注正确",
-        }),
-      ),
-    );
+    await waitFor(() => expect(reviewSubmissionQuality).toHaveBeenCalled());
+    const input = vi.mocked(reviewSubmissionQuality).mock.calls[0]?.[1];
+    expect(input).toMatchObject({ reason: "逐帧检查后确认标注正确" });
+    expect(input).not.toHaveProperty("annotationDecision");
+    expect(input).not.toHaveProperty("annotationCorrection");
   });
 
   it("reviews an independent annotation run through structured fields", async () => {
@@ -501,63 +550,7 @@ describe("review workflows", () => {
     expect(reviewSubmissionQuality).not.toHaveBeenCalled();
   });
 
-  it("submits a v2 human correction for server-side evidence validation", async () => {
-    const user = userEvent.setup();
-    const submission = backendSubmission({ id: "SUB-ANNOTATION-CORRECTION" });
-    submission.quality!.candidateAnnotation = {
-      status: "review_required",
-      schemaVersion: "ego_video_annotation_v2",
-      policyVersion: "ego_annotation_evidence_policy_v2",
-      promptVersion: "ego_video_annotation_prompt_v2",
-      promptContentSha256: "a".repeat(64),
-      model: "qwen3.7-plus",
-      requestId: "request-2",
-      durationMs: 100,
-      frameCount: 4,
-      sampling: { maxFrameGapMs: 250, sourceTimestampsMs: [0, 250, 500, 750] },
-      labelMappings: [],
-      raw: {
-        video_summary: "原候选",
-        scene: { coarse_label: "室内", fine_label: "厨房", confidence: 0.9 },
-      },
-      effective: {
-        video_summary: "原候选",
-        scene: { coarse_label: "室内", fine_label: "厨房", confidence: 0.9 },
-        tasks: [],
-      },
-      validation: { errors: [], warnings: [] },
-      reviewReasons: ["需要人工修正"],
-    };
-    vi.mocked(reviewSubmissionQuality).mockResolvedValue(submission);
-    renderAdminWithSubmissions([submission]);
-
-    await user.click(await screen.findByRole("button", { name: "复核" }));
-    await user.selectOptions(
-      await screen.findByLabelText("候选内容标注结论"),
-      "corrected",
-    );
-    const correction = {
-      schema_version: "ego_video_annotation_v2",
-      video_id: "SUB-ANNOTATION-CORRECTION",
-    };
-    fireEvent.change(screen.getByLabelText("修正后的结构化标注 JSON"), {
-      target: { value: JSON.stringify(correction) },
-    });
-    await user.type(screen.getByLabelText("调整原因"), "核对原视频后修正漏标");
-    await user.click(screen.getByRole("button", { name: "保存调整" }));
-
-    await waitFor(() =>
-      expect(reviewSubmissionQuality).toHaveBeenCalledWith(
-        "SUB-ANNOTATION-CORRECTION",
-        expect.objectContaining({
-          annotationDecision: "accepted",
-          annotationCorrection: correction,
-        }),
-      ),
-    );
-  });
-
-  it("reopens the persisted human correction instead of the stale model JSON", async () => {
+  it("shows a historical legacy correction as read-only history", async () => {
     const user = userEvent.setup();
     const submission = backendSubmission({ id: "SUB-ANNOTATION-REOPEN" });
     submission.quality!.candidateAnnotation = {
@@ -614,14 +607,10 @@ describe("review workflows", () => {
 
     await user.click(await screen.findByRole("button", { name: "复核" }));
 
-    expect(await screen.findByLabelText("候选内容标注结论")).toHaveValue("corrected");
-    const correctionText = (
-      screen.getByLabelText(
-        "修正后的结构化标注 JSON",
-      ) as HTMLTextAreaElement
-    ).value;
-    expect(correctionText).toContain("人工修正结果");
-    expect(correctionText).not.toContain("模型原始结果");
+    expect(await screen.findByText("结构化内容标注（旧影子结果，只读）")).toBeVisible();
+    expect(screen.getByText(/上次标注复核：已修正并接受 · 管理员/u)).toBeVisible();
+    expect(screen.queryByLabelText("候选内容标注结论")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("修正后的结构化标注 JSON")).not.toBeInTheDocument();
   });
 
   it("clears a near-duplicate candidate from the review drawer", async () => {

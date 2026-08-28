@@ -17,8 +17,6 @@ import { AiQualityAnalysisService } from "./ai-quality-analysis.service.js";
 import { AiQualityModule } from "./ai-quality.module.js";
 import { AI_QUALITY_EVALUATOR_FACTORY } from "./ai-quality.tokens.js";
 import { RabbitAiQualityWorker } from "./rabbit-ai-quality-worker.js";
-import { RabbitAnnotationWorker } from "../video-annotation/rabbit-annotation-worker.js";
-import { VideoAnnotationModule } from "../video-annotation/video-annotation.module.js";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -37,7 +35,6 @@ function required(name: string): string {
     StorageModule,
     AiQualityModule,
     OperationsModule,
-    VideoAnnotationModule,
   ],
   providers: [
     {
@@ -74,7 +71,6 @@ function required(name: string): string {
     },
     AiQualityAnalysisService,
     RabbitAiQualityWorker,
-    RabbitAnnotationWorker,
   ],
 })
 export class AiQualityWorkerModule {}

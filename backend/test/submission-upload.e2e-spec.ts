@@ -1119,6 +1119,22 @@ describe("submission multipart upload API", () => {
     await dataSource
       .getRepository(VideoQualityResultEntity)
       .save(qualityBeforeReview);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/submissions/${completedSubmissionId}/quality-review`)
+      .set("Origin", WEB_ORIGIN)
+      .set("Cookie", adminCookie)
+      .send({
+        finalScore: 92,
+        reason: "旧影子字段不得再写入正式复核",
+        expectedReviewRevision: 0,
+        issues: [],
+        annotationDecision: "accepted",
+        annotationCorrection: correction,
+      })
+      .expect(400);
+    expect(await dataSource.getRepository(VideoQualityResultEntity).findOneByOrFail({
+      submissionId: completedSubmissionId,
+    })).toMatchObject({ reviewRevision: 0 });
     const reviewed = await request(app.getHttpServer())
       .patch(`/api/v1/submissions/${completedSubmissionId}/quality-review`)
       .set("Origin", WEB_ORIGIN)
@@ -1128,8 +1144,6 @@ describe("submission multipart upload API", () => {
         reason: "证据区间复核后确认画面可用",
         expectedReviewRevision: 0,
         issues: [{ label: "轻微晃动", start: 1, end: 3.5 }],
-        annotationDecision: "accepted",
-        annotationCorrection: correction,
       })
       .expect(200);
 
@@ -1146,30 +1160,8 @@ describe("submission multipart upload API", () => {
         reason: "证据区间复核后确认画面可用",
         finalScore: 92,
       },
-      annotationReview: {
-        decision: "accepted",
-        reviewedByAccountId: "U-UPLOAD-ADMIN",
-        reviewedByName: "上传管理员",
-        candidateSchemaVersion: "ego_video_annotation_v2",
-        candidatePromptVersion: "ego_video_annotation_prompt_v2",
-        correctedAnnotation: {
-          source: "human_correction",
-          schemaVersion: "ego_video_annotation_v2",
-          effective: {
-            video_summary: "人工复核确认当前采样帧没有可交付任务。",
-          },
-          labelMappings: [
-            {
-              type: "scene",
-              sourceText: "家庭厨房",
-              status: "matched",
-              labelId: "SCENE-001",
-            },
-          ],
-          validation: { errors: [] },
-        },
-      },
     });
+    expect(reviewed.body.submission.quality.annotationReview).toBeUndefined();
     expect(reviewed.body.submission.quality.manualIssues).toEqual([
       { label: "轻微晃动", start: 1, end: 3.5 },
     ]);

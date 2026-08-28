@@ -23,6 +23,7 @@ function rabbitHarness() {
     sendToQueue: vi.fn().mockReturnValue(true),
     waitForConfirms: vi.fn().mockResolvedValue(undefined),
     ack: vi.fn(),
+    reject: vi.fn(),
     close: vi.fn().mockResolvedValue(undefined),
   } as unknown as ConfirmChannel;
   const connection = {
@@ -40,7 +41,13 @@ describe("annotation worker", () => {
   it("consumes a separate queue with independent concurrency", async () => {
     const rabbit = rabbitHarness();
     const runs = { process: vi.fn().mockResolvedValue("processed") };
-    const worker = new RabbitAnnotationWorker(runs as never);
+    const heartbeats = {
+      start: vi.fn().mockResolvedValue("ai_annotation-test-host-1"),
+      beat: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      recordTaskFinished: vi.fn().mockResolvedValue(undefined),
+    };
+    const worker = new RabbitAnnotationWorker(runs as never, heartbeats as never);
 
     await worker.start("amqp://test", 2, rabbit.connector);
 
@@ -49,10 +56,12 @@ describe("annotation worker", () => {
       AI_ANNOTATION_QUEUE,
       expect.any(Function),
     );
+    expect(heartbeats.start).toHaveBeenCalledWith("ai_annotation");
     await worker.close();
+    expect(heartbeats.stop).toHaveBeenCalledWith("ai_annotation-test-host-1");
   });
 
-  it("uses finite retry queues and marks the fourth delivery terminal", async () => {
+  it("uses finite retry queues and dead-letters the fourth delivery", async () => {
     const rabbit = rabbitHarness();
     const runs = {
       process: vi.fn().mockRejectedValue(new RetryableAnnotationRunError("retry")),
@@ -81,7 +90,7 @@ describe("annotation worker", () => {
       properties: { headers: { "retry-attempt": 3 } },
     } as unknown as ConsumeMessage;
     rabbit.consumer()?.(final);
-    await vi.waitFor(() => expect(rabbit.channel.ack).toHaveBeenCalledWith(final));
+    await vi.waitFor(() => expect(rabbit.channel.reject).toHaveBeenCalledWith(final, false));
     expect(rabbit.channel.sendToQueue).not.toHaveBeenCalled();
     expect(runs.process).toHaveBeenLastCalledWith(
       expect.objectContaining({

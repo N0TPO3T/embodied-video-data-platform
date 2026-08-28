@@ -14,6 +14,7 @@ import type {
   RerunAiQualityInput,
   ReviewSubmissionQualityInput,
   ReviewAnnotationRunInput,
+  DiscardAnnotationRunInput,
   SubmissionUploadApi,
 } from "../contracts";
 
@@ -381,6 +382,15 @@ export async function listAnnotationRuns(
   return result.runs;
 }
 
+export async function getAnnotationRun(
+  runId: string,
+): Promise<BackendAnnotationRun> {
+  const result = await requestJson<{ run: BackendAnnotationRun }>(
+    `/annotation-runs/${encodeURIComponent(runId)}`,
+  );
+  return result.run;
+}
+
 export async function createAnnotationRun(
   submissionId: string,
   reason: string,
@@ -410,6 +420,17 @@ export async function reviewAnnotationRun(
   const result = await requestJson<{ run: BackendAnnotationRun }>(
     `/annotation-runs/${encodeURIComponent(runId)}/review`,
     { method: "PATCH", body: JSON.stringify(input) },
+  );
+  return result.run;
+}
+
+export async function discardAnnotationRun(
+  runId: string,
+  input: DiscardAnnotationRunInput,
+): Promise<BackendAnnotationRun> {
+  const result = await requestJson<{ run: BackendAnnotationRun }>(
+    `/annotation-runs/${encodeURIComponent(runId)}/discard`,
+    { method: "POST", body: JSON.stringify(input) },
   );
   return result.run;
 }

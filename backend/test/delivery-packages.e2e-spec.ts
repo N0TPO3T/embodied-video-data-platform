@@ -11,6 +11,8 @@ import { AuthModule } from "../src/auth/auth.module.js";
 import type { PublicUser } from "../src/auth/auth.types.js";
 import { AuditService } from "../src/audit/audit.service.js";
 import { AuditLogEntity } from "../src/database/entities/audit-log.entity.js";
+import { AnnotationRunEntity } from "../src/database/entities/annotation-run.entity.js";
+import { AnnotationReviewEntity } from "../src/database/entities/annotation-review.entity.js";
 import {
   createDataSource,
   identityEntities,
@@ -408,6 +410,59 @@ describe("delivery package API", () => {
         completedAt: new Date(),
       },
     ]);
+    await dataSource.getRepository(AnnotationRunEntity).save({
+      id: "ANR-DLV-01",
+      submissionId: "SUB-DLV-01",
+      trigger: "initial",
+      pipelineVersion: "annotation-pipeline-v1",
+      schemaVersion: "ego_video_annotation_v1",
+      evidencePolicyVersion: "ego_annotation_evidence_policy_v1",
+      promptVersion: "ego_video_annotation_prompt_v1",
+      promptContentSha256: "a".repeat(64),
+      systemPromptSnapshot: "locked historical annotation prompt",
+      outputExampleSnapshot: { video_id: "example" },
+      model: "qwen-vl-max",
+      executionStatus: "succeeded",
+      reviewStatus: "accepted_unchanged",
+      publicationStatus: "human_verified",
+      attemptCount: 1,
+      reviewRevision: 1,
+      normalizedResult: {
+        status: "candidate",
+        schemaVersion: "ego_video_annotation_v1",
+        policyVersion: "ego_annotation_evidence_policy_v1",
+        promptVersion: "ego_video_annotation_prompt_v1",
+        promptContentSha256: "a".repeat(64),
+        model: "qwen-vl-max",
+        effective: {
+          schema_version: "ego_video_annotation_v1",
+          video_id: "SUB-DLV-01",
+          video_summary: "整理厨房台面",
+          scene: { coarse_label: "厨房", fine_label: null, confidence: 0.93 },
+          temporal_structure_type: "single_task",
+          tasks: [],
+          global_limitations: ["稀疏采样无法判断动作结果"],
+        },
+        labelMappings: [],
+        validation: { errors: [], warnings: ["sparse sampling"] },
+      },
+      queuedAt: new Date("2026-08-27T07:59:00Z"),
+      startedAt: new Date("2026-08-27T08:00:00Z"),
+      completedAt: new Date("2026-08-27T08:01:00Z"),
+    });
+    await dataSource.getRepository(AnnotationReviewEntity).save({
+      id: "ANV-DLV-01",
+      annotationRunId: "ANR-DLV-01",
+      revision: 1,
+      disposition: "accepted_unchanged",
+      reviewedFields: ["video_summary", "scene"],
+      reasonCodes: ["HUMAN_VERIFIED"],
+      reviewDurationMs: 1_000,
+      reason: "人工确认场景与任务语义",
+      reviewerAccountId: "U-DLV-ADMIN",
+      reviewerName: "交付管理员",
+      createdAt: new Date(1_777_000_000_000),
+    });
 
     storage = new SignedLinkStorage();
     const moduleRef = await Test.createTestingModule({
