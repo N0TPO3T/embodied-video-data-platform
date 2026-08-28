@@ -36,6 +36,18 @@ describe("annotation lifecycle migration", () => {
     return rows.map((row) => row.indexname);
   }
 
+  async function undoMigrationsAfter(name: string): Promise<void> {
+    for (;;) {
+      const rows = (await dataSource.query(
+        'SELECT name FROM migrations ORDER BY id DESC LIMIT 1',
+      )) as Array<{ name: string }>;
+      const latest = rows[0]?.name;
+      if (latest === name) return;
+      if (!latest) throw new Error(`Migration ${name} was not applied`);
+      await dataSource.undoLastMigration();
+    }
+  }
+
   it("migrates down/up and refuses historical publication conflicts", async () => {
     expect(await indexNames()).toEqual(expect.arrayContaining([
       "uq_annotation_runs_current_published",
@@ -109,6 +121,7 @@ describe("annotation lifecycle migration", () => {
       reviewerAccountId: "U-MIG-AN",
     });
 
+    await undoMigrationsAfter("AnnotationAutoGate2026083000004");
     await dataSource.undoLastMigration();
     expect(await indexNames()).toEqual(expect.arrayContaining([
       "uq_annotation_runs_current_human_verified",
@@ -152,6 +165,7 @@ describe("annotation lifecycle migration", () => {
       callStatus: "succeeded",
       latencyMs: 10,
     });
+    await undoMigrationsAfter("AnnotationAutoGate2026083000004");
     await expect(dataSource.undoLastMigration()).rejects.toThrow(
       /migration down blocked/u,
     );

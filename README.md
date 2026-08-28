@@ -144,6 +144,20 @@ pnpm start:local
 
 完整视频处理应使用 `docker compose up -d --build`，因为 `media-worker`、`ai-quality-worker` 和独立的 `ai-annotation-worker` 容器均已包含 FFprobe/FFmpeg。质检和结构化标注使用独立队列、重试/DLQ 与心跳，任一 Worker 停止不会改变另一条链路的健康状态。自动准入能力默认关闭（`ANNOTATION_AUTO_ACCEPT_ENABLED=false`）；必须先用同一镜像在测试/预发以 `ANNOTATION_AUTO_ACCEPT_ENABLED=true`、`ANNOTATION_AUTO_ACCEPT_AUDIT_RATE=1` 完成 20–50 条非敏感视频验收，再在生产配置中开启，生产抽检比例为 `0.05`。关闭该开关只影响之后完成的 Run，不撤销已有正式结果。
 
+### 本地健康自愈与故障预防
+
+api 容器（NestJS）曾出现两类故障：① Node 句柄/线程泄漏（基线 11 线程，挂死前 265 线程）；② **宿主机内存压力导致 Docker VM 冻结**——Docker VM 默认占用约一半内存（16GB 机器约 7.75GB），叠加 web dev 与编辑器后 macOS 进入重度换页（swap 打满），会冻结 VM 内全部进程，表现为 api 无响应且容器无法 kill（`did not receive an exit event`，见 docker/for-mac #6850 / #7816），只能重启 Docker Desktop。为此做了三层预防：
+
+1. **有界失败（compose.yaml）**：api 容器配置 `pids_limit: 200`、`mem_limit: 1536m`、`NODE_OPTIONS=--max-old-space-size=1024` 与 `stop_grace_period: 30s`。线程/内存超限时由内核终止容器并依赖 `restart: unless-stopped` 自动拉起。
+2. **健康自愈脚本**：`scripts/dev-health.sh` 定时探测 `/api/v1/health/ready`，连续失败 3 次自动 `docker compose restart api`；daemon 卡死时给出重启 Docker Desktop 的指引；**并预检宿主机 swap 使用率**，超过 50% 提示、超过 80% 预警并建议降低 Docker VM 内存。建议通过 cron/launchd 每 2~5 分钟执行一次：
+
+   ```bash
+   */2 * * * * cd <仓库目录> && ./scripts/dev-health.sh --cron >> /tmp/dev-health.log 2>&1
+   ```
+
+3. **降低 Docker VM 内存（强烈建议）**：全部容器实际占用 <1GB，Docker Desktop → Settings → Resources → Memory 降到 **4~6GB** 即可，可显著缓解宿主换页导致的 VM 冻结。
+4. **泄漏监控**：可用 `docker stats evdp-api-1` 观察线程数（基线约 10~20）。若线程持续增长，说明存在连接/句柄泄漏，需要排查 TypeORM 连接池、amqplib、aws-sdk 与 ioredis 的配置。
+
 ### 独立 AI 视频质检与融合标注实验页
 
 只验证 AI 视频质检时，不需要启动 PostgreSQL、MinIO、RabbitMQ 或 Qdrant。根目录 `.env` 配置百炼 `QWEN_API_KEY` 和工作空间专属 `QWEN_BASE_URL` 后运行：

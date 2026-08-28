@@ -1170,6 +1170,19 @@ export class SubmissionsService {
           where: { submissionId: id },
           lock: { mode: "pessimistic_write" },
         });
+      // 已进入锁定/结算周期的视频不允许再修改质检结果（锁定即最终结算依据）
+      if (lockedItem) {
+        const cycle = await manager
+          .getRepository(PointCycleEntity)
+          .findOneBy({ id: lockedItem.cycleId });
+        if (cycle && (cycle.status === "locked" || cycle.status === "settled")) {
+          throw new SubmissionFailure(
+            "SUBMISSION_IN_LOCKED_CYCLE",
+            "该视频已进入锁定/结算周期，质检结果不允许再修改；如需纠错请在下次锁定前处理",
+            409,
+          );
+        }
+      }
 
       const quality = await manager
         .getRepository(VideoQualityResultEntity)
@@ -1573,7 +1586,7 @@ export class SubmissionsService {
       if (locked) {
         throw new SubmissionFailure(
           "POINT_CYCLE_LOCKED",
-          "视频已进入积分周期，不能重跑 AI 质检",
+          "视频已进入结算周期，不能重跑 AI 质检",
           409,
         );
       }
@@ -2119,7 +2132,7 @@ export class SubmissionsService {
     if (pointItems + pointAdjustments > 0) {
       throw new SubmissionFailure(
         "SUBMISSION_LOCKED",
-        `视频已进入积分周期，不能${action}`,
+        `视频已进入结算周期，不能${action}`,
         409,
       );
     }

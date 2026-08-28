@@ -102,12 +102,13 @@ export function TaskHallPage({ navigate }: { navigate(path: string): void }) {
                 onChange={(event) => setQuery(event.target.value)}
               />
             </label>
-            <div className="segmented-control" aria-label="任务状态筛选">
+            <div className="segmented-control" role="group" aria-label="任务状态筛选">
               {(["all", "published", "paused"] as const).map((value) => (
                 <button
                   type="button"
                   key={value}
                   className={status === value ? "active" : ""}
+                  aria-pressed={status === value}
                   onClick={() => setStatus(value)}
                 >
                   {value === "all" ? "全部" : value === "published" ? "可提交" : "暂停中"}
@@ -198,7 +199,7 @@ export function TaskHallPage({ navigate }: { navigate(path: string): void }) {
               <div className="task-card-foot">
                 <div className="task-price">
                   <CircleDollarSign size={16} />
-                  <span><strong>{task.pricePointsPerMinute !== null ? `${task.pricePointsPerMinute} 分/分钟` : "按全局规则计分"}</strong><small>通过质检后计入积分</small></span>
+                  <span><strong>{task.pricePointsPerMinute !== null ? `${task.pricePointsPerMinute} 元/小时` : "按全局规则计费"}</strong><small>通过质检后计入金额</small></span>
                 </div>
                 <button
                   type="button"

@@ -111,8 +111,16 @@ describe("platform routing", () => {
 
   it("redirects a collector away from the admin area in the client fallback", () => {
     renderPlatform("/admin", "collector", "admin");
-    expect(screen.getByRole("heading", { name: "我的工作台" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: /，测试人员1/ })).toBeVisible();
     expect(screen.queryByText("提现审核")).not.toBeInTheDocument();
+    expect(window.location.pathname).toBe("/collector");
+  });
+
+  it("normalizes an unknown client route to the current role home", () => {
+    renderPlatform("/unknown-page", "leader");
+
+    expect(screen.getByRole("heading", { name: "真实团队" })).toBeVisible();
+    expect(window.location.pathname).toBe("/team");
   });
 
   it("shows team review navigation to a leader", () => {
@@ -124,8 +132,8 @@ describe("platform routing", () => {
 
   it("shows full operations navigation to an administrator", () => {
     renderPlatform("/admin", "admin");
-    expect(screen.getByRole("link", { name: /^AI 任务/ })).toBeVisible();
-    expect(screen.getByRole("link", { name: /^积分规则/ })).toBeVisible();
+    expect(screen.getByRole("link", { name: /^系统队列/ })).toBeVisible();
+    expect(screen.getByRole("link", { name: /^结算与钱包/ })).toBeVisible();
     expect(screen.queryByText("提现审核")).not.toBeInTheDocument();
   });
 
@@ -138,7 +146,7 @@ describe("platform routing", () => {
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
 
-    expect(screen.getByRole("heading", { name: "积分规则" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "结算与钱包" })).toBeVisible();
   });
 
   it.each(["admin", "leader", "collector"] as const)(

@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import * as accountApi from "../auth/client/accountApi";
 import { useIdentity } from "../auth/client/IdentityContext";
-import type { Role } from "../domain/types";
 import { LoginPage } from "../features/auth/LoginPage";
 import { AdminDashboard } from "../features/admin/AdminDashboard";
 import { AiQueuePage } from "../features/admin/AiQueuePage";
@@ -13,6 +12,7 @@ import { PublicConfigPage } from "../features/admin/PublicConfigPage";
 import { AdminReviewDetailPage } from "../features/admin/AdminReviewDetailPage";
 import { AnnotationReviewDetailPage } from "../features/admin/AnnotationReviewDetailPage";
 import { QualityReviewPage } from "../features/admin/QualityReviewPage";
+import { LabelSetPage } from "../features/admin/LabelSetPage";
 import { RulesPage } from "../features/admin/RulesPage";
 import { SettlementPage } from "../features/admin/SettlementPage";
 import { SubmissionsAdminPage } from "../features/admin/SubmissionsAdminPage";
@@ -35,15 +35,7 @@ import { TeamIncomePage } from "../features/team/TeamIncomePage";
 import { TeamSubmissionsPage } from "../features/team/TeamSubmissionsPage";
 import { DashboardShell } from "../layout/DashboardShell";
 import { InteractionProvider } from "../interactions/InteractionContext";
-import { roleHome } from "./navigation";
-
-function requiredRole(path: string): Role | null {
-  if (path === "/account/profile") return null;
-  if (path.startsWith("/collector")) return "collector";
-  if (path.startsWith("/team")) return "leader";
-  if (path.startsWith("/admin")) return "admin";
-  return null;
-}
+import { safeAuthenticatedPath } from "./routes";
 
 export function PlatformApp({ initialPath }: { initialPath: string }) {
   return (
@@ -82,35 +74,35 @@ function PlatformContent({ initialPath }: { initialPath: string }) {
     );
   }
 
-  return <AuthenticatedPlatformContent initialPath={initialPath} path={path} navigate={navigate} />;
+  return <AuthenticatedPlatformContent path={path} navigate={navigate} />;
 }
 
 function AuthenticatedPlatformContent({
-  initialPath,
   path,
   navigate,
 }: {
-  initialPath: string;
   path: string;
   navigate(path: string): void;
 }) {
   const { currentAccount } = useIdentity();
 
-  const gatedRole = requiredRole(path);
-  const safePath = gatedRole && gatedRole !== currentAccount.role ? roleHome[currentAccount.role] : path;
+  const safePath = safeAuthenticatedPath(path, currentAccount.role);
+
+  useEffect(() => {
+    if (safePath === path) return;
+    window.history.replaceState({}, "", safePath);
+  }, [path, safePath]);
 
   let page = <CollectorDashboard navigate={navigate} />;
   if (safePath === "/account/profile") {
     page = <AccountProfilePage />;
-  } else if (safePath === "/collector" && initialPath.startsWith("/admin")) {
-    page = <CollectorDashboard navigate={navigate} title />;
   } else if (currentAccount.role === "collector") {
     if (safePath === "/collector/tasks") page = <TaskHallPage navigate={navigate} />;
     else if (safePath === "/collector/upload") page = <UploadPage />;
     else if (safePath === "/collector/submissions") page = <SubmissionsPage navigate={navigate} />;
     else if (safePath.startsWith("/collector/submissions/")) page = <SubmissionDetail id={safePath.split("/").at(-1) ?? ""} navigate={navigate} />;
     else if (safePath === "/collector/quality") page = <SubmissionsPage qualityOnly navigate={navigate} />;
-    else if (safePath === "/collector/earnings") page = <EarningsPage />;
+    else if (safePath === "/collector/wallet" || safePath === "/collector/earnings") page = <EarningsPage />;
     else if (safePath === "/collector/guide") page = <GuidePage />;
   } else if (currentAccount.role === "leader") {
     if (safePath === "/team/members") page = <MembersPage />;
@@ -148,6 +140,7 @@ function AuthenticatedPlatformContent({
     else if (safePath === "/admin/assets") page = <AssetsPage />;
     else if (safePath === "/admin/tasks") page = <TasksPage />;
     else if (safePath === "/admin/people") page = <UsersTeamsPage />;
+    else if (safePath === "/admin/labels") page = <LabelSetPage />;
     else if (safePath === "/admin/rules") page = <RulesPage />;
     else if (safePath === "/admin/settlements") page = <SettlementPage />;
     else if (safePath === "/admin/public") page = <PublicConfigPage />;

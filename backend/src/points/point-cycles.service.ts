@@ -16,6 +16,7 @@ import { PointRuleVersionEntity } from "../database/entities/point-rule-version.
 import { QualityRuleVersionEntity } from "../database/entities/quality-rule-version.entity.js";
 import { SubmissionDuplicateCandidateEntity } from "../database/entities/submission-duplicate-candidate.entity.js";
 import { SubmissionEntity } from "../database/entities/submission.entity.js";
+import { UserEntity } from "../database/entities/user.entity.js";
 import { VideoQualityResultEntity } from "../database/entities/video-quality-result.entity.js";
 import {
   OBJECT_STORAGE,
@@ -31,8 +32,11 @@ import { AdjustPointCycleItemDto } from "./dto/point-cycle.dto.js";
 import { PointCycleFailure } from "./point-cycle-failure.js";
 import { PointCyclesPolicy } from "./point-cycles.policy.js";
 import { PointRulesService } from "./point-rules.service.js";
+import { WalletService } from "../wallet/wallet.service.js";
 
 const POINT_CYCLE_THUMBNAIL_TTL_SECONDS = 10 * 60;
+/** 锁定后自动结算天数（用户需求：锁定 3 天后自动结算） */
+const SETTLE_AFTER_DAYS = 3;
 
 type PointCycleThumbnail = {
   url: string;
@@ -80,6 +84,16 @@ function decimal(value: number, digits: number): string {
 
 function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/** 上海时区的当天日期（自动锁定使用） */
+function shanghaiIsoDate(now = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
 }
 
 function pointCycleId(businessDate: string): string {
@@ -193,6 +207,8 @@ function publicCycle(
     pointRuleSnapshot: cycle.pointRuleSnapshot,
     createdByAccountId: cycle.createdByAccountId,
     createdByName: cycle.createdByName,
+    settleDueAt: cycle.settleDueAt?.getTime() ?? null,
+    settledAt: cycle.settledAt?.getTime() ?? null,
     createdAt: cycle.createdAt.getTime(),
     items: publicItems,
   };
@@ -203,10 +219,13 @@ export class PointCyclesService {
   constructor(
     @InjectRepository(PointCycleEntity)
     private readonly cycles: Repository<PointCycleEntity>,
+    @InjectRepository(UserEntity)
+    private readonly users: Repository<UserEntity>,
     private readonly dataSource: DataSource,
     private readonly policy: PointCyclesPolicy,
     private readonly audit: AuditService,
     private readonly pointRules: PointRulesService,
+    private readonly wallet: WalletService,
     @Inject(OBJECT_STORAGE)
     private readonly storage: ObjectStoragePort,
   ) {}
@@ -271,7 +290,7 @@ export class PointCyclesService {
     }
     const cycle = await query.getOne();
     if (!cycle || (cycle.items ?? []).length === 0) {
-      throw new PointCycleFailure("NOT_FOUND", "积分周期不存在", 404);
+      throw new PointCycleFailure("NOT_FOUND", "结算周期不存在", 404);
     }
     const latestAdjustments = await loadLatestPointCycleAdjustments(
       this.dataSource.manager,
@@ -355,7 +374,15 @@ export class PointCyclesService {
         lock: { mode: "pessimistic_write" },
       });
       if (!cycle) {
-        throw new PointCycleFailure("NOT_FOUND", "积分周期不存在", 404);
+        throw new PointCycleFailure("NOT_FOUND", "结算周期不存在", 404);
+      }
+      // 周期一旦锁定即为最终结算依据，锁定/已结算后的条目不允许再编辑
+      if (cycle.status === "locked" || cycle.status === "settled") {
+        throw new PointCycleFailure(
+          "CYCLE_LOCKED",
+          "周期已锁定，锁定后的条目不允许编辑；如需纠错请在下次锁定前处理",
+          409,
+        );
       }
       const item = await manager.getRepository(PointCycleItemEntity).findOne({
         where: { id: itemId, cycleId },
@@ -396,6 +423,13 @@ export class PointCyclesService {
         input.nextInvalidDurationMs === undefined
           ? previousInvalidMs
           : input.nextInvalidDurationMs;
+      if (nextInvalidMs > durationMs) {
+        throw new PointCycleFailure(
+          "VALIDATION",
+          `无效时长（${Math.round(nextInvalidMs / 1_000)} 秒）不能超过视频总时长（${Math.round(durationMs / 1_000)} 秒）`,
+          400,
+        );
+      }
       const nextEffectiveMs = Math.max(0, durationMs - nextInvalidMs);
 
       if (
@@ -504,12 +538,13 @@ export class PointCyclesService {
       if (candidates.length === 0) {
         throw new PointCycleFailure(
           "NO_ELIGIBLE_SUBMISSIONS",
-          "当前没有可锁定积分数据",
+          "当前没有可锁定数据",
           409,
         );
       }
       const totals = this.summarize(candidates);
       const cycleId = pointCycleId(businessDate);
+      const settleDueAt = new Date(Date.now() + SETTLE_AFTER_DAYS * 24 * 60 * 60 * 1_000);
       const cycle = await manager.getRepository(PointCycleEntity).save({
         id: cycleId,
         businessDate,
@@ -525,6 +560,7 @@ export class PointCyclesService {
         }),
         createdByAccountId: actor.id,
         createdByName: actor.displayName,
+        settleDueAt,
       });
       await manager.getRepository(PointCycleItemEntity).save(
         candidates.map((candidate) => ({
@@ -549,12 +585,29 @@ export class PointCyclesService {
           qualityReviewedAt: candidate.quality.manualReviewedAt,
         })),
       );
+      // 锁定即入钱包「结算中」：按数采人员汇总金额（单价 × 有效小时 × 质量系数）
+      const amountsByOwner = new Map<string, number>();
+      for (const candidate of candidates) {
+        amountsByOwner.set(
+          candidate.submission.ownerId,
+          (amountsByOwner.get(candidate.submission.ownerId) ?? 0) + candidate.points,
+        );
+      }
+      for (const [ownerId, amount] of amountsByOwner) {
+        await this.wallet.creditSettling(manager, {
+          ownerId,
+          amount,
+          cycleId,
+          createdByAccountId: actor.id,
+          remark: `周期 ${businessDate} 锁定`,
+        });
+      }
       await this.audit.record(
         manager,
         actor,
         "point_cycle_lock",
         { id: cycle.id, name: cycle.businessDate },
-        `锁定 ${totals.count} 条合格数据，合计 ${decimal(totals.points, 2)} 分`,
+        `锁定 ${totals.count} 条合格数据，合计 ${decimal(totals.points, 2)} 元`,
         null,
         {
           submissionCount: totals.count,
@@ -582,6 +635,142 @@ export class PointCyclesService {
         manager,
       );
     });
+  }
+
+  /**
+   * 结算到期周期：把「结算中」金额转入「可提现」，周期标记为已结算。
+   * 由定时任务调用（也可手动触发单个周期结算）。
+   */
+  async settleDueCycles(now = new Date()): Promise<number> {
+    const due = await this.cycles
+      .createQueryBuilder("cycle")
+      .where("cycle.status = :locked", { locked: "locked" })
+      .andWhere("cycle.settle_due_at IS NOT NULL")
+      .andWhere("cycle.settle_due_at <= :now", { now })
+      .select("cycle.id", "id")
+      .getRawMany<{ id: string }>();
+    let settled = 0;
+    for (const row of due) {
+      try {
+        await this.settleCycle(row.id, now);
+        settled += 1;
+      } catch {
+        // 单个周期结算失败不影响其他周期，下次扫描重试
+      }
+    }
+    return settled;
+  }
+
+  /** 结算单个周期（幂等：已结算直接返回当前状态） */
+  async settleCycle(
+    cycleId: string,
+    now = new Date(),
+    actor?: PublicUser,
+  ) {
+    const result = await this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(PointCycleEntity);
+      const cycle = await repository.findOne({
+        where: { id: cycleId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!cycle) {
+        throw new PointCycleFailure("NOT_FOUND", "结算周期不存在", 404);
+      }
+      if (cycle.status === "settled") return { cycle, already: true };
+      if (cycle.status !== "locked") {
+        throw new PointCycleFailure(
+          "CYCLE_NOT_SETTLABLE",
+          "只有锁定中的周期可以结算",
+          409,
+        );
+      }
+      const items = await manager
+        .getRepository(PointCycleItemEntity)
+        .findBy({ cycleId });
+      const byOwner = new Map<string, number>();
+      for (const item of items) {
+        byOwner.set(
+          item.ownerId,
+          (byOwner.get(item.ownerId) ?? 0) + Number(item.points),
+        );
+      }
+      for (const [ownerId, amount] of byOwner) {
+        await this.wallet.settleToAvailable(manager, {
+          ownerId,
+          amount,
+          cycleId,
+          remark: `周期 ${cycle.businessDate} 结算`,
+        });
+      }
+      cycle.status = "settled";
+      cycle.settledAt = now;
+      await repository.save(cycle);
+      if (actor) {
+        await this.audit.record(
+          manager,
+          actor,
+          "point_cycle_settle",
+          { id: cycle.id, name: cycle.businessDate },
+          `结算周期 ${cycle.businessDate}：${byOwner.size} 位数采钱包转入可提现，合计 ${decimal(
+            [...byOwner.values()].reduce((sum, value) => sum + value, 0),
+            2,
+          )} 元`,
+          null,
+          { settledAt: now.toISOString() },
+        );
+      }
+      return { cycle, already: false };
+    });
+    return this.get(actor ?? this.systemActor(), cycleId);
+  }
+
+  /**
+   * 每天凌晨 2 点（上海时区）自动锁定当日合格数据；
+   * 当天已锁定或无合格数据时跳过。由定时任务调用。
+   */
+  async autoLockDue(now = new Date()): Promise<boolean> {
+    const businessDate = shanghaiIsoDate(now);
+    const existing = await this.cycles.findOneBy({ businessDate });
+    if (existing) return false;
+    const admin = await this.users.findOne({
+      where: { role: "admin", status: "active" },
+      order: { createdAt: "ASC" },
+    });
+    if (!admin) return false;
+    try {
+      await this.create(this.systemActor(admin), businessDate);
+      return true;
+    } catch (error) {
+      if (
+        error instanceof PointCycleFailure &&
+        error.code === "NO_ELIGIBLE_SUBMISSIONS"
+      ) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  private systemActor(admin?: UserEntity): PublicUser {
+    if (admin) {
+      return {
+        id: admin.id,
+        displayName: admin.displayName,
+        username: admin.username,
+        role: admin.role,
+        teamId: admin.teamId ?? undefined,
+        status: admin.status,
+        updatedAt: admin.updatedAt.getTime(),
+      };
+    }
+    return {
+      id: "system",
+      displayName: "系统定时任务",
+      username: "system",
+      role: "admin",
+      status: "active",
+      updatedAt: 0,
+    };
   }
 
   private async withThumbnails(
@@ -787,7 +976,7 @@ export class PointCyclesService {
               0,
           ) + invalidDurationMs;
       const effectiveDurationMs = Math.max(0, durationMs - invalidDurationMs);
-      // 单价优先级：任务快照单价 > 团队单价 > 全局默认积分
+      // 单价优先级：任务快照单价 > 团队单价 > 全局默认（元/小时）
       const taskPrice =
         submission.taskPricePointsPerMinute === null ||
         submission.taskPricePointsPerMinute === undefined

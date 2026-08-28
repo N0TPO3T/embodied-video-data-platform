@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PlatformApp } from "../../app/PlatformApp";
@@ -10,10 +10,6 @@ const promptApi = vi.hoisted(() => ({
   update: vi.fn(),
   getRule: vi.fn(),
   createRule: vi.fn(),
-  getLabelSet: vi.fn(),
-  updateLabel: vi.fn(),
-  createLabel: vi.fn(),
-  deleteLabel: vi.fn(),
   getScarcityConfig: vi.fn(),
   publishScarcityConfig: vi.fn(),
 }));
@@ -23,10 +19,6 @@ vi.mock("../../ai-quality/client/aiQualityApi", () => ({
   updateAiQualityPrompt: promptApi.update,
   getQualityRule: promptApi.getRule,
   createQualityRule: promptApi.createRule,
-  getLabelSet: promptApi.getLabelSet,
-  updateQualityLabel: promptApi.updateLabel,
-  createQualityLabel: promptApi.createLabel,
-  deleteQualityLabel: promptApi.deleteLabel,
   getScarcityConfig: promptApi.getScarcityConfig,
   publishScarcityConfig: promptApi.publishScarcityConfig,
 }));
@@ -57,32 +49,6 @@ const currentRule = {
   createdAt: Date.parse("2026-08-12T04:00:00.000Z"),
 };
 
-const currentLabelSet = {
-  id: "LSV-1",
-  revision: 1,
-  version: "LABELS-2026-08",
-  labels: [
-    {
-      id: "SCENE-001",
-      name: "后端厨房",
-      type: "scene" as const,
-      associationCount: 186,
-      enabled: true,
-    },
-    {
-      id: "ACTION-014",
-      name: "后端组装",
-      type: "action" as const,
-      associationCount: 94,
-      enabled: true,
-    },
-  ],
-  active: true,
-  createdByAccountId: "U-ADMIN-01",
-  createdByName: "系统初始化",
-  createdAt: Date.parse("2026-08-12T04:00:00.000Z"),
-};
-
 function renderAdmin(path: string) {
   window.history.replaceState({}, "", path);
   const admin = accountForRole("admin");
@@ -93,7 +59,7 @@ function renderAdmin(path: string) {
   );
 }
 
-describe("administrator rule configuration", () => {
+describe("administrator rule and prompt configuration", () => {
   beforeEach(() => {
     promptApi.get.mockReset().mockResolvedValue(currentPrompt);
     promptApi.update
@@ -113,7 +79,6 @@ describe("administrator rule configuration", () => {
         revision: 2,
         createdByName: "平台管理员",
       }));
-    promptApi.getLabelSet.mockReset().mockResolvedValue(currentLabelSet);
     promptApi.getScarcityConfig.mockReset().mockResolvedValue({
       id: "SC-1",
       revision: 1,
@@ -129,20 +94,6 @@ describe("administrator rule configuration", () => {
       createdByName: "平台管理员",
       createdAt: 1,
     });
-    promptApi.updateLabel
-      .mockReset()
-      .mockImplementation(async (input) => {
-        const { nextId, ...changes } = input;
-        return {
-          ...currentLabelSet,
-          revision: 2,
-          labels: currentLabelSet.labels.map((label) =>
-            label.id === input.id
-              ? { ...label, ...changes, id: nextId ?? label.id }
-              : label,
-          ),
-        };
-      });
   });
 
   it("publishes a new active rule version", async () => {
@@ -176,56 +127,12 @@ describe("administrator rule configuration", () => {
     expect(promptApi.getRule).toHaveBeenCalled();
   });
 
-  it("edits a label number, name and enabled state", async () => {
-    const user = userEvent.setup();
-    renderAdmin("/admin/rules");
-
-    const row = (await screen.findByText("后端厨房")).closest("tr")!;
-    await user.click(within(row).getByRole("button", { name: "编辑" }));
-    await user.clear(screen.getByLabelText("标签编号"));
-    await user.type(screen.getByLabelText("标签编号"), "SCENE-101");
-    await user.clear(screen.getByLabelText("标签名称"));
-    await user.type(screen.getByLabelText("标签名称"), "家庭烹饪");
-    await user.click(screen.getByLabelText("启用标签"));
-    await user.click(screen.getByRole("button", { name: "保存标签" }));
-
-    expect(promptApi.updateLabel).toHaveBeenCalledWith({
-      id: "SCENE-001",
-      nextId: "SCENE-101",
-      name: "家庭烹饪",
-      enabled: false,
-    });
-    expect(await screen.findByText("V2")).toBeVisible();
-    const updatedRow = screen.getByText("家庭烹饪").closest("tr")!;
-    expect(within(updatedRow).getByText("停用")).toBeVisible();
-    expect(screen.getByText("标签已更新")).toBeVisible();
-  });
-
-  it("toggles a label directly from the table", async () => {
-    const user = userEvent.setup();
-    renderAdmin("/admin/rules");
-
-    await user.click(
-      await screen.findByRole("button", { name: "停用标签 后端厨房" }),
-    );
-
-    expect(promptApi.updateLabel).toHaveBeenCalledWith({
-      id: "SCENE-001",
-      nextId: "SCENE-001",
-      name: "后端厨房",
-      enabled: false,
-    });
-    const updatedRow = screen.getByText("后端厨房").closest("tr")!;
-    expect(within(updatedRow).getByText("停用")).toBeVisible();
-    expect(screen.getByText("标签已停用")).toBeVisible();
-  });
-
   it("publishes a versioned AI system prompt for future jobs", async () => {
     const user = userEvent.setup();
     renderAdmin("/admin/rules");
 
-    expect(await screen.findByText("qwen3.7-plus")).toBeVisible();
-    expect(screen.getByText("qwen3.7-flash")).toBeVisible();
+    expect((await screen.findAllByText("qwen3.7-plus")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("qwen3.7-flash").length).toBeGreaterThan(0);
     const editor = screen.getByLabelText("AI 系统提示词");
     await user.type(editor, "\n重点检查手部完整性。");
     await user.click(screen.getByRole("button", { name: "发布新版本" }));

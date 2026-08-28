@@ -17,11 +17,13 @@ import { MediaMetadataEntity } from "./entities/media-metadata.entity.js";
 import { MediaSegmentEntity } from "./entities/media-segment.entity.js";
 import { PointCycleAdjustmentEntity } from "./entities/point-cycle-adjustment.entity.js";
 import { PointCycleEntity } from "./entities/point-cycle.entity.js";
+import { WalletBalanceEntity, WalletTransactionEntity } from "./entities/wallet.entity.js";
 import { PointCycleItemEntity } from "./entities/point-cycle-item.entity.js";
 import { PointRuleVersionEntity } from "./entities/point-rule-version.entity.js";
 import { PublicSiteSnapshotEntity } from "./entities/public-site-snapshot.entity.js";
 import { ScarcityConfigEntity } from "./entities/scarcity-config.entity.js";
 import { QualityRuleVersionEntity } from "./entities/quality-rule-version.entity.js";
+import { SceneCategoryPricingEntity } from "./entities/scene-category-pricing.entity.js";
 import { SessionEntity } from "./entities/session.entity.js";
 import { SubmissionDuplicateCandidateEntity } from "./entities/submission-duplicate-candidate.entity.js";
 import { SubmissionEntity } from "./entities/submission.entity.js";
@@ -65,6 +67,8 @@ import { VideoIngestion2026080700002 } from "./migrations/202608070002-video-ing
 import { WorkerCurrentTaskStartedAt2026081300010 } from "./migrations/202608130010-worker-current-task-started-at.js";
 import { WorkerHeartbeats2026081300009 } from "./migrations/202608130009-worker-heartbeats.js";
 import { WorkerTaskMetrics2026081300019 } from "./migrations/202608130019-worker-task-metrics.js";
+import { SceneCategoryPricing2026090100001 } from "./migrations/202609010001-scene-category-pricing.js";
+import { WalletAndSettlement2026083100001 } from "./migrations/202608310001-wallet-and-settlement.js";
 
 export const identityEntities = [
   TeamEntity,
@@ -95,6 +99,9 @@ export const identityEntities = [
   PublicSiteSnapshotEntity,
   ScarcityConfigEntity,
   CollectionTaskEntity,
+  WalletBalanceEntity,
+  WalletTransactionEntity,
+  SceneCategoryPricingEntity,
 ];
 
 export function createDataSource(
@@ -143,6 +150,8 @@ export function createDataSource(
       AnnotationRuns2026083000002,
       AnnotationRunLifecycle2026083000003,
       AnnotationAutoGate2026083000004,
+      WalletAndSettlement2026083100001,
+      SceneCategoryPricing2026090100001,
     ],
     synchronize: false,
     logging: false,

@@ -13,6 +13,8 @@ import { AuthModule } from "../src/auth/auth.module.js";
 import { AuditLogEntity } from "../src/database/entities/audit-log.entity.js";
 import { CollectionTaskEntity } from "../src/database/entities/collection-task.entity.js";
 import { createDataSource, identityEntities } from "../src/database/data-source.js";
+import { MediaMetadataEntity } from "../src/database/entities/media-metadata.entity.js";
+import { SubmissionEntity } from "../src/database/entities/submission.entity.js";
 import { UserEntity } from "../src/database/entities/user.entity.js";
 import { TeamEntity } from "../src/database/entities/team.entity.js";
 import { LabelSetVersionEntity } from "../src/database/entities/label-set-version.entity.js";
@@ -332,5 +334,95 @@ describe("AI quality prompt API", () => {
       .set("Cookie", adminCookie)
       .send({ systemPrompt: "缺少结构化输出协议的普通说明" })
       .expect(400);
+  });
+
+  it("reports real association counts per label type", async () => {
+    // 前置：上一用例已把 SCENE-001/家庭厨房 改名为 SCENE-101/家庭烹饪
+    await dataSource.getRepository(CollectionTaskEntity).save({
+      id: "TASK-LABEL-COUNT",
+      title: "标签计数任务",
+      description: "",
+      sceneName: "家庭烹饪",
+      sceneLabelId: "SCENE-101",
+      rawRequirements: "保持画面稳定",
+      status: "draft",
+      createdByAccountId: "U-PROMPT-ADMIN",
+      createdByName: "提示词管理员",
+    });
+    const base = {
+      contentType: "video/mp4",
+      expectedSizeBytes: "1048576",
+      checksumSha256: "c".repeat(64),
+      uploadStatus: "uploaded",
+      processingStatus: "completed",
+    } as const;
+    await dataSource.getRepository(SubmissionEntity).save([
+      {
+        ...base,
+        id: "SUB-LABEL-COUNT-1",
+        ownerId: "U-PROMPT-COLLECTOR",
+        teamId: "TEAM-PROMPT",
+        originalFileName: "count-01.mp4",
+        objectKey: "subs/count-01.mp4",
+        taskId: "TASK-LABEL-COUNT",
+        taskSceneName: "家庭烹饪",
+      },
+      {
+        ...base,
+        id: "SUB-LABEL-COUNT-2",
+        ownerId: "U-PROMPT-COLLECTOR",
+        teamId: "TEAM-PROMPT",
+        originalFileName: "count-02.mp4",
+        objectKey: "subs/count-02.mp4",
+      },
+    ]);
+    await dataSource.getRepository(MediaMetadataEntity).save([
+      {
+        submissionId: "SUB-LABEL-COUNT-1",
+        durationSeconds: "60.000",
+        width: 1920,
+        height: 1080,
+        frameRate: "30.000",
+        codec: "h264",
+        sizeBytes: "1048576",
+        rawProbe: {},
+        sceneId: "家庭烹饪",
+        taskId: "抓取",
+        variantId: "手持工具",
+      },
+      {
+        submissionId: "SUB-LABEL-COUNT-2",
+        durationSeconds: "30.000",
+        width: 1280,
+        height: 720,
+        frameRate: "30.000",
+        codec: "h264",
+        sizeBytes: "524288",
+        rawProbe: {},
+        sceneId: "家庭烹饪",
+        taskId: "抓取",
+        variantId: null,
+      },
+    ]);
+
+    const response = await request(app.getHttpServer())
+      .get("/api/v1/ai-quality/label-set")
+      .set("Cookie", adminCookie)
+      .expect(200);
+    const labels = response.body.labelSet.labels as Array<{
+      id: string;
+      name: string;
+      type: string;
+      associationCount: number;
+    }>;
+    const byId = new Map(labels.map((label) => [label.id, label]));
+    // 场景：任务关联 1 条 + AI 识别 2 条 = 3
+    expect(byId.get("SCENE-101")?.associationCount).toBe(3);
+    // 动作：AI 识别 2 条
+    expect(byId.get("ACTION-001")?.associationCount).toBe(2);
+    // 对象：AI 识别 1 条
+    expect(byId.get("OBJECT-001")?.associationCount).toBe(1);
+    // 质量问题：无自动关联来源
+    expect(byId.get("ISSUE-001")?.associationCount).toBe(0);
   });
 });
