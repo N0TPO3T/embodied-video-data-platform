@@ -19,6 +19,7 @@ import type {
 } from "../submissions/contracts";
 import { useInteractions } from "../interactions/InteractionContext";
 import { StatusBadge } from "./StatusBadge";
+import { TaskSegmentDemo } from "./TaskSegmentDemo";
 
 type EditableRecord = Record<string, unknown>;
 type ReviewDecision = "accepted" | "rejected" | "unable_to_judge";
@@ -537,6 +538,17 @@ export function AnnotationRunReview({
         </>
       ) : null}
       {error && !canReview ? <p className="form-message error">{error}</p> : null}
+      {runId &&
+      currentAccount.role === "admin" &&
+      run.executionStatus === "succeeded" &&
+      (run.publicationStatus === "auto_accepted" ||
+        run.publicationStatus === "human_verified") ? (
+        <TaskSegmentDemo
+          annotationRunId={run.id}
+          submissionId={submissionId}
+          canGenerate
+        />
+      ) : null}
     </section>
   );
 }
