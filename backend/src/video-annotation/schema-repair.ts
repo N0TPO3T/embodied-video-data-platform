@@ -116,35 +116,80 @@ function repairArrayLimit(
   limit: number,
   changes: SchemaRepairChange[],
   sourceTimestamps?: Set<number>,
+  maxDeltaMs = 2_000,
 ): void {
   const current = target[path];
   if (!isNumberArray(current)) return;
-  if (current.length <= limit) return;
-  const next = downsample(current, limit);
+  let next = current;
+  let downsampled = false;
+  if (current.length > limit) {
+    next = downsample(current, limit);
+    downsampled = true;
+  }
+  let aligned = false;
   if (sourceTimestamps && sourceTimestamps.size > 0) {
-    for (const [index, value] of next.entries()) {
-      // 对齐到最近的采样帧，避免“引用了未提供的证据时间点”结构错误
-      let best = value;
-      let bestDelta = Number.POSITIVE_INFINITY;
-      for (const frame of sourceTimestamps) {
-        const delta = Math.abs(frame - value);
-        if (delta < bestDelta) {
-          bestDelta = delta;
-          best = frame;
-        }
-      }
-      next[index] = best;
+    const alignedNext = alignToSourceFrames(next, sourceTimestamps, maxDeltaMs);
+    if (alignedNext !== next) {
+      next = alignedNext;
+      aligned = true;
     }
   }
+  if (!downsampled && !aligned) return;
   target[path] = next;
   changes.push({
-    code: "EVIDENCE_ARRAY_DOWNSAMPLED",
+    code: downsampled ? "EVIDENCE_ARRAY_DOWNSAMPLED" : "EVIDENCE_TIMESTAMPS_ALIGNED",
     fieldPath: path,
     previousValue: current,
     nextValue: next,
-    message: `证据数组 ${current.length} 项超过上限 ${limit}，已均匀降采样并对齐采样帧（保留首尾）`,
+    message: downsampled
+      ? `证据数组 ${current.length} 项超过上限 ${limit}，已均匀降采样并对齐采样帧（保留首尾）`
+      : `证据时间戳已对齐到最近采样帧（最大偏差 ${maxDeltaMs}ms）`,
   });
 }
+
+/**
+ * 把证据时间戳对齐到最近的采样帧（模型常输出近似/整秒时间戳）。
+ * 仅当偏差不超过 maxDeltaMs 时对齐，避免把明显编造的远点扭曲到帧上。
+ */
+function alignToSourceFrames(
+  values: number[],
+  sourceTimestamps: Set<number>,
+  maxDeltaMs: number,
+): number[] {
+  let changed = false;
+  const next = values.map((value) => {
+    if (sourceTimestamps.has(value)) return value;
+    let best = value;
+    let bestDelta = Number.POSITIVE_INFINITY;
+    for (const frame of sourceTimestamps) {
+      const delta = Math.abs(frame - value);
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        best = frame;
+      }
+    }
+    if (bestDelta <= maxDeltaMs && best !== value) {
+      changed = true;
+      return best;
+    }
+    return value;
+  });
+  return changed ? next : values;
+}
+
+/** 采样帧中位间隔 ×2 作为对齐容忍度；帧太少时用固定 2000ms 兜底 */
+function samplingToleranceMs(sourceTimestamps: Set<number>): number {
+  const frames = [...sourceTimestamps].sort((a, b) => a - b);
+  if (frames.length < 2) return 2_000;
+  const gaps: number[] = [];
+  for (let i = 1; i < frames.length; i += 1) {
+    gaps.push(frames[i]! - frames[i - 1]!);
+  }
+  gaps.sort((a, b) => a - b);
+  const mid = gaps[Math.floor(gaps.length / 2)]!;
+  return Math.max(2_000, mid * 2);
+}
+
 
 function filterEnumArray(
   target: JsonRecord,
@@ -193,15 +238,16 @@ function repairTask(
   path: string,
   changes: SchemaRepairChange[],
   sourceTimestamps?: Set<number>,
+  maxDeltaMs = 2_000,
 ): void {
   for (const field of ENUM_CONSERVATIVE_VALUES) {
     if (field.path === "segment_type" || field.path === "temporal_structure_type" || field.path === "model_assessability") continue;
     repairEnumField(task, field.path, changes);
   }
-  repairArrayLimit(task, "evidence_timestamps_ms", 20, changes, sourceTimestamps);
-  repairArrayLimit(task, "result_evidence_timestamps_ms", 20, changes, sourceTimestamps);
-  repairArrayLimit(task, "failure_evidence_timestamps_ms", 20, changes, sourceTimestamps);
-  repairArrayLimit(task, "recovery_evidence_timestamps_ms", 20, changes, sourceTimestamps);
+  repairArrayLimit(task, "evidence_timestamps_ms", 20, changes, sourceTimestamps, maxDeltaMs);
+  repairArrayLimit(task, "result_evidence_timestamps_ms", 20, changes, sourceTimestamps, maxDeltaMs);
+  repairArrayLimit(task, "failure_evidence_timestamps_ms", 20, changes, sourceTimestamps, maxDeltaMs);
+  repairArrayLimit(task, "recovery_evidence_timestamps_ms", 20, changes, sourceTimestamps, maxDeltaMs);
   repairNullableStringFields(task, "tasks[]", changes);
   filterEnumArray(task, "interaction_primitives", INTERACTION_PRIMITIVES, changes);
   filterEnumArray(task, "complexity_signals", COMPLEXITY_SIGNALS, changes);
@@ -210,7 +256,7 @@ function repairTask(
     for (const [actionIndex, value] of actions.entries()) {
       if (!isRecord(value)) continue;
       repairEnumField(value, "verb", changes);
-      repairArrayLimit(value, "evidence_timestamps_ms", 8, changes, sourceTimestamps);
+      repairArrayLimit(value, "evidence_timestamps_ms", 8, changes, sourceTimestamps, maxDeltaMs);
       void actionIndex;
     }
   }
@@ -219,12 +265,14 @@ function repairTask(
 export function repairSchemaOutput(
   value: unknown,
   sourceTimestamps?: Set<number>,
+  maxDeltaMs?: number,
 ): {
   value: unknown;
   changes: SchemaRepairChange[];
 } {
   if (!isRecord(value)) return { value, changes: [] };
   const changes: SchemaRepairChange[] = [];
+  const tolerance = maxDeltaMs ?? (sourceTimestamps ? samplingToleranceMs(sourceTimestamps) : 2_000);
 
   repairEnumField(value, "temporal_structure_type", changes);
   repairEnumField(value, "model_assessability", changes);
@@ -239,12 +287,12 @@ export function repairSchemaOutput(
     });
   }
   if (isRecord(value.scene)) {
-    repairArrayLimit(value.scene, "evidence_timestamps_ms", 20, changes, sourceTimestamps);
+    repairArrayLimit(value.scene, "evidence_timestamps_ms", 20, changes, sourceTimestamps, tolerance);
   }
   const tasks = value.tasks;
   if (Array.isArray(tasks)) {
     for (const task of tasks) {
-      if (isRecord(task)) repairTask(task, "tasks[]", changes, sourceTimestamps);
+      if (isRecord(task)) repairTask(task, "tasks[]", changes, sourceTimestamps, tolerance);
     }
   }
   const coverage = value.coverage_segments;
@@ -252,7 +300,7 @@ export function repairSchemaOutput(
     for (const segment of coverage) {
       if (!isRecord(segment)) continue;
       repairEnumField(segment, "segment_type", changes);
-      repairArrayLimit(segment, "evidence_timestamps_ms", 100, changes, sourceTimestamps);
+      repairArrayLimit(segment, "evidence_timestamps_ms", 100, changes, sourceTimestamps, tolerance);
     }
   }
   return { value, changes };

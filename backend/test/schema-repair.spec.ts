@@ -106,6 +106,28 @@ describe("deterministic schema repair (schema-repair)", () => {
     expect(unwrapAnnotationCandidate(mystery)).toBe(mystery);
   });
 
+  it("aligns non-frame evidence timestamps to nearest sampling frame", () => {
+    const output = baseOutput();
+    // 帧集合：0, 500, 1000, 1500（间隔 500ms，容忍度 1000ms）
+    (output.tasks[0] as Record<string, unknown>).evidence_timestamps_ms = [0, 480, 990];
+    const frames = new Set([0, 500, 1000, 1500]);
+
+    const { value, changes } = repairSchemaOutput(output, frames);
+    expect((value as any).tasks[0].evidence_timestamps_ms).toEqual([0, 500, 1000]);
+    expect(changes.map((change) => change.code)).toEqual(["EVIDENCE_TIMESTAMPS_ALIGNED"]);
+  });
+
+  it("does not align obviously fabricated far-away timestamps", () => {
+    const output = baseOutput();
+    (output.tasks[0] as Record<string, unknown>).evidence_timestamps_ms = [0, 99999];
+    const frames = new Set([0, 500, 1000, 1500]);
+
+    const { value, changes } = repairSchemaOutput(output, frames);
+    // 99999 距最近帧过远（>容忍度），保持原值；此时对齐修复不产生
+    expect((value as any).tasks[0].evidence_timestamps_ms).toEqual([0, 99999]);
+    expect(changes).toHaveLength(0);
+  });
+
   it("normalizes null nullable-string fields to empty strings", () => {
     const output = baseOutput();
     (output.tasks[0] as Record<string, unknown>).visible_postcondition = null;
