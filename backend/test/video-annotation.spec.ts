@@ -523,6 +523,56 @@ describe("video annotation evidence policy", () => {
     );
   });
 
+  it("still blocks core task field uncertainty (task_label/start_ms/end_ms) in v2", () => {
+    for (const corePath of ["tasks[0].task_label", "tasks[0].start_ms", "tasks[0].end_ms"]) {
+      const raw = rawAnnotation();
+      raw.uncertain_fields = [corePath];
+
+      const result = normalize(raw, [0, 500, 1_000]);
+
+      expect(result.gate.eligibility).toBe("manual_required");
+      expect(result.gate.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "UNRESOLVED_CORE_TASK_UNCERTAINTY",
+            level: "manual_review",
+            fieldPath: corePath,
+          }),
+        ]),
+      );
+    }
+  });
+
+  it("surfaces downgraded validation warnings as advisory gate issues (v2)", () => {
+    const raw = rawAnnotation();
+    raw.tasks[0]!.end_ms = 500;
+    raw.tasks[0]!.evidence_timestamps_ms = [0, 500];
+    raw.tasks[0]!.result_evidence_timestamps_ms = [500];
+    raw.tasks[0]!.atomic_action_sequence = [
+      { order: 1, verb: "grasp", object: "杯子", evidence_timestamps_ms: [0, 500] },
+    ];
+    raw.coverage_segments = [
+      {
+        start_ms: 0,
+        end_ms: 1_000,
+        segment_type: "task",
+        linked_task_index: 0,
+        visible_activity: "含任务前后过渡的可见活动",
+        evidence_timestamps_ms: [0, 500, 1_000],
+      },
+    ];
+
+    const result = normalize(raw, [0, 500, 1_000]);
+
+    expect(result.gate.eligibility).toBe("eligible");
+    const advisoryWarnings = result.gate.issues.filter(
+      (issue) => issue.code === "VALIDATION_WARNING" && issue.level === "advisory",
+    );
+    expect(advisoryWarnings.map((issue) => issue.message)).toEqual(
+      expect.arrayContaining([expect.stringContaining("超出所绑定任务的时间区间")]),
+    );
+  });
+
   it("allows coverage beyond the task interval as a warning (Auto Gate v2)", () => {
     const raw = rawAnnotation();
     raw.tasks[0]!.end_ms = 500;

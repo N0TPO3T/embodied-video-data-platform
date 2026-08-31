@@ -316,11 +316,14 @@ function retryableIssue(error: string): AnnotationGateIssue {
   const taskIndex = taskIndexFromPath(error);
   const fieldPath = error.match(/^(tasks\[\d+\](?:\.[^ ]+)?|coverage_segments\[\d+\](?:\.[^ ]+)?)/u)?.[1] ?? null;
   let code = "SCHEMA_INVALID";
-  if (/未绑定有效任务索引|超出所绑定任务|非任务区间不得绑定|对应 task coverage/u.test(error)) {
+  // Auto Gate v2：仅保留仍为 error 的结构性错误分类。
+  // coverage 超出任务区间/证据未对齐/不连续/未全覆盖、专项证据子集、证据点区间外等
+  // 已降级为 validation.warnings，不再进入本函数；对应旧分类分支
+  // （COVERAGE_ASSIGNMENT_CONFLICT 及 TASK_COVERAGE_REFERENCE_INVALID /
+  // EVIDENCE_REFERENCE_INVALID 的已降级匹配串）已移除，避免死分支与将来误分类。
+  if (/未绑定有效任务索引|非任务区间不得绑定/u.test(error)) {
     code = "TASK_COVERAGE_REFERENCE_INVALID";
-  } else if (/未被 coverage 覆盖|被 coverage 重复覆盖|coverage 区间不连续|coverage_segments\[\d+\].*(?:证据帧必须|前一 coverage|边界必须)/u.test(error)) {
-    code = "COVERAGE_ASSIGNMENT_CONFLICT";
-  } else if (/证据时间点|未提供的证据|未列入任务主证据/u.test(error)) {
+  } else if (/引用了未提供的证据时间点|重复引用证据时间点|边界必须引用输入采样时间点/u.test(error)) {
     code = "EVIDENCE_REFERENCE_INVALID";
   }
   return {
@@ -340,8 +343,13 @@ const OPTIONAL_UNCERTAIN_PATHS = [
   /^temporal_structure_type$/u,
   /^model_assessability$/u,
   /^assessability_reason$/u,
-  // Auto Gate v2：以下字段的枚举/Schema 本身允许 uncertain/unclear 值或允许保守输出，
-  // 模型声明其不确定不构成阻断（execution_pattern/evidence_level/hand_mode 是实测误伤源）。
+  // Auto Gate v2：以下字段不阻断准入，理由：
+  // - execution_pattern/evidence_level/hand_mode/completion/result_status 等：枚举/Schema
+  //   本身允许 uncertain/unclear 值或允许保守输出（实测误伤源，3/4 人工 Run 因此被阻断）；
+  // - task_object：自由字符串描述字段，对象不确定不改变任务动作与边界可用性（刻意加入）；
+  // - failure/recovery/result 证据时间戳数组：模型声明其不确定意味着“证据点可信度存疑”，
+  //   但任务边界与状态仍可用，且“引用非采样帧”仍由 error 兜底（悬空引用底线）；
+  // - 其余为保守输出允许的 optional 字段。
   /^tasks\[\d+\]\.(?:task_object|execution_pattern|evidence_level|hand_mode|complexity_signals|atomic_action_sequence|completion|result_status|result_observability|result_evidence_type|visible_postcondition|failure_recovery|manipulated_objects|tools|interaction_primitives|uncertainty_reasons|confidence|failure_evidence_timestamps_ms|recovery_evidence_timestamps_ms|result_evidence_timestamps_ms)(?:\.|\[|$)/u,
   /^global_limitations$/u,
 ] as const;
@@ -375,6 +383,17 @@ export function evaluateAnnotationAutoGate(input: {
   const issues: AnnotationGateIssue[] = [...(input.repairs ?? [])];
   for (const error of input.candidate.validation.errors) {
     issues.push(retryableIssue(error));
+  }
+  // Auto Gate v2：降级为 warning 的结构/证据质量提示也进入 advisory 层，
+  // 使 Operations 与 Run 详情页可展示，避免“质量信号存在但无人可见”。
+  for (const warning of input.candidate.validation.warnings) {
+    issues.push(
+      issue({
+        code: "VALIDATION_WARNING",
+        level: "advisory",
+        message: warning,
+      }),
+    );
   }
 
   const raw = input.candidate.raw;
@@ -443,6 +462,9 @@ export function evaluateAnnotationAutoGate(input: {
     }
     // Auto Gate v2：无法分类的不确定字段路径只记录为质量提示，不再阻断准入。
     // uncertain_fields 是模型对“已给出取值”字段的不确定性声明，不改变任务可用性。
+    // 边界：若模型把核心字段写成 typo（如 tasks[0].star_ms），该路径不再被阻断捕获；
+    // 但 task_verb 仍通过字段值 === "uncertain" 捕获（见上），start_ms/end_ms 的 typo
+    // 属可接受取舍（字段值本身存在且合法时数据仍可用）。
     issues.push(
       issue({
         code: "UNKNOWN_UNCERTAIN_FIELD_PATH",
