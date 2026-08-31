@@ -1,9 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  generateTaskSegments,
   getOperationsStatus,
   getQueueSnapshot,
+  getTaskSegmentAssets,
+  getTaskSegmentPreview,
   reclaimWorkerTimeouts,
+  retryTaskSegment,
 } from "./operationsApi";
 
 describe("operations API", () => {
@@ -84,6 +88,60 @@ describe("operations API", () => {
       3,
       "http://localhost:4000/api/v1/operations/workers/reclaim-timeouts",
       expect.objectContaining({ method: "POST", credentials: "include" }),
+    );
+  });
+
+  it("uses the admin task-segment generate, list, retry and preview routes", async () => {
+    const generate = {
+      annotationRunId: "RUN/SEG",
+      taskCount: 2,
+      created: 2,
+      existing: 0,
+      skipped: 0,
+    };
+    const list = {
+      assets: [],
+      pagination: { page: 1, pageSize: 50, total: 0, totalPages: 0 },
+    };
+    const retried = { asset: { id: "TSA/1" } };
+    const preview = {
+      assetId: "TSA/1",
+      url: "https://storage.test/clip.mp4",
+      contentType: "video/mp4",
+      expiresAt: 123,
+    };
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(generate), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(list), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(retried), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(preview), { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+
+    await expect(generateTaskSegments("RUN/SEG")).resolves.toEqual(generate);
+    await expect(getTaskSegmentAssets({ annotationRunId: "RUN/SEG" })).resolves.toEqual(list);
+    await expect(retryTaskSegment("TSA/1")).resolves.toEqual(retried);
+    await expect(getTaskSegmentPreview("TSA/1")).resolves.toEqual(preview);
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      "http://localhost:4000/api/v1/operations/annotation-runs/RUN%2FSEG/task-segments/generate",
+      expect.objectContaining({ method: "POST", credentials: "include" }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      "http://localhost:4000/api/v1/operations/task-segment-assets?annotationRunId=RUN%2FSEG&page=1&pageSize=50",
+      expect.objectContaining({ credentials: "include" }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
+      "http://localhost:4000/api/v1/operations/task-segment-assets/TSA%2F1/retry",
+      expect.objectContaining({ method: "POST", credentials: "include" }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      4,
+      "http://localhost:4000/api/v1/operations/task-segment-assets/TSA%2F1/preview",
+      expect.objectContaining({ credentials: "include" }),
     );
   });
 });

@@ -237,3 +237,79 @@ export type AnnotationGateIssue = {
   previousValue?: unknown;
   nextValue?: unknown;
 };
+
+export type TaskSegmentGenerationStatus =
+  | "queued"
+  | "processing"
+  | "ready"
+  | "failed"
+  | "skipped";
+
+export type BackendTaskSegmentAsset = {
+  id: string;
+  submissionId: string;
+  annotationRunId: string;
+  taskIndex: number;
+  pipelineVersion: string;
+  promptVersion: string;
+  schemaVersion: string;
+  evidencePolicyVersion: string;
+  ontologyVersion: string | null;
+  taskLabel: string;
+  taskVerb: string;
+  completion: string;
+  resultStatus: string;
+  sourceStartMs: number;
+  sourceEndMs: number;
+  clipStartMs: number;
+  clipEndMs: number;
+  coverageSnapshot: unknown;
+  evidenceSnapshot: unknown;
+  validationWarnings: string[];
+  sourceObjectKey: string;
+  sourceSha256: string;
+  clipObjectKey: string | null;
+  clipSha256: string | null;
+  clipSizeBytes: string | null;
+  clipDurationMs: number | null;
+  codec: string | null;
+  width: number | null;
+  height: number | null;
+  frameRate: number | null;
+  hasAudio: boolean | null;
+  generationStatus: TaskSegmentGenerationStatus;
+  attemptCount: number;
+  failureCode: string | null;
+  failureMessage: string | null;
+  usageStatus: "internal_only";
+  generationPolicyVersion: "task_segment_demo_policy_v1";
+  createdAt: number;
+  startedAt: number | null;
+  completedAt: number | null;
+  updatedAt: number;
+};
+
+export type BackendTaskSegmentAssets = {
+  assets: BackendTaskSegmentAsset[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+  };
+};
+
+export type TaskSegmentGenerateResult = {
+  annotationRunId: string;
+  taskCount: number;
+  created: number;
+  existing: number;
+  skipped: number;
+};
+
+export type TaskSegmentPreview = {
+  assetId: string;
+  url: string;
+  contentType: "video/mp4";
+  expiresAt: number;
+};

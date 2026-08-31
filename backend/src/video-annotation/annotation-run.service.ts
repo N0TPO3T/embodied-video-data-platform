@@ -30,6 +30,7 @@ import {
   VideoAnnotationProviderError,
 } from "./qwen-video-annotation.provider.js";
 import { unresolvedRetryableIssues } from "./annotation-auto-gate.js";
+import { TaskSegmentService } from "../task-segment/task-segment.service.js";
 
 export type AnnotationRunProcessOutcome = "processed" | "skipped" | "lock_busy";
 
@@ -113,6 +114,7 @@ export class AnnotationRunService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly labelSets: LabelSetService,
+    private readonly taskSegments: TaskSegmentService,
     @Inject(OBJECT_STORAGE)
     private readonly storage: ObjectStoragePort,
   ) {}
@@ -375,6 +377,10 @@ export class AnnotationRunService {
       run.lastErrorCode = null;
       run.lastErrorMessage = null;
       await repository.save(run);
+      if (run.publicationStatus === "auto_accepted") {
+        // DATA-SEG-001 V1：正式 Run 发布时自动创建任务切片资产并入队（幂等）
+        await this.taskSegments.enqueueForPublishedRun(manager, run);
+      }
     });
   }
 
