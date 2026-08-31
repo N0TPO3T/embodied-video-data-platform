@@ -15,9 +15,57 @@ import {
   type VideoAnnotationCandidate,
   type VideoAnnotationCandidateSuccess,
 } from "./video-annotation.js";
+import {
+  repairSchemaOutput,
+  type SchemaRepairChange,
+} from "./schema-repair.js";
 
 type Fetcher = typeof fetch;
 const MAX_ANNOTATION_FRAME_COUNT = 80;
+
+function schemaRepairIssues(changes: SchemaRepairChange[]): AnnotationGateIssue[] {
+  return changes.map((change) => ({
+    code: change.code,
+    level: "repairable" as const,
+    fieldPath: change.fieldPath,
+    taskIndex: null,
+    message: change.message,
+    evidenceTimestampsMs: [],
+    resolution: "repaired" as const,
+    previousValue: change.previousValue,
+    nextValue: change.nextValue,
+  }));
+}
+
+/**
+ * 确定性结构修复解析：先尝试直接解析；失败时用 repairSchemaOutput 修复后重试。
+ * 返回 null 表示确定性修复无法解决（交由模型 schema_repair）。
+ */
+function parseWithDeterministicRepair(
+  content: string,
+  structuralRepairs: SchemaRepairChange[],
+  sourceTimestamps?: Set<number>,
+): { raw: ReturnType<typeof parseRawVideoAnnotation> } | null {
+  let candidate: unknown;
+  try {
+    candidate = extractJson(content);
+  } catch {
+    return null; // 非 JSON 输出，交给模型 schema_repair
+  }
+  try {
+    return { raw: parseRawVideoAnnotation(candidate) };
+  } catch {
+    const repaired = repairSchemaOutput(candidate, sourceTimestamps);
+    if (repaired.changes.length === 0) return null;
+    try {
+      const raw = parseRawVideoAnnotation(repaired.value);
+      structuralRepairs.push(...repaired.changes);
+      return { raw };
+    } catch {
+      return null;
+    }
+  }
+}
 
 type ModelUsage = {
   promptTokens: number | null;
@@ -356,6 +404,17 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
     let finalRequestId = first.requestId;
     let finalResponseModel = first.responseModel;
     let totalUsage = first.usage;
+    const structuralRepairs: SchemaRepairChange[] = [];
+    // 1) 确定性结构修复（枚举非法值/证据数组超限）：不依赖模型第二次输出，不产生额外调用
+    const deterministic = parseWithDeterministicRepair(
+      first.content,
+      structuralRepairs,
+      new Set(selectedFrames.map((frame) => frame.timestampMs)),
+    );
+    if (deterministic) {
+      raw = deterministic.raw;
+    }
+    if (!raw) {
     try {
       raw = parseRawVideoAnnotation(extractJson(first.content));
     } catch (error) {
@@ -389,13 +448,24 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
       try {
         raw = parseRawVideoAnnotation(extractJson(repaired.content));
       } catch (repairError) {
-        throw new VideoAnnotationProviderError(
-          `候选标注结构修复失败：${schemaIssues(repairError).join("; ").slice(0, 1_500)}`,
-          null,
-          finalRequestId,
-          "invalid_output",
+        // 模型修复输出仍可能带机械性约束问题：再做一次确定性修复兜底
+        const repairedDeterministic = parseWithDeterministicRepair(
+          repaired.content,
+          structuralRepairs,
+          new Set(selectedFrames.map((frame) => frame.timestampMs)),
         );
+        if (repairedDeterministic) {
+          raw = repairedDeterministic.raw;
+        } else {
+          throw new VideoAnnotationProviderError(
+            `候选标注结构修复失败：${schemaIssues(repairError).join("; ").slice(0, 1_500)}`,
+            null,
+            finalRequestId,
+            "invalid_output",
+          );
+        }
       }
+    }
     }
     if (raw.video_id !== request.videoId) {
       throw new VideoAnnotationProviderError(
@@ -417,7 +487,7 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
       requestId: finalRequestId,
       modelDurationMs: Date.now() - startedAt,
       ...(totalUsage ? { usage: totalUsage } : {}),
-      repairs: canonical.repairs,
+      repairs: [...schemaRepairIssues(structuralRepairs), ...canonical.repairs],
       enabledLabels: request.enabledLabels,
     });
     const retryableIssues = unresolvedRetryableIssues(normalized.gate);
@@ -452,15 +522,24 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
       finalResponseModel = repaired.responseModel;
       totalUsage = mergeUsage(totalUsage, repaired.usage);
       let repairedRaw;
-      try {
-        repairedRaw = parseRawVideoAnnotation(extractJson(repaired.content));
-      } catch (error) {
-        throw new VideoAnnotationProviderError(
-          `候选标注定向修复返回无效Schema：${schemaIssues(error).join("; ").slice(0, 1_500)}`,
-          null,
-          finalRequestId,
-          "invalid_output",
-        );
+      const targetedDeterministic = parseWithDeterministicRepair(
+        repaired.content,
+        structuralRepairs,
+        new Set(selectedFrames.map((frame) => frame.timestampMs)),
+      );
+      if (targetedDeterministic) {
+        repairedRaw = targetedDeterministic.raw;
+      } else {
+        try {
+          repairedRaw = parseRawVideoAnnotation(extractJson(repaired.content));
+        } catch (error) {
+          throw new VideoAnnotationProviderError(
+            `候选标注定向修复返回无效Schema：${schemaIssues(error).join("; ").slice(0, 1_500)}`,
+            null,
+            finalRequestId,
+            "invalid_output",
+          );
+        }
       }
       if (repairedRaw.video_id !== request.videoId) {
         throw new VideoAnnotationProviderError(
@@ -486,7 +565,7 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
         requestId: finalRequestId,
         modelDurationMs: Date.now() - startedAt,
         ...(totalUsage ? { usage: totalUsage } : {}),
-        repairs: [...resolvedIssues, ...canonical.repairs],
+        repairs: [...schemaRepairIssues(structuralRepairs), ...resolvedIssues, ...canonical.repairs],
         enabledLabels: request.enabledLabels,
       });
       if (unresolvedRetryableIssues(normalized.gate).length > 0) {

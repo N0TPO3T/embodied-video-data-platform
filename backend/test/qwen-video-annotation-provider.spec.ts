@@ -214,6 +214,57 @@ describe("qwen video annotation provider", () => {
     );
   });
 
+  it("fixes invalid enums and oversized evidence deterministically without extra calls", async () => {
+    const prompt = await loadVideoAnnotationPrompt(
+      resolve(process.cwd(), "../docs/quality/prompts/ego-video-annotation-v2"),
+    );
+    const invalid = modelOutput();
+    invalid.tasks[0]!.result_observability = "visible_observation";
+    invalid.tasks[0]!.evidence_timestamps_ms = Array.from({ length: 25 }, (_, index) => index * 100);
+    const response = (output: ReturnType<typeof modelOutput>) =>
+      new Response(
+        JSON.stringify({ choices: [{ message: { content: JSON.stringify(output) } }] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(response(invalid));
+    const callKinds: string[] = [];
+    const provider = new QwenVideoAnnotationProvider({
+      apiKey: "test-key",
+      baseUrl: "https://example.invalid/v1",
+      timeoutMs: 1_000,
+      prompt,
+      fetcher,
+    });
+
+    const result = await provider.annotateStrict({
+      videoId: "video-1",
+      durationMs: 2_500,
+      frames: [...Array.from({ length: 25 }, (_, index) => ({
+        timestampMs: index * 100,
+        dataUrl: "data:image/jpeg;base64,AA==",
+      })), { timestampMs: 250, dataUrl: "x" }, { timestampMs: 750, dataUrl: "x" }],
+      enabledLabels: [],
+    }, undefined, {
+      logicalFullAttempt: 1,
+      onModelCall: async (call) => {
+        callKinds.push(call.callKind);
+      },
+    });
+
+    expect(result.status).toBe("candidate");
+    expect(callKinds).toEqual(["full"]);
+    expect(result.effective.tasks[0]!.result_observability).toBe("partial");
+    expect(result.effective.tasks[0]!.evidence_timestamps_ms).toHaveLength(20);
+    expect(result.gate.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "ENUM_VALUE_CONSERVATIVE_FIX", resolution: "repaired" }),
+        expect.objectContaining({ code: "EVIDENCE_ARRAY_DOWNSAMPLED", resolution: "repaired" }),
+      ]),
+    );
+  });
+
   it("loads versioned prompt assets and sends only task-blind annotation context", async () => {
     const prompt = await loadVideoAnnotationPrompt(
       resolve(process.cwd(), "../docs/quality/prompts/ego-video-annotation-v2"),
