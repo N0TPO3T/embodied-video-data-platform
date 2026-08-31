@@ -34,8 +34,12 @@ class RetentionStorage implements ObjectStoragePort {
     if (!value) throw new Error(`object not found: ${input.objectKey}`);
     return { pipe() {} } as never;
   }
-  async uploadObject() { throw new Error("not used"); }
-  async presignDownloadObject() { throw new Error("not used"); }
+  async uploadObject(): Promise<void> {
+    throw new Error("not used");
+  }
+  async presignDownloadObject(): Promise<never> {
+    throw new Error("not used");
+  }
   async headObject(input: { objectKey: string }) {
     if (!this.objects.has(input.objectKey)) throw new Error("object not found");
     return { sizeBytes: "1" };
@@ -44,10 +48,18 @@ class RetentionStorage implements ObjectStoragePort {
     this.objects.delete(input.objectKey);
     this.deletedKeys.push(input.objectKey);
   }
-  async createMultipartUpload() { throw new Error("not used"); }
-  async presignUploadPart() { throw new Error("not used"); }
-  async completeMultipartUpload() { throw new Error("not used"); }
-  async abortMultipartUpload() { throw new Error("not used"); }
+  async createMultipartUpload(): Promise<never> {
+    throw new Error("not used");
+  }
+  async presignUploadPart(): Promise<never> {
+    throw new Error("not used");
+  }
+  async completeMultipartUpload(): Promise<never> {
+    throw new Error("not used");
+  }
+  async abortMultipartUpload(): Promise<void> {
+    throw new Error("not used");
+  }
 }
 
 describe("source retention (SEG-DEC-006a)", () => {
