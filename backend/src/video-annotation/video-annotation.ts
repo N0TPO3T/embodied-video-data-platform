@@ -305,6 +305,7 @@ function evidenceTimestampErrors(input: {
   sourceTimestamps: Set<number>;
   context: string;
   errors: string[];
+  warnings: string[];
   startMs?: number;
   endMs?: number;
 }): void {
@@ -322,7 +323,9 @@ function evidenceTimestampErrors(input: {
       input.endMs !== undefined &&
       (timestamp < input.startMs || timestamp > input.endMs)
     ) {
-      input.errors.push(`${input.context} 的证据时间点 ${timestamp} 不在区间内`);
+      // Auto Gate v2：证据点可合理落在任务区间外（如结果在任务结束后才可见），
+      // 仅记录质量提示；引用必须是真实采样帧仍由上方 error 兜底。
+      input.warnings.push(`${input.context} 的证据时间点 ${timestamp} 不在区间内`);
     }
   }
 }
@@ -367,6 +370,7 @@ function validateCoverage(input: {
   sourceTimestampSet: Set<number>;
   durationMs: number;
   errors: string[];
+  warnings: string[];
 }): void {
   const coverageCounts = new Map(
     input.sourceTimestamps.map((timestamp) => [timestamp, 0]),
@@ -400,7 +404,9 @@ function validateCoverage(input: {
           (segment.start_ms < linkedTask.start_ms ||
             segment.end_ms > linkedTask.end_ms)
         ) {
-          input.errors.push(`${context} 超出所绑定任务的时间区间`);
+          // Auto Gate v2：coverage 是“可见活动”分段，可合理包含任务前后过渡；
+          // 超出 task 区间不再阻断，仅记录为质量提示。
+          input.warnings.push(`${context} 超出所绑定任务的时间区间`);
         }
       }
     } else if (segment.linked_task_index !== null) {
@@ -411,6 +417,7 @@ function validateCoverage(input: {
       sourceTimestamps: input.sourceTimestampSet,
       context,
       errors: input.errors,
+      warnings: input.warnings,
       startMs: segment.start_ms,
       endMs: segment.end_ms,
     });
@@ -424,20 +431,21 @@ function validateCoverage(input: {
           positionIndex > 0 && position !== positions[positionIndex - 1]! + 1,
       )
     ) {
-      input.errors.push(`${context} 的证据帧必须按时间连续且递增`);
+      // Auto Gate v2：证据帧连续性为质量提示，不阻断准入。
+      input.warnings.push(`${context} 的证据帧必须按时间连续且递增`);
     }
     if (positions.length > 0) {
       const firstPosition = positions[0]!;
       const lastPosition = positions.at(-1)!;
       if (firstPosition !== previousEndPosition + 1) {
-        input.errors.push(`${context} 与前一 coverage 区间不连续或顺序错误`);
+        input.warnings.push(`${context} 与前一 coverage 区间不连续或顺序错误`);
       }
       previousEndPosition = lastPosition;
       if (
         segment.start_ms !== input.sourceTimestamps[firstPosition] ||
         segment.end_ms !== input.sourceTimestamps[lastPosition]
       ) {
-        input.errors.push(`${context} 的边界必须等于首尾证据时间点`);
+        input.warnings.push(`${context} 的边界必须等于首尾证据时间点`);
       }
     }
     for (const timestamp of new Set(segment.evidence_timestamps_ms)) {
@@ -456,13 +464,16 @@ function validateCoverage(input: {
     }
   }
   for (const [timestamp, count] of coverageCounts) {
-    if (count === 0) input.errors.push(`采样证据时间点 ${timestamp} 未被 coverage 覆盖`);
-    if (count > 1) input.errors.push(`采样证据时间点 ${timestamp} 被 coverage 重复覆盖`);
+    // Auto Gate v2：coverage 未全覆盖/重复覆盖是质量提示，不阻断准入。
+    if (count === 0) input.warnings.push(`采样证据时间点 ${timestamp} 未被 coverage 覆盖`);
+    if (count > 1) input.warnings.push(`采样证据时间点 ${timestamp} 被 coverage 重复覆盖`);
   }
   for (const [taskIndex, task] of input.raw.tasks.entries()) {
     for (const timestamp of task.evidence_timestamps_ms) {
       if (!linkedTasksByTimestamp.get(timestamp)?.has(taskIndex)) {
-        input.errors.push(
+        // Auto Gate v2：task 证据是稀疏支持点，与 coverage 证据集合不必严格对齐；
+        // 改为质量提示，任务区间合法性仍由 tasks 校验兜底。
+        input.warnings.push(
           `tasks[${taskIndex}] 的证据时间点 ${timestamp} 未被对应 task coverage 覆盖`,
         );
       }
@@ -475,10 +486,13 @@ function taskEvidenceSubsetErrors(input: {
   timestamps: number[];
   context: string;
   errors: string[];
+  warnings: string[];
 }): void {
   for (const timestamp of input.timestamps) {
     if (!input.taskEvidence.has(timestamp)) {
-      input.errors.push(`${input.context} 的时间点 ${timestamp} 未列入任务主证据`);
+      // Auto Gate v2：专项证据（结果/失败/恢复/原子动作）是独立支持点，
+      // 与稀疏的任务主证据不必严格对齐；不在主证据内仅记录质量提示。
+      input.warnings.push(`${input.context} 的时间点 ${timestamp} 未列入任务主证据`);
     }
   }
 }
@@ -530,6 +544,7 @@ export function normalizeVideoAnnotation(input: {
     sourceTimestampSet,
     durationMs: input.durationMs,
     errors,
+    warnings,
   });
 
   const effectiveTasks = input.raw.tasks.map((task, taskIndex) => {
@@ -551,6 +566,7 @@ export function normalizeVideoAnnotation(input: {
       sourceTimestamps: sourceTimestampSet,
       context: `${context}.evidence_timestamps_ms`,
       errors,
+      warnings,
       startMs: task.start_ms,
       endMs: task.end_ms,
     });
@@ -560,24 +576,28 @@ export function normalizeVideoAnnotation(input: {
       timestamps: task.result_evidence_timestamps_ms,
       context: `${context}.result_evidence_timestamps_ms`,
       errors,
+      warnings,
     });
     taskEvidenceSubsetErrors({
       taskEvidence,
       timestamps: task.failure_evidence_timestamps_ms,
       context: `${context}.failure_evidence_timestamps_ms`,
       errors,
+      warnings,
     });
     taskEvidenceSubsetErrors({
       taskEvidence,
       timestamps: task.recovery_evidence_timestamps_ms,
       context: `${context}.recovery_evidence_timestamps_ms`,
       errors,
+      warnings,
     });
     evidenceTimestampErrors({
       timestamps: task.result_evidence_timestamps_ms,
       sourceTimestamps: sourceTimestampSet,
       context: `${context}.result_evidence_timestamps_ms`,
       errors,
+      warnings,
       startMs: task.start_ms,
       endMs: task.end_ms,
     });
@@ -586,6 +606,7 @@ export function normalizeVideoAnnotation(input: {
       sourceTimestamps: sourceTimestampSet,
       context: `${context}.failure_evidence_timestamps_ms`,
       errors,
+      warnings,
       startMs: task.start_ms,
       endMs: task.end_ms,
     });
@@ -594,6 +615,7 @@ export function normalizeVideoAnnotation(input: {
       sourceTimestamps: sourceTimestampSet,
       context: `${context}.recovery_evidence_timestamps_ms`,
       errors,
+      warnings,
       startMs: task.start_ms,
       endMs: task.end_ms,
     });
@@ -609,6 +631,7 @@ export function normalizeVideoAnnotation(input: {
         sourceTimestamps: sourceTimestampSet,
         context: `${context}.atomic_action_sequence[${actionIndex}]`,
         errors,
+        warnings,
         startMs: task.start_ms,
         endMs: task.end_ms,
       });
@@ -617,6 +640,7 @@ export function normalizeVideoAnnotation(input: {
         timestamps: action.evidence_timestamps_ms,
         context: `${context}.atomic_action_sequence[${actionIndex}]`,
         errors,
+        warnings,
       });
       const actionStartMs = Math.min(...action.evidence_timestamps_ms);
       if (actionStartMs < previousActionStartMs) {
@@ -758,6 +782,7 @@ export function normalizeVideoAnnotation(input: {
     sourceTimestamps: sourceTimestampSet,
     context: "scene.evidence_timestamps_ms",
     errors,
+    warnings,
   });
 
   let effectiveAssessability = input.raw.model_assessability;

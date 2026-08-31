@@ -99,7 +99,7 @@ describe("annotation auto-accept completion", () => {
       validation: { errors: [], warnings: [] },
       reviewReasons: eligibility === "manual_required" ? ["NO_TASK_DETECTED"] : [],
       gate: {
-        version: "annotation_auto_gate_v1",
+        version: "annotation_auto_gate_v2",
         eligibility,
         issues: eligibility === "manual_required"
           ? [{
@@ -143,7 +143,7 @@ describe("annotation auto-accept completion", () => {
       reviewStatus: "not_required",
       publicationStatus: "auto_accepted",
       autoEligibility: "eligible",
-      autoGateVersion: "annotation_auto_gate_v1",
+      autoGateVersion: "annotation_auto_gate_v2",
       wouldAutoAccept: true,
       autoAcceptEnabledSnapshot: true,
       auditStatus: "pending",
