@@ -265,6 +265,56 @@ describe("qwen video annotation provider", () => {
     );
   });
 
+  it("aligns schema-valid approximate timestamps before evidence validation", async () => {
+    const prompt = await loadVideoAnnotationPrompt(
+      resolve(process.cwd(), "../docs/quality/prompts/ego-video-annotation-v2"),
+    );
+    const approximate = modelOutput();
+    approximate.scene.evidence_timestamps_ms = [10, 740];
+    approximate.tasks[0]!.start_ms = 10;
+    approximate.tasks[0]!.end_ms = 740;
+    approximate.tasks[0]!.evidence_timestamps_ms = [10, 260, 490, 740];
+    approximate.tasks[0]!.atomic_action_sequence[0]!.evidence_timestamps_ms = [10, 490];
+    approximate.tasks[0]!.atomic_action_sequence[1]!.evidence_timestamps_ms = [740];
+    approximate.tasks[0]!.result_evidence_timestamps_ms = [490, 740];
+    approximate.coverage_segments[0]!.start_ms = 10;
+    approximate.coverage_segments[0]!.end_ms = 740;
+    approximate.coverage_segments[0]!.evidence_timestamps_ms = [10, 260, 490, 740];
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ choices: [{ message: { content: JSON.stringify(approximate) } }] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    const provider = new QwenVideoAnnotationProvider({
+      apiKey: "test-key",
+      baseUrl: "https://example.invalid/v1",
+      timeoutMs: 1_000,
+      prompt,
+      fetcher,
+    });
+
+    const result = await provider.annotateStrict({
+      videoId: "video-1",
+      durationMs: 750,
+      frames: [0, 250, 500, 750].map((timestampMs) => ({
+        timestampMs,
+        dataUrl: "data:image/jpeg;base64,AA==",
+      })),
+      enabledLabels: [],
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(result.gate.eligibility).toBe("eligible");
+    expect(result.effective.tasks[0]).toMatchObject({ start_ms: 0, end_ms: 750 });
+    expect(result.gate.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "EVIDENCE_TIMESTAMPS_ALIGNED", resolution: "repaired" }),
+        expect.objectContaining({ code: "TASK_BOUNDARY_ALIGNED", resolution: "repaired" }),
+      ]),
+    );
+  });
+
   it("normalizes mismatched video_id from wrapped output deterministically", async () => {
     const prompt = await loadVideoAnnotationPrompt(
       resolve(process.cwd(), "../docs/quality/prompts/ego-video-annotation-v2"),

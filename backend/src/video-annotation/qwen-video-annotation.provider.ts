@@ -53,18 +53,14 @@ function parseWithDeterministicRepair(
   } catch {
     return null; // 非 JSON 输出，交给模型 schema_repair
   }
+  // 修复器总是运行：合法输出零变化；非法枚举/超限/null 修复；
+  // 证据时间戳对齐（模型常输出近似/整秒时间戳，不在采样帧集合）始终生效。
+  const repaired = repairSchemaOutput(candidate, sourceTimestamps);
+  if (repaired.changes.length > 0) structuralRepairs.push(...repaired.changes);
   try {
-    return { raw: parseRawVideoAnnotation(candidate) };
+    return { raw: parseRawVideoAnnotation(repaired.value) };
   } catch {
-    const repaired = repairSchemaOutput(candidate, sourceTimestamps);
-    if (repaired.changes.length === 0) return null;
-    try {
-      const raw = parseRawVideoAnnotation(repaired.value);
-      structuralRepairs.push(...repaired.changes);
-      return { raw };
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 
