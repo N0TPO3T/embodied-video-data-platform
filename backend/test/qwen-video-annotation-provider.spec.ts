@@ -265,6 +265,55 @@ describe("qwen video annotation provider", () => {
     );
   });
 
+  it("normalizes mismatched video_id from wrapped output deterministically", async () => {
+    const prompt = await loadVideoAnnotationPrompt(
+      resolve(process.cwd(), "../docs/quality/prompts/ego-video-annotation-v2"),
+    );
+    const wrapped = {
+      video_id: "video-1",
+      duration_ms: 1000,
+      frame_manifest: "x",
+      frame_timestamps_ms: [0, 500],
+      annotation_context: { enabled_labels: [] },
+      requested_output_schema: "s",
+      output_contract: { ...modelOutput(), video_id: "wrong-video" },
+    };
+    const response = (output: unknown) =>
+      new Response(
+        JSON.stringify({ choices: [{ message: { content: JSON.stringify(output) } }] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    const fetcher = vi.fn().mockResolvedValueOnce(response(wrapped));
+    const provider = new QwenVideoAnnotationProvider({
+      apiKey: "test-key",
+      baseUrl: "https://example.invalid/v1",
+      timeoutMs: 1_000,
+      prompt,
+      fetcher,
+    });
+
+    const result = await provider.annotateStrict({
+      videoId: "video-1",
+      durationMs: 1_000,
+      frames: [0, 250, 500, 750, 1_000].map((timestampMs) => ({
+        timestampMs,
+        dataUrl: "data:image/jpeg;base64,AA==",
+      })),
+      enabledLabels: [],
+    }, undefined, {
+      logicalFullAttempt: 1,
+      onModelCall: async () => undefined,
+    });
+
+    expect(result.status).toBe("candidate");
+    expect(result.effective.video_id).toBe("video-1");
+    expect(result.gate.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "VIDEO_ID_NORMALIZED", resolution: "repaired" }),
+      ]),
+    );
+  });
+
   it("loads versioned prompt assets and sends only task-blind annotation context", async () => {
     const prompt = await loadVideoAnnotationPrompt(
       resolve(process.cwd(), "../docs/quality/prompts/ego-video-annotation-v2"),

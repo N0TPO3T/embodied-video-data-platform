@@ -469,12 +469,15 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
     }
     }
     if (raw.video_id !== request.videoId) {
-      throw new VideoAnnotationProviderError(
-        "候选标注返回的 video_id 与请求不一致",
-        null,
-        finalRequestId,
-        "invalid_output",
-      );
+      // 确定性归一：video_id 是身份回显字段，必须以请求为准（记录修复，不阻断）
+      structuralRepairs.push({
+        code: "VIDEO_ID_NORMALIZED",
+        fieldPath: "video_id",
+        previousValue: raw.video_id,
+        nextValue: request.videoId,
+        message: `video_id 与请求不一致（${raw.video_id}），已归一为请求值`,
+      });
+      raw.video_id = request.videoId;
     }
     let canonical = canonicalizeVideoAnnotation(raw);
     let normalized = normalizeVideoAnnotation({
@@ -543,12 +546,14 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
         }
       }
       if (repairedRaw.video_id !== request.videoId) {
-        throw new VideoAnnotationProviderError(
-          "候选标注定向修复返回的 video_id 与请求不一致",
-          null,
-          finalRequestId,
-          "invalid_output",
-        );
+        structuralRepairs.push({
+          code: "VIDEO_ID_NORMALIZED",
+          fieldPath: "video_id",
+          previousValue: repairedRaw.video_id,
+          nextValue: request.videoId,
+          message: `video_id 与请求不一致（${repairedRaw.video_id}），已归一为请求值`,
+        });
+        repairedRaw.video_id = request.videoId;
       }
       canonical = canonicalizeVideoAnnotation(repairedRaw);
       const resolvedIssues: AnnotationGateIssue[] = retryableIssues.map((issue) => ({
