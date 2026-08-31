@@ -147,6 +147,28 @@ function filterEnumArray(
   });
 }
 
+
+function repairNullableStringFields(
+  target: JsonRecord,
+  path: string,
+  changes: SchemaRepairChange[],
+): void {
+  // 这些字段在 Schema 中为 z.string().max(...)（允许空串），模型输出 null 时归一为空串
+  for (const field of ["video_summary", "task_object", "visible_postcondition"] as const) {
+    const current = target[field];
+    if (current === null) {
+      target[field] = "";
+      changes.push({
+        code: "NULL_STRING_NORMALIZED",
+        fieldPath: `${path}.${field}`,
+        previousValue: null,
+        nextValue: "",
+        message: `字段 ${field} 为 null，已归一为空字符串`,
+      });
+    }
+  }
+}
+
 function repairTask(
   task: JsonRecord,
   path: string,
@@ -161,6 +183,7 @@ function repairTask(
   repairArrayLimit(task, "result_evidence_timestamps_ms", 20, changes, sourceTimestamps);
   repairArrayLimit(task, "failure_evidence_timestamps_ms", 20, changes, sourceTimestamps);
   repairArrayLimit(task, "recovery_evidence_timestamps_ms", 20, changes, sourceTimestamps);
+  repairNullableStringFields(task, "tasks[]", changes);
   filterEnumArray(task, "interaction_primitives", INTERACTION_PRIMITIVES, changes);
   filterEnumArray(task, "complexity_signals", COMPLEXITY_SIGNALS, changes);
   const actions = task.atomic_action_sequence;
@@ -186,6 +209,16 @@ export function repairSchemaOutput(
 
   repairEnumField(value, "temporal_structure_type", changes);
   repairEnumField(value, "model_assessability", changes);
+  if (value.video_summary === null) {
+    value.video_summary = "";
+    changes.push({
+      code: "NULL_STRING_NORMALIZED",
+      fieldPath: "video_summary",
+      previousValue: null,
+      nextValue: "",
+      message: "字段 video_summary 为 null，已归一为空字符串",
+    });
+  }
   if (isRecord(value.scene)) {
     repairArrayLimit(value.scene, "evidence_timestamps_ms", 20, changes, sourceTimestamps);
   }

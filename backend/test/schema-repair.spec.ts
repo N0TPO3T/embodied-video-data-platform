@@ -80,6 +80,17 @@ describe("deterministic schema repair (schema-repair)", () => {
     expect(changes[0]!.code).toBe("ENUM_ARRAY_INVALID_FILTERED");
   });
 
+  it("normalizes null nullable-string fields to empty strings", () => {
+    const output = baseOutput();
+    (output.tasks[0] as Record<string, unknown>).visible_postcondition = null;
+    (output as Record<string, unknown>).video_summary = null;
+
+    const { value, changes } = repairSchemaOutput(output);
+    expect((value as any).tasks[0].visible_postcondition).toBe("");
+    expect((value as any).video_summary).toBe("");
+    expect(changes.map((change) => change.code)).toEqual(["NULL_STRING_NORMALIZED", "NULL_STRING_NORMALIZED"]);
+  });
+
   it("repairs coverage segment_type and oversized coverage evidence", () => {
     const output = baseOutput();
     (output.coverage_segments[0] as Record<string, unknown>).segment_type = "activity";
