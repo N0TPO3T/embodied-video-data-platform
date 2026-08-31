@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PlatformApp } from "../../app/PlatformApp";
 import { IdentityProvider } from "../../auth/client/IdentityContext";
+import type { BackendTaskSegmentAsset } from "../../operations/contracts";
 import { getPointRule } from "../../points/client/pointCycleApi";
 import { accountForRole, demoAccounts } from "../../test/accountFixtures";
 import {
@@ -46,6 +47,22 @@ vi.mock("../../points/client/pointCycleApi", async (importOriginal) => {
   return {
     ...actual,
     getPointRule: vi.fn(),
+  };
+});
+
+const taskSegmentApi = vi.hoisted(() => ({
+  generateTaskSegments: vi.fn(),
+  getTaskSegmentAssets: vi.fn(),
+  getTaskSegmentPreview: vi.fn(),
+  retryTaskSegment: vi.fn(),
+}));
+
+vi.mock("../../operations/client/operationsApi", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../operations/client/operationsApi")>();
+  return {
+    ...actual,
+    ...taskSegmentApi,
   };
 });
 
@@ -244,6 +261,52 @@ function formalAnnotationRun(
   };
 }
 
+function readyTaskSegmentAsset(): BackendTaskSegmentAsset {
+  return {
+    id: "TSA-FORMAL-001",
+    submissionId: "SUB-001",
+    annotationRunId: "ANR-FORMAL-001",
+    taskIndex: 0,
+    pipelineVersion: "pipeline-v1",
+    promptVersion: "prompt-v1",
+    schemaVersion: "schema-v1",
+    evidencePolicyVersion: "evidence-v1",
+    ontologyVersion: null,
+    taskLabel: "整理餐具",
+    taskVerb: "整理",
+    completion: "complete",
+    resultStatus: "success",
+    sourceStartMs: 5_100,
+    sourceEndMs: 11_900,
+    clipStartMs: 5_100,
+    clipEndMs: 11_900,
+    coverageSnapshot: [],
+    evidenceSnapshot: {},
+    validationWarnings: [],
+    sourceObjectKey: "uploads/SUB-001/source.mp4",
+    sourceSha256: "a".repeat(64),
+    clipObjectKey: "task-segments/demo/SUB-001/ANR-FORMAL-001/task-0.mp4",
+    clipSha256: "b".repeat(64),
+    clipSizeBytes: "1048576",
+    clipDurationMs: 6_800,
+    codec: "h264",
+    width: 1280,
+    height: 720,
+    frameRate: 30,
+    hasAudio: true,
+    generationStatus: "ready",
+    attemptCount: 1,
+    failureCode: null,
+    failureMessage: null,
+    usageStatus: "internal_only",
+    generationPolicyVersion: "task_segment_demo_policy_v1",
+    createdAt: 1,
+    startedAt: 2,
+    completedAt: 3,
+    updatedAt: 3,
+  };
+}
+
 beforeEach(() => {
   vi.mocked(uploadVideo).mockReset();
   vi.mocked(resumeUploadVideo).mockReset();
@@ -263,6 +326,14 @@ beforeEach(() => {
   vi.mocked(listActiveUploads).mockResolvedValue([]);
   vi.mocked(listAnnotationRuns).mockReset();
   vi.mocked(listAnnotationRuns).mockResolvedValue([]);
+  taskSegmentApi.generateTaskSegments.mockReset();
+  taskSegmentApi.getTaskSegmentAssets.mockReset();
+  taskSegmentApi.getTaskSegmentAssets.mockResolvedValue({
+    assets: [],
+    pagination: { page: 1, pageSize: 50, total: 0, totalPages: 0 },
+  });
+  taskSegmentApi.getTaskSegmentPreview.mockReset();
+  taskSegmentApi.retryTaskSegment.mockReset();
   vi.mocked(getSubmissionPreview).mockReset();
   vi.mocked(getSubmissionPreview).mockResolvedValue({
     url: "http://minio.local/preview.mp4",
@@ -754,15 +825,28 @@ describe("collector journey", () => {
     expect(await screen.findByText("28.00 分")).toBeVisible();
   });
 
-  it("shows timestamped tasks from the formal annotation run for administrators", async () => {
+  it("shows timestamped tasks and their generated clips for administrators", async () => {
     vi.mocked(listAnnotationRuns).mockResolvedValue([formalAnnotationRun()]);
+    taskSegmentApi.getTaskSegmentAssets.mockResolvedValue({
+      assets: [readyTaskSegmentAsset()],
+      pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 },
+    });
 
     renderAdminDetail(24);
 
     expect(await screen.findByRole("region", { name: "任务时间轴" })).toBeVisible();
     expect(await screen.findByText("5.1s～11.9s")).toBeVisible();
     expect(screen.getByText("“整理餐具”")).toBeVisible();
+    expect(await screen.findByRole("region", { name: "任务切片" })).toBeVisible();
+    expect(await screen.findByText("Task #0 · 整理餐具")).toBeVisible();
+    expect(screen.getByText("00:05.100 → 00:11.900")).toBeVisible();
+    expect(screen.getByText("complete / success · 整理")).toBeVisible();
     expect(listAnnotationRuns).toHaveBeenCalledWith("SUB-001");
+    expect(taskSegmentApi.getTaskSegmentAssets).toHaveBeenCalledWith({
+      annotationRunId: "ANR-FORMAL-001",
+      page: 1,
+      pageSize: 50,
+    });
   });
 
   it("prefers human-corrected tasks over the candidate task list", async () => {

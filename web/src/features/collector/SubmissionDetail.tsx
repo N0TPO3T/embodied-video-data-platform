@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { QualityReportCard } from "../../components/QualityReportCard";
 import { StatusBadge } from "../../components/StatusBadge";
+import { TaskSegmentDemo } from "../../components/TaskSegmentDemo";
 import { useIdentity } from "../../auth/client/IdentityContext";
 import { estimatePoints } from "../../domain/calculations";
 import type { Submission } from "../../domain/types";
@@ -389,6 +390,24 @@ export function SubmissionDetail({
               ))}
             </ol>
           )}
+        </section>
+      ) : null}
+      {currentAccount.role === "admin" &&
+      timelineState === "ready" &&
+      timeline?.runId &&
+      (timeline.status === "ready" || timeline.status === "empty") ? (
+        <section className="content-card" aria-label="任务切片">
+          <div className="card-heading">
+            <div>
+              <h2>任务切片</h2>
+              <p>当前正式 Annotation Run 对应的片段状态、标注与预览</p>
+            </div>
+          </div>
+          <TaskSegmentDemo
+            annotationRunId={timeline.runId}
+            submissionId={id}
+            canGenerate
+          />
         </section>
       ) : null}
     </div>
