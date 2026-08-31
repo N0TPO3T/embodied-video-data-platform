@@ -233,6 +233,48 @@ function repairNullableStringFields(
   }
 }
 
+
+/**
+ * task start_ms/end_ms 对齐到最近采样帧（容差内），消除“边界必须引用输入采样时间点”错误；
+ * 对齐后保持 end > start，否则恢复原值（异常边界留给模型修复）。
+ */
+function repairTaskBoundaries(
+  task: JsonRecord,
+  changes: SchemaRepairChange[],
+  sourceTimestamps?: Set<number>,
+  maxDeltaMs = 2_000,
+): void {
+  if (!sourceTimestamps || sourceTimestamps.size === 0) return;
+  const align = (value: unknown): number => {
+    if (typeof value !== "number" || !Number.isFinite(value)) return Number.NaN;
+    if (sourceTimestamps!.has(value)) return value;
+    let best = value;
+    let bestDelta = Number.POSITIVE_INFINITY;
+    for (const frame of sourceTimestamps!) {
+      const delta = Math.abs(frame - value);
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        best = frame;
+      }
+    }
+    return bestDelta <= maxDeltaMs ? best : value;
+  };
+  const start = align(task.start_ms);
+  const end = align(task.end_ms);
+  if (Number.isNaN(start) || Number.isNaN(end)) return;
+  if (start === task.start_ms && end === task.end_ms) return;
+  if (end <= start) return; // 对齐后区间非法则放弃
+  changes.push({
+    code: "TASK_BOUNDARY_ALIGNED",
+    fieldPath: "tasks[]",
+    previousValue: { start_ms: task.start_ms, end_ms: task.end_ms },
+    nextValue: { start_ms: start, end_ms: end },
+    message: `任务边界已对齐到最近采样帧（最大偏差 ${maxDeltaMs}ms）`,
+  });
+  task.start_ms = start;
+  task.end_ms = end;
+}
+
 function repairTask(
   task: JsonRecord,
   path: string,
@@ -249,6 +291,7 @@ function repairTask(
   repairArrayLimit(task, "failure_evidence_timestamps_ms", 20, changes, sourceTimestamps, maxDeltaMs);
   repairArrayLimit(task, "recovery_evidence_timestamps_ms", 20, changes, sourceTimestamps, maxDeltaMs);
   repairNullableStringFields(task, "tasks[]", changes);
+  repairTaskBoundaries(task, changes, sourceTimestamps, maxDeltaMs);
   filterEnumArray(task, "interaction_primitives", INTERACTION_PRIMITIVES, changes);
   filterEnumArray(task, "complexity_signals", COMPLEXITY_SIGNALS, changes);
   const actions = task.atomic_action_sequence;

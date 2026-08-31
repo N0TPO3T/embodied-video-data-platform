@@ -117,6 +117,19 @@ describe("deterministic schema repair (schema-repair)", () => {
     expect(changes.map((change) => change.code)).toEqual(["EVIDENCE_TIMESTAMPS_ALIGNED"]);
   });
 
+  it("aligns task start_ms/end_ms boundaries to sampling frames", () => {
+    const output = baseOutput();
+    (output.tasks[0] as Record<string, unknown>).start_ms = 480;
+    (output.tasks[0] as Record<string, unknown>).end_ms = 990;
+    const frames = new Set([0, 500, 1000, 1500]);
+
+    const { value, changes } = repairSchemaOutput(output, frames);
+    const task = (value as any).tasks[0];
+    expect(task.start_ms).toBe(500);
+    expect(task.end_ms).toBe(1000);
+    expect(changes.map((change) => change.code)).toContain("TASK_BOUNDARY_ALIGNED");
+  });
+
   it("does not align obviously fabricated far-away timestamps", () => {
     const output = baseOutput();
     (output.tasks[0] as Record<string, unknown>).evidence_timestamps_ms = [0, 99999];
