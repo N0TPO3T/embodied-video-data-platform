@@ -8,6 +8,7 @@ import { AuditService } from "../audit/audit.service.js";
 import type { PublicUser } from "../auth/auth.types.js";
 import { csvDocument } from "../csv/csv.js";
 import { CollectionTaskEntity } from "../database/entities/collection-task.entity.js";
+import { JobOutboxEntity } from "../database/entities/job-outbox.entity.js";
 import { MediaMetadataEntity } from "../database/entities/media-metadata.entity.js";
 import { PointCycleAdjustmentEntity } from "../database/entities/point-cycle-adjustment.entity.js";
 import { PointCycleEntity } from "../database/entities/point-cycle.entity.js";
@@ -33,6 +34,7 @@ import { PointCycleFailure } from "./point-cycle-failure.js";
 import { PointCyclesPolicy } from "./point-cycles.policy.js";
 import { PointRulesService } from "./point-rules.service.js";
 import { WalletService } from "../wallet/wallet.service.js";
+import { SUBMISSION_SOURCE_RETENTION_ROUTING_KEY } from "../messaging/rabbitmq-topology.js";
 
 const POINT_CYCLE_THUMBNAIL_TTL_SECONDS = 10 * 60;
 /** 锁定后自动结算天数（用户需求：锁定 3 天后自动结算） */
@@ -705,6 +707,41 @@ export class PointCyclesService {
       cycle.status = "settled";
       cycle.settledAt = now;
       await repository.save(cycle);
+      // SEG-DEC-006（决策 a）：结算完成后清理原视频，仅保留切片后的视频文件。
+      // 由 SourceRetentionProcessor 在切片资产全部终态后执行删除（幂等，可重试）。
+      const outbox = manager.getRepository(JobOutboxEntity);
+      const seenSubmissions = new Set<string>();
+      for (const item of items) {
+        if (!item.submissionId || seenSubmissions.has(item.submissionId)) continue;
+        seenSubmissions.add(item.submissionId);
+        const existing = await outbox.findOneBy({
+          eventType: SUBMISSION_SOURCE_RETENTION_ROUTING_KEY,
+          aggregateId: item.submissionId,
+        });
+        const payload = {
+          submissionId: item.submissionId,
+          reason: `settlement:${cycle.id}`,
+        };
+        if (existing) {
+          existing.payload = payload;
+          existing.status = "pending";
+          existing.availableAt = now;
+          existing.publishedAt = null;
+          existing.lastError = null;
+          await outbox.save(existing);
+        } else {
+          await outbox.save({
+            id: `JOB-${randomUUID()}`,
+            aggregateType: "submission",
+            aggregateId: item.submissionId,
+            eventType: SUBMISSION_SOURCE_RETENTION_ROUTING_KEY,
+            payload,
+            status: "pending",
+            attempts: 0,
+            availableAt: now,
+          });
+        }
+      }
       if (actor) {
         await this.audit.record(
           manager,

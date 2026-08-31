@@ -20,10 +20,13 @@ type ProbeDocument = {
   format?: {
     duration?: string;
     size?: string;
+    start_time?: string;
   };
 };
 
 export type TaskSegmentMediaMetadata = {
+  /** 输出文件时间轴上的实际起点（毫秒，绝对时间轴；stream copy 关键帧对齐后的真实值） */
+  startMs: number;
   durationMs: number;
   sizeBytes: string;
   codec: string;
@@ -37,6 +40,14 @@ function positiveNumber(value: unknown, field: string): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     throw new Error(`FFprobe ${field} is invalid`);
+  }
+  return parsed;
+}
+
+function nonNegativeNumber(value: unknown, field: string, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return fallback;
   }
   return parsed;
 }
@@ -55,6 +66,7 @@ export function parseTaskSegmentProbeOutput(output: string): TaskSegmentMediaMet
   const codec = video.codec_name?.trim();
   if (!codec) throw new Error("FFprobe codec is missing");
   return {
+    startMs: Math.round(nonNegativeNumber(document.format?.start_time, "start_time", 0) * 1_000),
     durationMs: Math.round(positiveNumber(document.format?.duration, "duration") * 1_000),
     sizeBytes: String(Math.round(positiveNumber(document.format?.size, "size"))),
     codec,
@@ -75,6 +87,12 @@ async function sha256File(filePath: string): Promise<string> {
 
 @Injectable()
 export class TaskSegmentMediaTool {
+  /**
+   * 正式 V1 规则（SEG-DEC-009）：保留原始格式，不做重编码（stream copy）。
+   * - 使用 input seeking（-ss 在 -i 前）：实际起点会对齐到目标起点之前最近的关键帧；
+   * - -copyts 保留原始时间轴，-to 按绝对位置截止，输出文件的 start_time 即实际起点；
+   * - 音频原样保留（-map 0:a:0?），不转码（SEG-DEC-008）。
+   */
   async transcode(input: {
     sourcePath: string;
     outputPath: string;
@@ -84,34 +102,21 @@ export class TaskSegmentMediaTool {
     await runMediaCommand("ffmpeg", [
       "-hide_banner",
       "-nostdin",
-      "-i",
-      input.sourcePath,
       "-ss",
       (input.startMs / 1_000).toFixed(3),
-      "-t",
-      ((input.endMs - input.startMs) / 1_000).toFixed(3),
+      "-i",
+      input.sourcePath,
       "-map",
       "0:v:0",
       "-map",
       "0:a:0?",
       "-sn",
       "-dn",
-      "-c:v",
-      "libx264",
-      "-preset",
-      "veryfast",
-      "-crf",
-      "23",
-      "-pix_fmt",
-      "yuv420p",
-      "-c:a",
-      "aac",
-      "-b:a",
-      "128k",
-      "-movflags",
-      "+faststart",
-      "-avoid_negative_ts",
-      "make_zero",
+      "-c",
+      "copy",
+      "-copyts",
+      "-to",
+      (input.endMs / 1_000).toFixed(3),
       "-y",
       input.outputPath,
     ]);

@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { TypeOrmModule } from "@nestjs/typeorm";
 
+import { AuditModule } from "../audit/audit.module.js";
 import { AuthModule } from "../auth/auth.module.js";
 import { AnnotationReviewEntity } from "../database/entities/annotation-review.entity.js";
 import { AnnotationRunEntity } from "../database/entities/annotation-run.entity.js";
@@ -16,6 +17,7 @@ import { TaskSegmentController } from "./task-segment.controller.js";
 import { TaskSegmentMediaTool } from "./task-segment-media.js";
 import { TaskSegmentProcessor } from "./task-segment.processor.js";
 import { TaskSegmentService } from "./task-segment.service.js";
+import { SourceRetentionProcessor } from "./source-retention.processor.js";
 
 @Module({
   imports: [
@@ -30,15 +32,17 @@ import { TaskSegmentService } from "./task-segment.service.js";
     AuthModule,
     SecurityModule,
     StorageModule,
+    AuditModule,
   ],
   controllers: [TaskSegmentController],
   providers: [
     TaskSegmentService,
     TaskSegmentMediaTool,
     TaskSegmentProcessor,
+    SourceRetentionProcessor,
     AllowedOriginGuard,
     OperationsFailureFilter,
   ],
-  exports: [TaskSegmentProcessor],
+  exports: [TaskSegmentProcessor, TaskSegmentService, SourceRetentionProcessor],
 })
 export class TaskSegmentModule {}

@@ -13,10 +13,13 @@ import {
   assertAiQualityTopology,
   assertAiAnnotationTopology,
   assertMediaTopology,
+  assertSubmissionSourceRetentionTopology,
   assertTaskSegmentTopology,
   EVENTS_EXCHANGE,
   MEDIA_QUEUE,
   MEDIA_QUEUE_OPTIONS,
+  SUBMISSION_SOURCE_RETENTION_QUEUE,
+  SUBMISSION_SOURCE_RETENTION_QUEUE_OPTIONS,
   TASK_SEGMENT_QUEUE,
   TASK_SEGMENT_QUEUE_OPTIONS,
 } from "../src/messaging/rabbitmq-topology.js";
@@ -153,6 +156,31 @@ describe("RabbitMQ task segment topology", () => {
       TASK_SEGMENT_QUEUE,
       EVENTS_EXCHANGE,
       "task.segment.generate.v1",
+    );
+  });
+});
+
+describe("RabbitMQ submission source retention topology", () => {
+  it("declares a dedicated durable queue with dead-letter routing", async () => {
+    const channel = {
+      assertExchange: vi.fn().mockResolvedValue(undefined),
+      assertQueue: vi.fn().mockResolvedValue(undefined),
+      bindQueue: vi.fn().mockResolvedValue(undefined),
+    } as unknown as ConfirmChannel;
+
+    await assertSubmissionSourceRetentionTopology(channel);
+
+    expect(channel.assertQueue).toHaveBeenCalledWith(
+      SUBMISSION_SOURCE_RETENTION_QUEUE,
+      SUBMISSION_SOURCE_RETENTION_QUEUE_OPTIONS,
+    );
+    expect(SUBMISSION_SOURCE_RETENTION_QUEUE_OPTIONS.arguments).toEqual({
+      "x-dead-letter-exchange": "evdp.events.dead",
+    });
+    expect(channel.bindQueue).toHaveBeenCalledWith(
+      SUBMISSION_SOURCE_RETENTION_QUEUE,
+      EVENTS_EXCHANGE,
+      "submission.source.retention.v1",
     );
   });
 });

@@ -91,10 +91,13 @@ class MemoryStorage implements ObjectStoragePort {
 class FakeSegmentMedia {
   failStartMs: number | null = 4_000;
   transcodeCalls = 0;
+  lastStartMs = 0;
 
   async transcode(input: { outputPath: string; startMs: number; endMs: number }) {
     this.transcodeCalls += 1;
     if (input.startMs === this.failStartMs) throw new Error("intentional ffmpeg failure");
+    // 模拟 stream copy 关键帧对齐：实际起点 = 请求起点
+    this.lastStartMs = input.startMs;
     await writeFile(input.outputPath, Buffer.from(String(input.endMs - input.startMs)));
   }
 
@@ -102,6 +105,7 @@ class FakeSegmentMedia {
     const value = await readFile(filePath);
     const durationMs = Number(value.toString("utf8"));
     return {
+      startMs: this.lastStartMs,
       durationMs,
       sizeBytes: String(value.length),
       codec: "h264",
@@ -213,9 +217,10 @@ describe("task segment demo", () => {
     await seedSubmission("SUB-SEG", "uploads/task-segment-source.mp4", 10_000);
     storage.objects.set("uploads/task-segment-source.mp4", Buffer.from("source-video"));
     await seedRun("RUN-SEG", "SUB-SEG", [
-      task({ startMs: 0, endMs: 2_000, label: "打开冰箱" }),
-      task({ startMs: 1_800, endMs: 4_000, label: "取出饮料", completion: "incomplete", resultStatus: "partial" }),
-      task({ startMs: 4_000, endMs: 6_000, label: "关闭冰箱", completion: "uncertain", resultStatus: "unknown" }),
+      task({ startMs: 0, endMs: 4_000, label: "打开冰箱" }),
+      task({ startMs: 4_500, endMs: 8_000, label: "取出饮料", completion: "incomplete", resultStatus: "partial" }),
+      task({ startMs: 8_000, endMs: 9_500, label: "关闭冰箱", completion: "uncertain", resultStatus: "unknown" }),
+      task({ startMs: 9_700, endMs: 9_900, label: "短任务", completion: "complete", resultStatus: "success" }),
     ]);
   });
 
@@ -287,35 +292,48 @@ describe("task segment demo", () => {
   }
 
   it("creates one internal asset per effective task and remains idempotent", async () => {
+    // 正式 V1 规则：task1 正常入库；task2 uncertain 不入库（TASK_STATUS_UNCERTAIN）；
+    // task3 padding 后 9200→10000ms 不足最短 3s（TASK_TOO_SHORT）；task0/1 带 padding 入库。
     await expect(service.generate(admin, "RUN-SEG")).resolves.toEqual({
       annotationRunId: "RUN-SEG",
-      taskCount: 3,
-      created: 3,
+      taskCount: 4,
+      created: 4,
       existing: 0,
-      skipped: 0,
+      skipped: 2,
     });
     await expect(service.generate(admin, "RUN-SEG")).resolves.toEqual({
       annotationRunId: "RUN-SEG",
-      taskCount: 3,
+      taskCount: 4,
       created: 0,
-      existing: 3,
+      existing: 4,
       skipped: 0,
     });
     const assets = await dataSource.getRepository(TaskSegmentAssetEntity).find({
       where: { annotationRunId: "RUN-SEG" },
       order: { taskIndex: "ASC" },
     });
-    expect(assets).toHaveLength(3);
+    expect(assets).toHaveLength(4);
     expect(assets.map((asset) => [asset.taskIndex, asset.completion, asset.resultStatus])).toEqual([
       [0, "complete", "success"],
       [1, "incomplete", "partial"],
       [2, "uncertain", "unknown"],
+      [3, "complete", "success"],
     ]);
     expect(assets.every((asset) => asset.usageStatus === "internal_only")).toBe(true);
-    expect(assets[1]).toMatchObject({ sourceStartMs: 1_800, sourceEndMs: 4_000 });
+    // SEG-DEC-002：±0.5s padding（clamp 到视频范围）；source 区间保留任务原始边界
+    expect(assets[0]).toMatchObject({ sourceStartMs: 0, sourceEndMs: 4_000, clipStartMs: 0, clipEndMs: 4_500 });
+    expect(assets[1]).toMatchObject({ sourceStartMs: 4_500, sourceEndMs: 8_000, clipStartMs: 4_000, clipEndMs: 8_500 });
+    expect(assets[2]).toMatchObject({
+      generationStatus: "skipped",
+      failureCode: "TASK_STATUS_UNCERTAIN",
+    });
+    expect(assets[3]).toMatchObject({
+      generationStatus: "skipped",
+      failureCode: "TASK_TOO_SHORT",
+    });
     expect(await dataSource.getRepository(JobOutboxEntity).countBy({
       eventType: "task.segment.generate.v1",
-    })).toBe(3);
+    })).toBe(2);
   });
 
   it("processes tasks independently, preserves source state, and retries one failure", async () => {
@@ -323,13 +341,16 @@ describe("task segment demo", () => {
       where: { annotationRunId: "RUN-SEG" },
       order: { taskIndex: "ASC" },
     });
+    // assets[1] 的 clipStartMs=4000 命中 Fake 的 failStartMs=4000 → FFMPEG_FAILED
     await expect(processor.process({ assetId: assets[0]!.id })).resolves.toBe("ready");
-    await expect(processor.process({ assetId: assets[1]!.id })).resolves.toBe("ready");
-    await expect(processor.process({ assetId: assets[2]!.id })).resolves.toBe("failed");
-    expect(await dataSource.getRepository(TaskSegmentAssetEntity).findOneByOrFail({ id: assets[2]!.id })).toMatchObject({
+    await expect(processor.process({ assetId: assets[1]!.id })).resolves.toBe("failed");
+    expect(await dataSource.getRepository(TaskSegmentAssetEntity).findOneByOrFail({ id: assets[1]!.id })).toMatchObject({
       generationStatus: "failed",
       failureCode: "FFMPEG_FAILED",
     });
+    // skipped 资产不可处理（claim 返回 null）
+    await expect(processor.process({ assetId: assets[2]!.id })).resolves.toBe("already_claimed");
+    await expect(processor.process({ assetId: assets[3]!.id })).resolves.toBe("already_claimed");
     expect(await dataSource.getRepository(SubmissionEntity).findOneByOrFail({ id: "SUB-SEG" })).toMatchObject({
       processingStatus: "completed",
       assetStatus: "active",
@@ -342,9 +363,9 @@ describe("task segment demo", () => {
     });
 
     media.failStartMs = null;
-    await service.retry(admin, assets[2]!.id);
-    await expect(processor.process({ assetId: assets[2]!.id })).resolves.toBe("ready");
-    const retried = await dataSource.getRepository(TaskSegmentAssetEntity).findOneByOrFail({ id: assets[2]!.id });
+    await service.retry(admin, assets[1]!.id);
+    await expect(processor.process({ assetId: assets[1]!.id })).resolves.toBe("ready");
+    const retried = await dataSource.getRepository(TaskSegmentAssetEntity).findOneByOrFail({ id: assets[1]!.id });
     expect(retried).toMatchObject({
       generationStatus: "ready",
       attemptCount: 2,
@@ -353,6 +374,10 @@ describe("task segment demo", () => {
       height: 720,
       hasAudio: true,
     });
+    // SEG-DEC-009 决策 a：实际边界（关键帧对齐后）写回 clipStartMs/clipEndMs
+    expect(retried.clipStartMs).toBe(4_000);
+    expect(retried.clipEndMs).toBe(8_500);
+    expect(retried.clipDurationMs).toBe(4_500);
     expect(retried.clipSha256).toMatch(/^[a-f0-9]{64}$/u);
     await expect(service.preview(admin, retried.id)).resolves.toMatchObject({
       assetId: retried.id,
@@ -540,5 +565,40 @@ describe("task segment demo", () => {
       assetId: asset.id,
       recoverProcessing: true,
     })).resolves.toBe("ready");
+  });
+
+  it("enqueueForPublishedRun runs inside the publisher transaction and is idempotent", async () => {
+    // 非正式 Run 在发布事务内拒绝
+    await expect(
+      dataSource.transaction(async (manager) => {
+        const run = await manager.getRepository(AnnotationRunEntity).findOneByOrFail({
+          id: "RUN-SEG-CANDIDATE",
+        });
+        return service.enqueueForPublishedRun(manager, run);
+      }),
+    ).rejects.toMatchObject({
+      code: "ANNOTATION_RUN_NOT_PUBLISHED",
+      status: 409,
+    });
+
+    // 正式 Run：发布事务内调用创建资产；重复发布不重复创建
+    const result = await dataSource.transaction(async (manager) => {
+      const run = await manager.getRepository(AnnotationRunEntity).findOneByOrFail({
+        id: "RUN-SEG",
+      });
+      return service.enqueueForPublishedRun(manager, run);
+    });
+    expect(result).toMatchObject({
+      annotationRunId: "RUN-SEG",
+      taskCount: 4,
+      created: 0,
+      existing: 4,
+      skipped: 0,
+    });
+    // 幂等：未新增 outbox 消息（enqueueAsset 为 upsert）；
+    // RUN-SEG 的 2 个 queued 资产对应 2 条，加上本文件其他用例的 2 条共 4 条
+    expect(await dataSource.getRepository(JobOutboxEntity).countBy({
+      eventType: "task.segment.generate.v1",
+    })).toBe(4);
   });
 });

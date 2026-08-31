@@ -4,6 +4,7 @@ import { Injectable } from "@nestjs/common";
 import { DataSource, In, Not } from "typeorm";
 
 import { AuditService } from "../audit/audit.service.js";
+import { TaskSegmentService } from "../task-segment/task-segment.service.js";
 import type { PublicUser } from "../auth/auth.types.js";
 import { AnnotationCorrectionEntity } from "../database/entities/annotation-correction.entity.js";
 import { AnnotationModelCallEntity } from "../database/entities/annotation-model-call.entity.js";
@@ -287,6 +288,7 @@ export class AnnotationManagementService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly audit: AuditService,
+    private readonly taskSegments: TaskSegmentService,
   ) {}
 
   async list(actor: PublicUser, submissionId: string) {
@@ -705,6 +707,10 @@ export class AnnotationManagementService {
       run.humanResult = humanResult;
       if (reviewKind === "audit") run.auditStatus = "completed";
       await repository.save(run);
+      if (run.publicationStatus === "human_verified") {
+        // DATA-SEG-001 V1：人工审核发布正式 Run 时自动创建任务切片资产并入队（幂等）
+        await this.taskSegments.enqueueForPublishedRun(manager, run);
+      }
       await this.audit.record(
         manager,
         actor,

@@ -48,6 +48,7 @@ export class TaskSegmentProcessor {
     try {
       const source = await this.loadAndValidateSource(asset);
       if (source.outcome) return source.outcome;
+      const sourceDurationMs = source.durationMs;
       directory = await mkdtemp(join(tmpdir(), "evdp-task-segment-"));
       await mkdir(directory, { recursive: true });
       const sourcePath = join(directory, "source-video");
@@ -76,7 +77,7 @@ export class TaskSegmentProcessor {
             true,
           );
         }
-        inspected = await this.inspect(asset, clipPath);
+        inspected = await this.inspect(asset, clipPath, sourceDurationMs);
         if (!inspected) return "failed";
         if (existingSize !== inspected.sizeBytes) {
           return await this.fail(
@@ -125,7 +126,7 @@ export class TaskSegmentProcessor {
             false,
           );
         }
-        inspected = await this.inspect(asset, clipPath);
+        inspected = await this.inspect(asset, clipPath, sourceDurationMs);
         if (!inspected) return "failed";
         try {
           await this.storage.uploadObject({
@@ -191,6 +192,7 @@ export class TaskSegmentProcessor {
 
   private async loadAndValidateSource(asset: TaskSegmentAssetEntity): Promise<{
     outcome: TaskSegmentProcessOutcome | null;
+    durationMs: number | null;
   }> {
     const [run, submission, metadata] = await Promise.all([
       this.dataSource.getRepository(AnnotationRunEntity).findOneBy({ id: asset.annotationRunId }),
@@ -198,7 +200,10 @@ export class TaskSegmentProcessor {
       this.dataSource.getRepository(MediaMetadataEntity).findOneBy({ submissionId: asset.submissionId }),
     ]);
     if (!run || !submission || !metadata || run.submissionId !== submission.id) {
-      return { outcome: await this.skip(asset.id, "SOURCE_OBJECT_UNAVAILABLE", "来源 Run、Submission 或媒体元数据不存在") };
+      return {
+        outcome: await this.skip(asset.id, "SOURCE_OBJECT_UNAVAILABLE", "来源 Run、Submission 或媒体元数据不存在"),
+        durationMs: null,
+      };
     }
     const review = run.reviewRevision > 0
       ? await this.dataSource.getRepository(AnnotationReviewEntity).findOneBy({
@@ -207,17 +212,26 @@ export class TaskSegmentProcessor {
         })
       : null;
     if (!acceptedAnnotationRun(run, review)) {
-      return { outcome: await this.skip(asset.id, "ANNOTATION_RUN_NOT_PUBLISHED", "来源 Annotation Run 已不再是正式结果") };
+      return {
+        outcome: await this.skip(asset.id, "ANNOTATION_RUN_NOT_PUBLISHED", "来源 Annotation Run 已不再是正式结果"),
+        durationMs: null,
+      };
     }
     if (
       asset.sourceObjectKey !== submission.objectKey ||
       asset.sourceSha256 !== submission.checksumSha256 ||
       asset.submissionId !== run.submissionId
     ) {
-      return { outcome: await this.skip(asset.id, "SOURCE_OBJECT_UNAVAILABLE", "资产来源快照与 Submission 不一致") };
+      return {
+        outcome: await this.skip(asset.id, "SOURCE_OBJECT_UNAVAILABLE", "资产来源快照与 Submission 不一致"),
+        durationMs: null,
+      };
     }
     if (submission.uploadStatus !== "uploaded" || submission.storageStatus !== "available") {
-      return { outcome: await this.skip(asset.id, "SOURCE_OBJECT_UNAVAILABLE", "原视频对象当前不可用") };
+      return {
+        outcome: await this.skip(asset.id, "SOURCE_OBJECT_UNAVAILABLE", "原视频对象当前不可用"),
+        durationMs: null,
+      };
     }
     const durationMs = Math.round(Number(metadata.durationSeconds) * 1_000);
     if (
@@ -226,17 +240,24 @@ export class TaskSegmentProcessor {
       asset.clipStartMs < 0 ||
       asset.clipEndMs <= asset.clipStartMs
     ) {
-      return { outcome: await this.skip(asset.id, "INVALID_TIME_RANGE", "任务切片时间区间无效") };
+      return {
+        outcome: await this.skip(asset.id, "INVALID_TIME_RANGE", "任务切片时间区间无效"),
+        durationMs: null,
+      };
     }
     if (!Number.isFinite(durationMs) || asset.clipEndMs > durationMs) {
-      return { outcome: await this.skip(asset.id, "END_EXCEEDS_SOURCE_DURATION", "任务结束时间超过原视频时长") };
+      return {
+        outcome: await this.skip(asset.id, "END_EXCEEDS_SOURCE_DURATION", "任务结束时间超过原视频时长"),
+        durationMs: null,
+      };
     }
-    return { outcome: null };
+    return { outcome: null, durationMs };
   }
 
   private async inspect(
     asset: TaskSegmentAssetEntity,
     clipPath: string,
+    sourceDurationMs: number | null,
   ): Promise<InspectedClip | null> {
     let inspected: InspectedClip;
     try {
@@ -250,13 +271,29 @@ export class TaskSegmentProcessor {
       );
       return null;
     }
-    const expectedDurationMs = asset.clipEndMs - asset.clipStartMs;
+    // 正式规则（SEG-DEC-009）：stream copy 按关键帧对齐，实际起点只可能
+    // 早于目标起点（对齐到目标前最近关键帧），实际终点以 -to 绝对截止为准。
+    // 校验范围合法性，不要求与目标逐帧一致；实际边界在 finalize 中写回。
     const toleranceMs = Math.max(250, 1_000 / inspected.frameRate);
-    if (Math.abs(inspected.durationMs - expectedDurationMs) > toleranceMs) {
+    if (
+      !Number.isFinite(inspected.startMs) ||
+      inspected.startMs < 0 ||
+      inspected.startMs > asset.clipStartMs + toleranceMs
+    ) {
       await this.fail(
         asset.id,
         "FFPROBE_FAILED",
-        `切片时长 ${inspected.durationMs}ms 与目标 ${expectedDurationMs}ms 的偏差超过 ${Math.ceil(toleranceMs)}ms`,
+        `实际起点 ${inspected.startMs}ms 不在目标起点 ${asset.clipStartMs}ms 附近（关键帧对齐）`,
+        false,
+      );
+      return null;
+    }
+    const actualEndMs = inspected.startMs + inspected.durationMs;
+    if (sourceDurationMs !== null && actualEndMs > sourceDurationMs + toleranceMs) {
+      await this.fail(
+        asset.id,
+        "FFPROBE_FAILED",
+        `实际结束 ${actualEndMs}ms 超过原视频时长 ${sourceDurationMs}ms`,
         false,
       );
       return null;
@@ -278,6 +315,9 @@ export class TaskSegmentProcessor {
       }
       asset.clipSha256 = inspected.sha256;
       asset.clipSizeBytes = inspected.sizeBytes;
+      // stream copy 关键帧对齐后的实际边界（SEG-DEC-009 决策 a）
+      asset.clipStartMs = inspected.startMs;
+      asset.clipEndMs = inspected.startMs + inspected.durationMs;
       asset.clipDurationMs = inspected.durationMs;
       asset.codec = inspected.codec;
       asset.width = inspected.width;
