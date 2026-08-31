@@ -291,7 +291,7 @@ describe("video annotation evidence policy", () => {
     ).toThrow();
   });
 
-  it("routes non-contiguous or reordered coverage into review", () => {
+  it("records non-contiguous or reordered coverage as warnings (Auto Gate v2)", () => {
     const raw = rawAnnotation();
     raw.coverage_segments = [
       {
@@ -314,14 +314,17 @@ describe("video annotation evidence policy", () => {
 
     const result = normalize(raw, [0, 500, 1_000]);
 
-    expect(result.status).toBe("review_required");
-    expect(result.validation.errors.join(" ")).toContain(
+    // v2：coverage 连续性问题不再阻断准入，仅记录质量提示
+    expect(result.validation.errors.join(" ")).not.toContain(
       "证据帧必须按时间连续且递增",
     );
-    expect(result.effective.model_assessability).toBe("needs_review");
+    expect(result.validation.warnings.join(" ")).toContain(
+      "证据帧必须按时间连续且递增",
+    );
+    expect(result.gate.eligibility).toBe("eligible");
   });
 
-  it("requires every task evidence timestamp to be covered by that task", () => {
+  it("keeps uncovered task evidence as a warning (Auto Gate v2) instead of blocking", () => {
     const raw = rawAnnotation();
     raw.coverage_segments = [
       {
@@ -344,20 +347,29 @@ describe("video annotation evidence policy", () => {
 
     const result = normalize(raw, [0, 500, 1_000]);
 
-    expect(result.validation.errors.join(" ")).toContain(
+    // v2：task 证据与 coverage 证据不必严格对齐，降级为质量提示，准入不受影响
+    expect(result.validation.errors.join(" ")).not.toContain(
       "tasks[0] 的证据时间点 1000 未被对应 task coverage 覆盖",
     );
+    expect(result.validation.warnings.join(" ")).toContain(
+      "tasks[0] 的证据时间点 1000 未被对应 task coverage 覆盖",
+    );
+    expect(result.gate.eligibility).toBe("eligible");
   });
 
-  it("rejects specialized evidence that is absent from task evidence", () => {
+  it("keeps specialized evidence outside task evidence as a warning (Auto Gate v2)", () => {
     const raw = rawAnnotation();
     raw.tasks[0]!.evidence_timestamps_ms = [0, 1_000];
 
     const result = normalize(raw, [0, 500, 1_000]);
 
-    expect(result.validation.errors.join(" ")).toContain(
+    expect(result.validation.errors.join(" ")).not.toContain(
       "result_evidence_timestamps_ms 的时间点 500 未列入任务主证据",
     );
+    expect(result.validation.warnings.join(" ")).toContain(
+      "result_evidence_timestamps_ms 的时间点 500 未列入任务主证据",
+    );
+    expect(result.gate.eligibility).toBe("eligible");
   });
 
   it("maps exact controlled labels and keeps unknown values as proposals", () => {
@@ -473,5 +485,67 @@ describe("video annotation evidence policy", () => {
     expect(canonical.raw.tasks[0]!.tools).toEqual(["刀"]);
     expect(canonical.raw.coverage_segments[0]!.evidence_timestamps_ms).toEqual([0, 500]);
     expect(canonical.raw.coverage_segments[1]!.evidence_timestamps_ms).toEqual([500, 1_000]);
+  });
+  it("accepts execution_pattern/evidence_level/hand_mode uncertainty without review (Auto Gate v2)", () => {
+    const raw = rawAnnotation();
+    raw.tasks[0]!.execution_pattern = "uncertain";
+    raw.tasks[0]!.evidence_level = "uncertain";
+    raw.tasks[0]!.hand_mode = "unclear";
+    raw.tasks[0]!.completion = "uncertain";
+    raw.uncertain_fields = [
+      "tasks[0].execution_pattern",
+      "tasks[0].evidence_level",
+      "tasks[0].hand_mode",
+      "tasks[0].completion",
+    ];
+
+    const result = normalize(raw, [0, 500, 1_000]);
+
+    expect(result.gate.eligibility).toBe("eligible");
+    expect(result.gate.issues.filter((issue) => issue.level === "manual_review")).toHaveLength(0);
+    expect(result.gate.issues.filter((issue) => issue.code === "OPTIONAL_FIELD_UNCERTAINTY")).toHaveLength(4);
+  });
+
+  it("treats unclassified uncertain paths as advisory without blocking (Auto Gate v2)", () => {
+    const raw = rawAnnotation();
+    raw.uncertain_fields = ["tasks[0].mystery_field", "coverage_segments[0].visible_activity"];
+
+    const result = normalize(raw, [0, 500, 1_000]);
+
+    expect(result.gate.eligibility).toBe("eligible");
+    expect(result.gate.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "UNKNOWN_UNCERTAIN_FIELD_PATH",
+          level: "advisory",
+        }),
+      ]),
+    );
+  });
+
+  it("allows coverage beyond the task interval as a warning (Auto Gate v2)", () => {
+    const raw = rawAnnotation();
+    raw.tasks[0]!.end_ms = 500;
+    raw.tasks[0]!.evidence_timestamps_ms = [0, 500];
+    raw.tasks[0]!.result_evidence_timestamps_ms = [500];
+    raw.tasks[0]!.atomic_action_sequence = [
+      { order: 1, verb: "grasp", object: "杯子", evidence_timestamps_ms: [0, 500] },
+    ];
+    raw.coverage_segments = [
+      {
+        start_ms: 0,
+        end_ms: 1_000,
+        segment_type: "task",
+        linked_task_index: 0,
+        visible_activity: "含任务前后过渡的可见活动",
+        evidence_timestamps_ms: [0, 500, 1_000],
+      },
+    ];
+
+    const result = normalize(raw, [0, 500, 1_000]);
+
+    expect(result.gate.eligibility).toBe("eligible");
+    expect(result.validation.errors.join(" ")).not.toContain("超出所绑定任务的时间区间");
+    expect(result.validation.warnings.join(" ")).toContain("超出所绑定任务的时间区间");
   });
 });

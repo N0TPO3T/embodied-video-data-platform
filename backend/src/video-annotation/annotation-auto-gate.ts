@@ -3,7 +3,7 @@ import type {
   VideoAnnotationCandidateSuccess,
 } from "./video-annotation.js";
 
-export const ANNOTATION_AUTO_GATE_VERSION = "annotation_auto_gate_v1" as const;
+export const ANNOTATION_AUTO_GATE_VERSION = "annotation_auto_gate_v2" as const;
 
 export type AnnotationGateIssueLevel =
   | "repairable"
@@ -340,7 +340,9 @@ const OPTIONAL_UNCERTAIN_PATHS = [
   /^temporal_structure_type$/u,
   /^model_assessability$/u,
   /^assessability_reason$/u,
-  /^tasks\[\d+\]\.(?:atomic_action_sequence|completion|result_status|result_observability|result_evidence_type|visible_postcondition|failure_recovery|manipulated_objects|tools|interaction_primitives|uncertainty_reasons|confidence)(?:\.|\[|$)/u,
+  // Auto Gate v2：以下字段的枚举/Schema 本身允许 uncertain/unclear 值或允许保守输出，
+  // 模型声明其不确定不构成阻断（execution_pattern/evidence_level/hand_mode 是实测误伤源）。
+  /^tasks\[\d+\]\.(?:task_object|execution_pattern|evidence_level|hand_mode|complexity_signals|atomic_action_sequence|completion|result_status|result_observability|result_evidence_type|visible_postcondition|failure_recovery|manipulated_objects|tools|interaction_primitives|uncertainty_reasons|confidence|failure_evidence_timestamps_ms|recovery_evidence_timestamps_ms|result_evidence_timestamps_ms)(?:\.|\[|$)/u,
   /^global_limitations$/u,
 ] as const;
 
@@ -439,13 +441,15 @@ export function evaluateAnnotationAutoGate(input: {
       );
       continue;
     }
+    // Auto Gate v2：无法分类的不确定字段路径只记录为质量提示，不再阻断准入。
+    // uncertain_fields 是模型对“已给出取值”字段的不确定性声明，不改变任务可用性。
     issues.push(
       issue({
         code: "UNKNOWN_UNCERTAIN_FIELD_PATH",
-        level: "manual_review",
+        level: "advisory",
         fieldPath: path,
         taskIndex: taskIndexFromPath(path),
-        message: `无法分类的不确定字段路径：${path}`,
+        message: `无法分类的不确定字段路径（仅记录）：${path}`,
       }),
     );
   }

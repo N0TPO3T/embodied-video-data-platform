@@ -170,8 +170,8 @@ describe("qwen video annotation provider", () => {
       resolve(process.cwd(), "../docs/quality/prompts/ego-video-annotation-v2"),
     );
     const invalid = modelOutput();
-    invalid.coverage_segments[0]!.end_ms = 500;
-    invalid.coverage_segments[0]!.evidence_timestamps_ms = [0, 250, 500];
+    // coverage 引用损坏（绑定不存在的任务）仍是结构性错误，触发定向修复
+    invalid.coverage_segments[0]!.linked_task_index = 5;
     const response = (output: ReturnType<typeof modelOutput>) =>
       new Response(
         JSON.stringify({ choices: [{ message: { content: JSON.stringify(output) } }] }),
