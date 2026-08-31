@@ -49,7 +49,12 @@ describe("annotation auto-accept completion", () => {
       processingStatus: "completed",
       storageStatus: "available",
     });
-    service = new AnnotationRunService(dataSource, {} as never, {} as never);
+    service = new AnnotationRunService(
+      dataSource,
+      {} as never,
+      { enqueueForPublishedRun: vi.fn().mockResolvedValue({ taskCount: 0, created: 0, existing: 0, skipped: 0 }) } as never,
+      {} as never,
+    );
   });
 
   afterAll(async () => {

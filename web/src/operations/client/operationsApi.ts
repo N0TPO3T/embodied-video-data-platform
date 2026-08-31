@@ -4,6 +4,10 @@ import type {
   AnnotationOperationsView,
   BackendQueueSnapshot,
   BackendWorkerReclaimResult,
+  BackendTaskSegmentAsset,
+  BackendTaskSegmentAssets,
+  TaskSegmentGenerateResult,
+  TaskSegmentPreview,
 } from "../contracts";
 
 export class OperationsApiError extends Error {
@@ -92,5 +96,49 @@ export function pruneInactiveWorkers(): Promise<{ removed: number }> {
   return requestJson<{ removed: number }>(
     "/operations/workers/prune-inactive",
     { method: "POST" },
+  );
+}
+
+export function generateTaskSegments(
+  annotationRunId: string,
+): Promise<TaskSegmentGenerateResult> {
+  return requestJson<TaskSegmentGenerateResult>(
+    `/operations/annotation-runs/${encodeURIComponent(annotationRunId)}/task-segments/generate`,
+    { method: "POST" },
+  );
+}
+
+export function getTaskSegmentAssets(input: {
+  annotationRunId?: string;
+  submissionId?: string;
+  status?: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<BackendTaskSegmentAssets> {
+  const parameters = new URLSearchParams();
+  if (input.annotationRunId) parameters.set("annotationRunId", input.annotationRunId);
+  if (input.submissionId) parameters.set("submissionId", input.submissionId);
+  if (input.status) parameters.set("status", input.status);
+  parameters.set("page", String(input.page ?? 1));
+  parameters.set("pageSize", String(input.pageSize ?? 50));
+  return requestJson<BackendTaskSegmentAssets>(
+    `/operations/task-segment-assets?${parameters.toString()}`,
+  );
+}
+
+export function retryTaskSegment(
+  assetId: string,
+): Promise<{ asset: BackendTaskSegmentAsset }> {
+  return requestJson<{ asset: BackendTaskSegmentAsset }>(
+    `/operations/task-segment-assets/${encodeURIComponent(assetId)}/retry`,
+    { method: "POST" },
+  );
+}
+
+export function getTaskSegmentPreview(
+  assetId: string,
+): Promise<TaskSegmentPreview> {
+  return requestJson<TaskSegmentPreview>(
+    `/operations/task-segment-assets/${encodeURIComponent(assetId)}/preview`,
   );
 }

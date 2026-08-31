@@ -11,6 +11,7 @@ import { AuthModule } from "../auth/auth.module.js";
 import { SecurityModule } from "../security/security.module.js";
 import { AllowedOriginGuard } from "../http/allowed-origin.guard.js";
 import { SubmissionFailureFilter } from "../submissions/submission-failure.filter.js";
+import { TaskSegmentModule } from "../task-segment/task-segment.module.js";
 import { AnnotationManagementService } from "./annotation-management.service.js";
 import { AnnotationRunsController } from "./annotation-runs.controller.js";
 import { AnnotationRunService } from "./annotation-run.service.js";
@@ -27,6 +28,7 @@ import { AnnotationRunService } from "./annotation-run.service.js";
     AuditModule,
     AuthModule,
     SecurityModule,
+    TaskSegmentModule,
   ],
   controllers: [AnnotationRunsController],
   providers: [

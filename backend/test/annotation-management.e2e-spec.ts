@@ -92,9 +92,13 @@ describe("annotation management", () => {
       sizeBytes: "1000",
       rawProbe: {},
     });
-    service = new AnnotationManagementService(dataSource, {
-      record: vi.fn().mockResolvedValue(undefined),
-    } as never);
+    service = new AnnotationManagementService(
+      dataSource,
+      {
+        record: vi.fn().mockResolvedValue(undefined),
+      } as never,
+      { enqueueForPublishedRun: vi.fn().mockResolvedValue({ taskCount: 0, created: 0, existing: 0, skipped: 0 }) } as never,
+    );
   });
 
   afterAll(async () => {

@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import {
   connect,
   type ChannelModel,
@@ -14,16 +14,34 @@ import {
 } from "./media-analysis.service.js";
 import {
   assertMediaTopology,
+  assertSubmissionSourceRetentionTopology,
+  assertTaskSegmentTopology,
   EVENTS_EXCHANGE,
   MEDIA_QUEUE,
+  SUBMISSION_SOURCE_RETENTION_QUEUE,
+  SUBMISSION_SOURCE_RETENTION_ROUTING_KEY,
+  TASK_SEGMENT_QUEUE,
+  TASK_SEGMENT_ROUTING_KEY,
 } from "../messaging/rabbitmq-topology.js";
 import { WorkerHeartbeatService } from "../operations/worker-heartbeat.service.js";
+import {
+  RetryableTaskSegmentError,
+  TaskSegmentProcessor,
+} from "../task-segment/task-segment.processor.js";
+import {
+  RetryableSourceRetentionError,
+  SourceRetentionProcessor,
+} from "../task-segment/source-retention.processor.js";
 
 const RETRY_DELAYS = [5_000, 30_000, 120_000] as const;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 
 type RabbitConnector = typeof connect;
 class MediaLockBusyError extends RetryableMediaError {}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return (error instanceof Error ? error.message : fallback).slice(0, 1_000);
+}
 
 type HeartbeatState = {
   status: "idle" | "running";
@@ -49,6 +67,8 @@ export class RabbitMediaWorker {
   constructor(
     private readonly analysis: MediaAnalysisService,
     private readonly heartbeats?: WorkerHeartbeatService,
+    @Optional() private readonly taskSegments?: TaskSegmentProcessor,
+    @Optional() private readonly sourceRetention?: SourceRetentionProcessor,
   ) {}
 
   async start(
@@ -59,6 +79,8 @@ export class RabbitMediaWorker {
     this.connection = await connector(url);
     this.channel = await this.connection.createConfirmChannel();
     await assertMediaTopology(this.channel);
+    await assertTaskSegmentTopology(this.channel);
+    await assertSubmissionSourceRetentionTopology(this.channel);
     for (const [index, delay] of RETRY_DELAYS.entries()) {
       await this.channel.assertQueue(`${MEDIA_QUEUE}.retry.${index + 1}`, {
         durable: true,
@@ -69,10 +91,145 @@ export class RabbitMediaWorker {
         },
       });
     }
+    for (const [index, delay] of RETRY_DELAYS.entries()) {
+      await this.channel.assertQueue(`${TASK_SEGMENT_QUEUE}.retry.${index + 1}`, {
+        durable: true,
+        arguments: {
+          "x-message-ttl": delay,
+          "x-dead-letter-exchange": EVENTS_EXCHANGE,
+          "x-dead-letter-routing-key": TASK_SEGMENT_ROUTING_KEY,
+        },
+      });
+    }
+    for (const [index, delay] of RETRY_DELAYS.entries()) {
+      await this.channel.assertQueue(`${SUBMISSION_SOURCE_RETENTION_QUEUE}.retry.${index + 1}`, {
+        durable: true,
+        arguments: {
+          "x-message-ttl": delay,
+          "x-dead-letter-exchange": EVENTS_EXCHANGE,
+          "x-dead-letter-routing-key": SUBMISSION_SOURCE_RETENTION_ROUTING_KEY,
+        },
+      });
+    }
     await this.channel.prefetch(1);
+    if (this.taskSegments) {
+      await this.channel.consume(TASK_SEGMENT_QUEUE, (message) => {
+        if (message) void this.handleTaskSegment(message);
+      });
+    }
+    if (this.sourceRetention) {
+      await this.channel.consume(SUBMISSION_SOURCE_RETENTION_QUEUE, (message) => {
+        if (message) void this.handleSourceRetention(message);
+      });
+    }
     await this.channel.consume(MEDIA_QUEUE, (message) => {
       if (message) void this.handle(message);
     });
+  }
+
+  private async handleTaskSegment(message: ConsumeMessage): Promise<void> {
+    const channel = this.channel;
+    if (!channel || !this.taskSegments) return;
+    const retryAttempt = Number(
+      message.properties.headers?.["retry-attempt"] ?? 0,
+    );
+    let submissionId: string | null = null;
+    let taskError: string | null = null;
+    try {
+      try {
+        const payload = JSON.parse(message.content.toString("utf8")) as {
+          assetId?: unknown;
+          submissionId?: unknown;
+        };
+        if (
+          typeof payload.assetId !== "string" ||
+          typeof payload.submissionId !== "string"
+        ) {
+          throw new Error("task segment job payload is invalid");
+        }
+        submissionId = payload.submissionId;
+        await this.bestEffortHeartbeat(() => this.markTaskStarted(submissionId!));
+        await this.taskSegments.process({
+          assetId: payload.assetId,
+          recoverProcessing: retryAttempt > 0 || message.fields.redelivered,
+        });
+      } catch (error) {
+        taskError = errorMessage(error, "任务片段生成失败");
+        const retryable =
+          error instanceof RetryableTaskSegmentError ||
+          (submissionId !== null && !(error instanceof Error && error.message === "task segment job payload is invalid"));
+        if (retryable && retryAttempt < RETRY_DELAYS.length) {
+          const retryQueueNumber = retryAttempt + 1;
+          channel.sendToQueue(
+            `${TASK_SEGMENT_QUEUE}.retry.${retryQueueNumber}`,
+            message.content,
+            {
+              ...message.properties,
+              headers: {
+                ...message.properties.headers,
+                "retry-attempt": retryQueueNumber,
+              },
+              persistent: true,
+            },
+          );
+          await channel.waitForConfirms();
+        }
+      }
+    } finally {
+      if (submissionId) {
+        await this.bestEffortHeartbeat(() =>
+          this.markTaskFinished(submissionId!, taskError),
+        );
+      } else if (taskError) {
+        await this.bestEffortHeartbeat(() =>
+          this.setHeartbeatState("idle", null, null, taskError),
+        );
+      }
+      channel.ack(message);
+    }
+  }
+
+  private async handleSourceRetention(message: ConsumeMessage): Promise<void> {
+    const channel = this.channel;
+    if (!channel || !this.sourceRetention) return;
+    const retryAttempt = Number(
+      message.properties.headers?.["retry-attempt"] ?? 0,
+    );
+    try {
+      const payload = JSON.parse(message.content.toString("utf8")) as {
+        submissionId?: unknown;
+        reason?: unknown;
+      };
+      if (typeof payload.submissionId !== "string") {
+        throw new Error("source retention job payload is invalid");
+      }
+      await this.sourceRetention.process({
+        submissionId: payload.submissionId,
+        reason: typeof payload.reason === "string" ? payload.reason : "settlement",
+      });
+    } catch (error) {
+      const retryable =
+        error instanceof RetryableSourceRetentionError &&
+        retryAttempt < RETRY_DELAYS.length;
+      if (retryable) {
+        const retryQueueNumber = retryAttempt + 1;
+        channel.sendToQueue(
+          `${SUBMISSION_SOURCE_RETENTION_QUEUE}.retry.${retryQueueNumber}`,
+          message.content,
+          {
+            ...message.properties,
+            headers: {
+              ...message.properties.headers,
+              "retry-attempt": retryQueueNumber,
+            },
+            persistent: true,
+          },
+        );
+        await channel.waitForConfirms();
+      }
+    } finally {
+      channel.ack(message);
+    }
   }
 
   async close(): Promise<void> {

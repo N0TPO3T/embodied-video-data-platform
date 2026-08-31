@@ -12,6 +12,7 @@ import {
   assertAiAnnotationTopology,
   assertAiQualityTopology,
   assertMediaTopology,
+  assertTaskSegmentTopology,
   EVENTS_EXCHANGE,
 } from "./rabbitmq-topology.js";
 
@@ -76,6 +77,7 @@ export class RabbitMqMessageBusService implements MessageBusPort {
     await assertMediaTopology(channel);
     await assertAiQualityTopology(channel);
     await assertAiAnnotationTopology(channel);
+    await assertTaskSegmentTopology(channel);
     this.connection = connection;
     this.channel = channel;
     return channel;
