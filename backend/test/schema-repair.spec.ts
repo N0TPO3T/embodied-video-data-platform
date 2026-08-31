@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { repairSchemaOutput } from "../src/video-annotation/schema-repair.js";
+import {
+  repairSchemaOutput,
+  unwrapAnnotationCandidate,
+} from "../src/video-annotation/schema-repair.js";
 
 function baseOutput() {
   return {
@@ -78,6 +81,29 @@ describe("deterministic schema repair (schema-repair)", () => {
     expect((value as any).tasks[0].interaction_primitives).toEqual(["grasp"]);
     expect(changes).toHaveLength(1);
     expect(changes[0]!.code).toBe("ENUM_ARRAY_INVALID_FILTERED");
+  });
+
+  it("unwraps metadata-wrapped model output (output_contract/annotation)", () => {
+    const annotation = baseOutput();
+    const wrapped = {
+      video_id: "video-1",
+      duration_ms: 1000,
+      frame_manifest: "x",
+      frame_timestamps_ms: [0, 500],
+      annotation_context: { enabled_labels: [] },
+      requested_output_schema: "s",
+      output_contract: annotation,
+    };
+    expect(unwrapAnnotationCandidate(wrapped)).toBe(annotation);
+
+    const wrapped2 = { annotation: annotation };
+    expect(unwrapAnnotationCandidate(wrapped2)).toBe(annotation);
+
+    // 直接是标注时原样返回
+    expect(unwrapAnnotationCandidate(annotation)).toBe(annotation);
+    // 找不到时原样返回
+    const mystery = { foo: 1, bar: { baz: 2 } };
+    expect(unwrapAnnotationCandidate(mystery)).toBe(mystery);
   });
 
   it("normalizes null nullable-string fields to empty strings", () => {

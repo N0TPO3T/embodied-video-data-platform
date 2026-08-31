@@ -29,6 +29,25 @@ function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * 解包模型输出的元数据包装：部分模型会把标注对象填在 output_contract/annotation 等
+ * 子字段下（顶层为 duration_ms/frame_manifest 等元数据）。
+ * 规则：对象自身含 schema_version 则直接用；否则按常见键名找含 schema_version 的子对象；
+ * 兜底遍历所有子对象。找不到时原样返回（交由模型 schema_repair）。
+ */
+export function unwrapAnnotationCandidate(value: unknown): unknown {
+  if (!isRecord(value)) return value;
+  if (typeof value.schema_version === "string") return value;
+  for (const key of ["output_contract", "annotation", "result", "data", "output"] as const) {
+    const nested = value[key];
+    if (isRecord(nested) && typeof nested.schema_version === "string") return nested;
+  }
+  for (const nested of Object.values(value)) {
+    if (isRecord(nested) && typeof nested.schema_version === "string") return nested;
+  }
+  return value;
+}
+
 /** 枚举字段 → 保守合法值（模型输出非法枚举时降级到“证据不足”语义） */
 const ENUM_CONSERVATIVE_VALUES: Array<{ path: string; allowed: readonly string[]; fallback: string }> = [
   { path: "task_verb", allowed: TASK_VERBS, fallback: "uncertain" },

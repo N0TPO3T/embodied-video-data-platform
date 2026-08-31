@@ -17,6 +17,7 @@ import {
 } from "./video-annotation.js";
 import {
   repairSchemaOutput,
+  unwrapAnnotationCandidate,
   type SchemaRepairChange,
 } from "./schema-repair.js";
 
@@ -48,7 +49,7 @@ function parseWithDeterministicRepair(
 ): { raw: ReturnType<typeof parseRawVideoAnnotation> } | null {
   let candidate: unknown;
   try {
-    candidate = extractJson(content);
+    candidate = unwrapAnnotationCandidate(extractJson(content));
   } catch {
     return null; // 非 JSON 输出，交给模型 schema_repair
   }
@@ -416,7 +417,7 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
     }
     if (!raw) {
     try {
-      raw = parseRawVideoAnnotation(extractJson(first.content));
+      raw = parseRawVideoAnnotation(unwrapAnnotationCandidate(extractJson(first.content)));
     } catch (error) {
       const repairMessages: ChatMessage[] = [
         ...messages,
@@ -446,7 +447,7 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
       finalResponseModel = repaired.responseModel;
       totalUsage = mergeUsage(first.usage, repaired.usage);
       try {
-        raw = parseRawVideoAnnotation(extractJson(repaired.content));
+        raw = parseRawVideoAnnotation(unwrapAnnotationCandidate(extractJson(repaired.content)));
       } catch (repairError) {
         // 模型修复输出仍可能带机械性约束问题：再做一次确定性修复兜底
         const repairedDeterministic = parseWithDeterministicRepair(
@@ -531,7 +532,7 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
         repairedRaw = targetedDeterministic.raw;
       } else {
         try {
-          repairedRaw = parseRawVideoAnnotation(extractJson(repaired.content));
+          repairedRaw = parseRawVideoAnnotation(unwrapAnnotationCandidate(extractJson(repaired.content)));
         } catch (error) {
           throw new VideoAnnotationProviderError(
             `候选标注定向修复返回无效Schema：${schemaIssues(error).join("; ").slice(0, 1_500)}`,
