@@ -23,9 +23,13 @@ import type {
 import { backendSubmissionToDomain } from "../../submissions/submissionMapper";
 
 type AdminTaskTimelineItem = {
+  actions: string[];
+  completion: string;
   endMs: number;
   label: string;
+  objects: string[];
   startMs: number;
+  taskIndex: number;
 };
 
 type AdminTaskTimelineResult = {
@@ -39,6 +43,30 @@ function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value.flatMap((item) =>
+    typeof item === "string" && item.trim() ? [item.trim()] : []
+  )));
+}
+
+function taskActions(task: Record<string, unknown>): string[] {
+  const atomicActions = Array.isArray(task.atomic_action_sequence)
+    ? task.atomic_action_sequence.flatMap((value) => {
+        const action = record(value);
+        return typeof action?.verb === "string" && action.verb.trim()
+          ? [action.verb.trim()]
+          : [];
+      })
+    : [];
+  if (atomicActions.length > 0) return Array.from(new Set(atomicActions));
+  const interactions = stringList(task.interaction_primitives);
+  if (interactions.length > 0) return interactions;
+  return typeof task.task_verb === "string" && task.task_verb.trim()
+    ? [task.task_verb.trim()]
+    : [];
 }
 
 function taskTimelineResult(runs: BackendAnnotationRun[]): AdminTaskTimelineResult {
@@ -55,7 +83,7 @@ function taskTimelineResult(runs: BackendAnnotationRun[]): AdminTaskTimelineResu
         ? null
         : record(run.candidate?.effective);
     const tasks = Array.isArray(effective?.tasks) ? effective.tasks : [];
-    const items = tasks.flatMap((value) => {
+    const items = tasks.flatMap((value, taskIndex) => {
       const task = record(value);
       const startMs = Number(task?.start_ms);
       const endMs = Number(task?.end_ms);
@@ -67,7 +95,23 @@ function taskTimelineResult(runs: BackendAnnotationRun[]): AdminTaskTimelineResu
         startMs >= 0 &&
         endMs > startMs &&
         label
-        ? [{ startMs, endMs, label }]
+        ? [{
+            actions: taskActions(task!),
+            completion: typeof task?.effective_completion === "string"
+              ? task.effective_completion
+              : typeof task?.completion === "string"
+                ? task.completion
+                : "",
+            endMs,
+            label,
+            objects: stringList(task?.manipulated_objects).length > 0
+              ? stringList(task?.manipulated_objects)
+              : typeof task?.task_object === "string" && task.task_object.trim()
+                ? [task.task_object.trim()]
+                : [],
+            startMs,
+            taskIndex,
+          }]
         : [];
     });
     return {
@@ -407,6 +451,8 @@ export function SubmissionDetail({
             annotationRunId={timeline.runId}
             submissionId={id}
             canGenerate
+            presentation="structured"
+            taskAnnotations={timeline.items}
           />
         </section>
       ) : null}

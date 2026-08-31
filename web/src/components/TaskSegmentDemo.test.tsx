@@ -165,6 +165,36 @@ describe("TaskSegmentDemo", () => {
     expect(await screen.findByText("尚未生成任务片段。")).toBeInTheDocument();
   });
 
+  it("shows structured annotation without technical trace fields", async () => {
+    render(
+      <TaskSegmentDemo
+        annotationRunId="RUN-SEG"
+        submissionId="SUB-SEG"
+        canGenerate
+        presentation="structured"
+        taskAnnotations={[
+          {
+            taskIndex: 0,
+            objects: ["冰箱门", "冰箱"],
+            actions: ["grasp", "open", "release"],
+            completion: "complete",
+          },
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText("1.0s～2.5s 打开冰箱")).toBeInTheDocument();
+    expect(
+      screen.getByText(/对象：冰箱门、冰箱.*动作：抓取、打开、松开.*完成状态：completed/u),
+    ).toBeInTheDocument();
+    expect(screen.getByText("切片就绪")).toBeInTheDocument();
+    expect(screen.queryByText(/Run：/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Submission：/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/MinIO Key：/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/SHA-256：/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/技术校验 warning/u)).not.toBeInTheDocument();
+  });
+
   it("renders queued and processing assets without exposing playback or retry", async () => {
     api.list.mockResolvedValue({
       assets: [

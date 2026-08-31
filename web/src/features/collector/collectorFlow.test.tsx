@@ -837,10 +837,17 @@ describe("collector journey", () => {
     expect(await screen.findByRole("region", { name: "任务时间轴" })).toBeVisible();
     expect(await screen.findByText("5.1s～11.9s")).toBeVisible();
     expect(screen.getByText("“整理餐具”")).toBeVisible();
-    expect(await screen.findByRole("region", { name: "任务切片" })).toBeVisible();
-    expect(await screen.findByText("Task #0 · 整理餐具")).toBeVisible();
-    expect(screen.getByText("00:05.100 → 00:11.900")).toBeVisible();
-    expect(screen.getByText("complete / success · 整理")).toBeVisible();
+    const segmentRegion = await screen.findByRole("region", { name: "任务切片" });
+    expect(segmentRegion).toBeVisible();
+    expect(await screen.findByText("5.1s～11.9s 整理餐具")).toBeVisible();
+    expect(
+      screen.getByText(/对象：物品.*动作：抓取、放置.*完成状态：completed/u),
+    ).toBeVisible();
+    expect(segmentRegion).toHaveTextContent("切片就绪");
+    expect(segmentRegion).not.toHaveTextContent("Run：");
+    expect(segmentRegion).not.toHaveTextContent("Submission：");
+    expect(segmentRegion).not.toHaveTextContent("MinIO Key：");
+    expect(segmentRegion).not.toHaveTextContent("SHA-256：");
     expect(listAnnotationRuns).toHaveBeenCalledWith("SUB-001");
     expect(taskSegmentApi.getTaskSegmentAssets).toHaveBeenCalledWith({
       annotationRunId: "ANR-FORMAL-001",
