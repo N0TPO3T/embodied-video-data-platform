@@ -1,22 +1,25 @@
 import type { ChannelModel, ConfirmChannel, ConsumeMessage } from "amqplib";
 import { vi } from "vitest";
 
-import { AI_ANNOTATION_QUEUE } from "../src/messaging/rabbitmq-topology.js";
+import {
+  AI_ANNOTATION_QUEUE,
+  TASK_BOUNDARY_REFINEMENT_QUEUE,
+} from "../src/messaging/rabbitmq-topology.js";
 import {
   RetryableAnnotationRunError,
 } from "../src/video-annotation/annotation-run.service.js";
 import { RabbitAnnotationWorker } from "../src/video-annotation/rabbit-annotation-worker.js";
 
 function rabbitHarness() {
-  let consumer: ((message: ConsumeMessage | null) => void) | undefined;
+  const consumers = new Map<string, (message: ConsumeMessage | null) => void>();
   const channel = {
     assertExchange: vi.fn().mockResolvedValue(undefined),
     assertQueue: vi.fn().mockResolvedValue(undefined),
     bindQueue: vi.fn().mockResolvedValue(undefined),
     prefetch: vi.fn().mockResolvedValue(undefined),
     consume: vi.fn().mockImplementation(
-      async (_queue: string, handler: (message: ConsumeMessage | null) => void) => {
-        consumer = handler;
+      async (queue: string, handler: (message: ConsumeMessage | null) => void) => {
+        consumers.set(queue, handler);
         return { consumerTag: "annotation-test" };
       },
     ),
@@ -33,7 +36,7 @@ function rabbitHarness() {
   return {
     channel,
     connector: vi.fn().mockResolvedValue(connection),
-    consumer: () => consumer,
+    consumer: (queue = AI_ANNOTATION_QUEUE) => consumers.get(queue),
   };
 }
 
@@ -47,13 +50,22 @@ describe("annotation worker", () => {
       stop: vi.fn().mockResolvedValue(undefined),
       recordTaskFinished: vi.fn().mockResolvedValue(undefined),
     };
-    const worker = new RabbitAnnotationWorker(runs as never, heartbeats as never);
+    const boundaryRefinements = { process: vi.fn(), forceSystemFailed: vi.fn() };
+    const worker = new RabbitAnnotationWorker(
+      runs as never,
+      boundaryRefinements as never,
+      heartbeats as never,
+    );
 
     await worker.start("amqp://test", 2, rabbit.connector);
 
     expect(rabbit.channel.prefetch).toHaveBeenCalledWith(2);
     expect(rabbit.channel.consume).toHaveBeenCalledWith(
       AI_ANNOTATION_QUEUE,
+      expect.any(Function),
+    );
+    expect(rabbit.channel.consume).toHaveBeenCalledWith(
+      TASK_BOUNDARY_REFINEMENT_QUEUE,
       expect.any(Function),
     );
     expect(heartbeats.start).toHaveBeenCalledWith("ai_annotation");
@@ -66,7 +78,7 @@ describe("annotation worker", () => {
     const runs = {
       process: vi.fn().mockRejectedValue(new RetryableAnnotationRunError("retry")),
     };
-    const worker = new RabbitAnnotationWorker(runs as never);
+    const worker = new RabbitAnnotationWorker(runs as never, {} as never);
     await worker.start("amqp://test", 1, rabbit.connector);
 
     const first = {
@@ -104,7 +116,7 @@ describe("annotation worker", () => {
   it("acks duplicate lock-busy delivery without creating an infinite retry loop", async () => {
     const rabbit = rabbitHarness();
     const runs = { process: vi.fn().mockResolvedValue("lock_busy") };
-    const worker = new RabbitAnnotationWorker(runs as never);
+    const worker = new RabbitAnnotationWorker(runs as never, {} as never);
     await worker.start("amqp://test", 1, rabbit.connector);
     const message = {
       content: Buffer.from(JSON.stringify({ runId: "ANR-BUSY" })),

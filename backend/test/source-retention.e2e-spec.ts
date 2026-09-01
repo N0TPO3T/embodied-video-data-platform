@@ -8,6 +8,7 @@ import { AnnotationRunEntity } from "../src/database/entities/annotation-run.ent
 import { AuditLogEntity } from "../src/database/entities/audit-log.entity.js";
 import { MediaMetadataEntity } from "../src/database/entities/media-metadata.entity.js";
 import { SubmissionEntity } from "../src/database/entities/submission.entity.js";
+import { TaskBoundaryRefinementEntity } from "../src/database/entities/task-boundary-refinement.entity.js";
 import { TaskSegmentAssetEntity } from "../src/database/entities/task-segment-asset.entity.js";
 import { TeamEntity } from "../src/database/entities/team.entity.js";
 import { UserEntity } from "../src/database/entities/user.entity.js";
@@ -209,6 +210,63 @@ describe("source retention (SEG-DEC-006a)", () => {
       RetryableSourceRetentionError,
     );
     expect(storage.objects.has("uploads/ret-busy.mp4")).toBe(true);
+  });
+
+  it("defers archive while boundary refinement is queued even if the segment is terminal", async () => {
+    await seedSubmission("SUB-RET-REFINING", "uploads/ret-refining.mp4");
+    storage.objects.set("uploads/ret-refining.mp4", Buffer.from("source"));
+    await seedReadyAsset("SUB-RET-REFINING", "RUN-RET-REFINING");
+    const refinement: TaskBoundaryRefinementEntity = await dataSource
+      .getRepository(TaskBoundaryRefinementEntity)
+      .save({
+        id: "TBR-RET-REFINING",
+        submissionId: "SUB-RET-REFINING",
+        annotationRunId: "RUN-RET-REFINING",
+        taskIndex: 0,
+        policyVersion: "task_boundary_refinement_policy_v1",
+        promptVersion: "task_boundary_refinement_prompt_v1",
+        modelVersion: "qwen-demo",
+        coarseStartMs: 0,
+        coarseEndMs: 4_000,
+        refinedStartMs: null,
+        refinedEndMs: null,
+        startStatus: "unchanged",
+        endStatus: "unchanged",
+        startReasonCode: null,
+        endReasonCode: null,
+        sampleManifest: null,
+        rawModelOutput: null,
+        validationIssues: [],
+        inputTokens: null,
+        outputTokens: null,
+        modelLatencyMs: null,
+        executionStatus: "queued",
+        failureCode: null,
+        failureMessage: null,
+        completedAt: null,
+      });
+    const asset = await dataSource.getRepository(TaskSegmentAssetEntity).findOneByOrFail({
+      annotationRunId: "RUN-RET-REFINING",
+    });
+    asset.boundaryRefinementId = refinement.id;
+    asset.boundaryRefinementPolicyVersion = refinement.policyVersion;
+    await dataSource.getRepository(TaskSegmentAssetEntity).save(asset);
+
+    await expect(processor.process({
+      submissionId: "SUB-RET-REFINING",
+      reason: "settlement:TEST",
+    })).rejects.toBeInstanceOf(RetryableSourceRetentionError);
+    expect(storage.objects.has("uploads/ret-refining.mp4")).toBe(true);
+
+    refinement.executionStatus = "fallback";
+    refinement.startStatus = "failed";
+    refinement.endStatus = "failed";
+    refinement.completedAt = new Date();
+    await dataSource.getRepository(TaskBoundaryRefinementEntity).save(refinement);
+    await expect(processor.process({
+      submissionId: "SUB-RET-REFINING",
+      reason: "settlement:TEST",
+    })).resolves.toBe("archived");
   });
 
   it("archives the source object after settlement when all segments are final", async () => {
