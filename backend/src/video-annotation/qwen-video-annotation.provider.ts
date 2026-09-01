@@ -59,7 +59,8 @@ function parseWithDeterministicRepair(
   if (repaired.changes.length > 0) structuralRepairs.push(...repaired.changes);
   try {
     return { raw: parseRawVideoAnnotation(repaired.value) };
-  } catch {
+  } catch (error) {
+    console.log("[repair-dbg] parse still fails after repair; changes:", repaired.changes.map((c) => c.code), "issues:", JSON.stringify((error as Error & { issues?: unknown }).issues ?? String(error)).slice(0, 1500));
     return null;
   }
 }
@@ -116,6 +117,9 @@ export type VideoAnnotationRequest = {
     name: string;
     type: "scene" | "action" | "object";
   }>;
+  /** 重跑旧 Run 时按 Run 快照版本生成 normalized 结果（默认当前常量） */
+  schemaVersion?: string;
+  policyVersion?: string;
 };
 
 export interface VideoAnnotationProvider {
@@ -489,6 +493,8 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
       ...(totalUsage ? { usage: totalUsage } : {}),
       repairs: [...schemaRepairIssues(structuralRepairs), ...canonical.repairs],
       enabledLabels: request.enabledLabels,
+      schemaVersionOverride: request.schemaVersion,
+      policyVersionOverride: request.policyVersion,
     });
     const retryableIssues = unresolvedRetryableIssues(normalized.gate);
     if (retryableIssues.length > 0) {
@@ -569,6 +575,8 @@ export class QwenVideoAnnotationProvider implements VideoAnnotationProvider {
         ...(totalUsage ? { usage: totalUsage } : {}),
         repairs: [...schemaRepairIssues(structuralRepairs), ...resolvedIssues, ...canonical.repairs],
         enabledLabels: request.enabledLabels,
+        schemaVersionOverride: request.schemaVersion,
+        policyVersionOverride: request.policyVersion,
       });
       if (unresolvedRetryableIssues(normalized.gate).length > 0) {
         throw new VideoAnnotationProviderError(
