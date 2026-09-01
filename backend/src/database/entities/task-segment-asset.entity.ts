@@ -19,6 +19,11 @@ export type TaskSegmentGenerationStatus =
   | "failed"
   | "skipped";
 
+export type TaskSegmentBoundarySource =
+  | "coarse"
+  | "refined"
+  | "coarse_fallback";
+
 @Entity({ name: "task_segment_assets" })
 @Index("uq_task_segment_assets_run_task", ["annotationRunId", "taskIndex"], {
   unique: true,
@@ -78,6 +83,26 @@ export class TaskSegmentAssetEntity {
 
   @Column({ name: "source_end_ms", type: "double precision" })
   sourceEndMs!: number;
+
+  @Column({ name: "boundary_refinement_id", type: "varchar", length: 64, nullable: true })
+  boundaryRefinementId: string | null = null;
+
+  @Column({ name: "refined_start_ms", type: "double precision", nullable: true })
+  refinedStartMs: number | null = null;
+
+  @Column({ name: "refined_end_ms", type: "double precision", nullable: true })
+  refinedEndMs: number | null = null;
+
+  @Column({ name: "boundary_source", type: "varchar", length: 24, default: "coarse" })
+  boundarySource: TaskSegmentBoundarySource = "coarse";
+
+  @Column({
+    name: "boundary_refinement_policy_version",
+    type: "varchar",
+    length: 80,
+    nullable: true,
+  })
+  boundaryRefinementPolicyVersion: string | null = null;
 
   @Column({ name: "clip_start_ms", type: "double precision" })
   clipStartMs!: number;
