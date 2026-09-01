@@ -556,6 +556,13 @@ export class TaskBoundaryRefinementProcessor {
     });
     asset.clipStartMs = target.clipStartMs;
     asset.clipEndMs = target.clipEndMs;
+    asset.requestedStartMs = target.clipStartMs;
+    asset.requestedEndMs = target.clipEndMs;
+    asset.actualStartMs = null;
+    asset.actualEndMs = null;
+    asset.validationStatus = "pending";
+    asset.validationFailureCode = null;
+    asset.validationFailureMessage = null;
     if (target.tooShort) {
       asset.generationStatus = "skipped";
       asset.failureCode = "TASK_TOO_SHORT";
