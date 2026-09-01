@@ -261,6 +261,22 @@ export type BackendTaskSegmentAsset = {
   resultStatus: string;
   sourceStartMs: number;
   sourceEndMs: number;
+  coarseStartMs: number;
+  coarseEndMs: number;
+  refinedStartMs: number | null;
+  refinedEndMs: number | null;
+  actualClipStartMs: number | null;
+  actualClipEndMs: number | null;
+  boundarySource: "coarse" | "refined" | "coarse_fallback";
+  boundaryRefinementId: string | null;
+  boundaryRefinementStatus:
+    | "queued"
+    | "running"
+    | "succeeded"
+    | "fallback"
+    | "system_failed"
+    | null;
+  boundaryRefinementPolicyVersion: string | null;
   clipStartMs: number;
   clipEndMs: number;
   coverageSnapshot: unknown;
@@ -282,7 +298,7 @@ export type BackendTaskSegmentAsset = {
   failureCode: string | null;
   failureMessage: string | null;
   usageStatus: "internal_only";
-  generationPolicyVersion: "task_segment_demo_policy_v1";
+  generationPolicyVersion: string;
   createdAt: number;
   startedAt: number | null;
   completedAt: number | null;

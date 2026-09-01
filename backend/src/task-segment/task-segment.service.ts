@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { Inject, Injectable } from "@nestjs/common";
-import { DataSource, type EntityManager } from "typeorm";
+import { DataSource, In, type EntityManager } from "typeorm";
 
 import type { PublicUser } from "../auth/auth.types.js";
 import { AnnotationReviewEntity } from "../database/entities/annotation-review.entity.js";
@@ -9,18 +9,27 @@ import { AnnotationRunEntity } from "../database/entities/annotation-run.entity.
 import { JobOutboxEntity } from "../database/entities/job-outbox.entity.js";
 import { MediaMetadataEntity } from "../database/entities/media-metadata.entity.js";
 import { SubmissionEntity } from "../database/entities/submission.entity.js";
+import { TaskBoundaryRefinementEntity } from "../database/entities/task-boundary-refinement.entity.js";
 import {
   TaskSegmentAssetEntity,
   type TaskSegmentGenerationStatus,
 } from "../database/entities/task-segment-asset.entity.js";
 import { acceptedAnnotationRun } from "../delivery/delivery-annotation.js";
 import { OperationsFailure } from "../operations/operations-failure.js";
-import { TASK_SEGMENT_ROUTING_KEY } from "../messaging/rabbitmq-topology.js";
+import {
+  TASK_BOUNDARY_REFINEMENT_ROUTING_KEY,
+  TASK_SEGMENT_ROUTING_KEY,
+} from "../messaging/rabbitmq-topology.js";
 import {
   OBJECT_STORAGE,
   type ObjectStoragePort,
 } from "../storage/object-storage.port.js";
 import type { TaskSegmentQueryDto } from "./dto/task-segment-query.dto.js";
+import {
+  TASK_BOUNDARY_REFINEMENT_POLICY_VERSION,
+  TASK_BOUNDARY_REFINEMENT_PROMPT_VERSION,
+  taskBoundaryRefinementEnabled,
+} from "./task-boundary-refinement.policy.js";
 
 export const TASK_SEGMENT_GENERATION_POLICY_VERSION =
   "task_segment_v1_policy_v1" as const;
@@ -54,7 +63,10 @@ function requireAdmin(actor: PublicUser): void {
   }
 }
 
-function publicAsset(asset: TaskSegmentAssetEntity) {
+function publicAsset(
+  asset: TaskSegmentAssetEntity,
+  boundaryRefinementStatus: string | null = null,
+) {
   return {
     id: asset.id,
     submissionId: asset.submissionId,
@@ -71,6 +83,16 @@ function publicAsset(asset: TaskSegmentAssetEntity) {
     resultStatus: asset.resultStatus,
     sourceStartMs: asset.sourceStartMs,
     sourceEndMs: asset.sourceEndMs,
+    coarseStartMs: asset.sourceStartMs,
+    coarseEndMs: asset.sourceEndMs,
+    refinedStartMs: asset.refinedStartMs,
+    refinedEndMs: asset.refinedEndMs,
+    actualClipStartMs: asset.generationStatus === "ready" ? asset.clipStartMs : null,
+    actualClipEndMs: asset.generationStatus === "ready" ? asset.clipEndMs : null,
+    boundarySource: asset.boundarySource,
+    boundaryRefinementId: asset.boundaryRefinementId,
+    boundaryRefinementPolicyVersion: asset.boundaryRefinementPolicyVersion,
+    boundaryRefinementStatus,
     clipStartMs: asset.clipStartMs,
     clipEndMs: asset.clipEndMs,
     coverageSnapshot: asset.coverageSnapshot,
@@ -162,7 +184,21 @@ function timestampWarnings(input: {
   return warnings;
 }
 
-async function enqueueAsset(
+export function taskSegmentTargetBounds(input: {
+  startMs: number;
+  endMs: number;
+  durationMs: number;
+}): { clipStartMs: number; clipEndMs: number; tooShort: boolean } {
+  const clipStartMs = Math.max(0, input.startMs - TASK_SEGMENT_PADDING_MS);
+  const clipEndMs = Math.min(input.durationMs, input.endMs + TASK_SEGMENT_PADDING_MS);
+  return {
+    clipStartMs,
+    clipEndMs,
+    tooShort: clipEndMs - clipStartMs < TASK_SEGMENT_MIN_CLIP_MS,
+  };
+}
+
+export async function enqueueTaskSegmentAsset(
   manager: EntityManager,
   asset: TaskSegmentAssetEntity,
   now = new Date(),
@@ -188,6 +224,42 @@ async function enqueueAsset(
     aggregateType: "task_segment_asset",
     aggregateId: asset.id,
     eventType: TASK_SEGMENT_ROUTING_KEY,
+    payload,
+    status: "pending",
+    attempts: 0,
+    availableAt: now,
+  });
+}
+
+async function enqueueBoundaryRefinement(
+  manager: EntityManager,
+  refinement: TaskBoundaryRefinementEntity,
+  now = new Date(),
+): Promise<void> {
+  const repository = manager.getRepository(JobOutboxEntity);
+  const existing = await repository.findOneBy({
+    eventType: TASK_BOUNDARY_REFINEMENT_ROUTING_KEY,
+    aggregateId: refinement.id,
+  });
+  const payload = {
+    refinementId: refinement.id,
+    submissionId: refinement.submissionId,
+  };
+  if (existing) {
+    existing.aggregateType = "task_boundary_refinement";
+    existing.payload = payload;
+    existing.status = "pending";
+    existing.availableAt = now;
+    existing.publishedAt = null;
+    existing.lastError = null;
+    await repository.save(existing);
+    return;
+  }
+  await repository.save({
+    id: `JOB-${randomUUID()}`,
+    aggregateType: "task_boundary_refinement",
+    aggregateId: refinement.id,
+    eventType: TASK_BOUNDARY_REFINEMENT_ROUTING_KEY,
     payload,
     status: "pending",
     attempts: 0,
@@ -279,6 +351,8 @@ export class TaskSegmentService {
       throw new OperationsFailure("SOURCE_METADATA_INVALID", "原视频时长无效", 409);
     }
     const repository = manager.getRepository(TaskSegmentAssetEntity);
+    const refinementRepository = manager.getRepository(TaskBoundaryRefinementEntity);
+    const refinementEnabled = taskBoundaryRefinementEnabled();
     const existing = await repository.findBy({ annotationRunId: run.id });
     const existingByTask = new Map(existing.map((asset) => [asset.taskIndex, asset]));
     let created = 0;
@@ -316,11 +390,12 @@ export class TaskSegmentService {
         generationStatus = "skipped";
         failureCode = "TASK_STATUS_UNCERTAIN";
         failureMessage = `Task ${taskIndex} 的 completion=uncertain（采样不足以区分），不入库`;
-      } else {
+      } else if (!refinementEnabled) {
         // SEG-DEC-002：前后各 0.5s padding，clamp 到视频范围
-        clipStartMs = Math.max(0, startMs - TASK_SEGMENT_PADDING_MS);
-        clipEndMs = Math.min(durationMs, endMs + TASK_SEGMENT_PADDING_MS);
-        if (clipEndMs - clipStartMs < TASK_SEGMENT_MIN_CLIP_MS) {
+        const target = taskSegmentTargetBounds({ startMs, endMs, durationMs });
+        clipStartMs = target.clipStartMs;
+        clipEndMs = target.clipEndMs;
+        if (target.tooShort) {
           generationStatus = "skipped";
           failureCode = "TASK_TOO_SHORT";
           failureMessage =
@@ -331,6 +406,44 @@ export class TaskSegmentService {
       const linkedCoverage = coverage.filter(
         (segment) => segment.linked_task_index === taskIndex,
       );
+      let refinement: TaskBoundaryRefinementEntity | null = null;
+      if (
+        refinementEnabled &&
+        startMs >= 0 &&
+        endMs > startMs &&
+        endMs <= durationMs
+      ) {
+        const refinementTerminal = completion === "uncertain";
+        refinement = refinementRepository.create({
+          id: `TBR-${randomUUID()}`,
+          submissionId: submission.id,
+          annotationRunId: run.id,
+          taskIndex,
+          policyVersion: TASK_BOUNDARY_REFINEMENT_POLICY_VERSION,
+          promptVersion: TASK_BOUNDARY_REFINEMENT_PROMPT_VERSION,
+          modelVersion: run.model ?? "unknown",
+          coarseStartMs: startMs,
+          coarseEndMs: endMs,
+          refinedStartMs: null,
+          refinedEndMs: null,
+          startStatus: refinementTerminal ? "failed" : "unchanged",
+          endStatus: refinementTerminal ? "failed" : "unchanged",
+          startReasonCode: null,
+          endReasonCode: null,
+          sampleManifest: null,
+          rawModelOutput: null,
+          validationIssues: refinementTerminal
+            ? ["completion=uncertain，按正式规则不生成切片，无需调用边界精修模型"]
+            : [],
+          executionStatus: refinementTerminal ? "fallback" : "queued",
+          failureCode: refinementTerminal ? "TASK_STATUS_UNCERTAIN" : null,
+          failureMessage: refinementTerminal
+            ? "completion=uncertain，边界精修不改变现有跳过规则"
+            : null,
+          completedAt: refinementTerminal ? new Date() : null,
+        });
+        await refinementRepository.save(refinement);
+      }
       const asset = repository.create({
         id: `TSA-${randomUUID()}`,
         submissionId: submission.id,
@@ -347,6 +460,12 @@ export class TaskSegmentService {
         resultStatus: stringValue(task.effective_result_status ?? task.result_status, "unknown"),
         sourceStartMs: startMs,
         sourceEndMs: endMs,
+        boundaryRefinementId: refinement?.id ?? null,
+        refinedStartMs: null,
+        refinedEndMs: null,
+        boundarySource:
+          refinement?.executionStatus === "fallback" ? "coarse_fallback" : "coarse",
+        boundaryRefinementPolicyVersion: refinement?.policyVersion ?? null,
         clipStartMs,
         clipEndMs,
         coverageSnapshot: jsonSnapshot(linkedCoverage),
@@ -372,7 +491,13 @@ export class TaskSegmentService {
         generationPolicyVersion: TASK_SEGMENT_GENERATION_POLICY_VERSION,
       });
       await repository.save(asset);
-      if (generationStatus === "queued") await enqueueAsset(manager, asset);
+      if (generationStatus === "queued") {
+        if (refinement?.executionStatus === "queued") {
+          await enqueueBoundaryRefinement(manager, refinement);
+        } else if (!refinementEnabled) {
+          await enqueueTaskSegmentAsset(manager, asset);
+        }
+      }
       else skipped += 1;
       created += 1;
     }
@@ -403,7 +528,7 @@ export class TaskSegmentService {
       current.startedAt = null;
       current.completedAt = null;
       await repository.save(current);
-      await enqueueAsset(manager, current);
+      await enqueueTaskSegmentAsset(manager, current);
       return current;
     });
     return { asset: publicAsset(asset) };
@@ -433,8 +558,26 @@ export class TaskSegmentService {
       query.andWhere("asset.generationStatus = :status", { status: input.status });
     }
     const [assets, total] = await query.getManyAndCount();
+    const refinementIds = assets.flatMap((asset) =>
+      asset.boundaryRefinementId ? [asset.boundaryRefinementId] : [],
+    );
+    const refinements = refinementIds.length > 0
+      ? await this.dataSource.getRepository(TaskBoundaryRefinementEntity).findBy({
+          id: In(refinementIds),
+        })
+      : [];
+    const refinementStatus = new Map(
+      refinements.map((refinement) => [refinement.id, refinement.executionStatus]),
+    );
     return {
-      assets: assets.map(publicAsset),
+      assets: assets.map((asset) =>
+        publicAsset(
+          asset,
+          asset.boundaryRefinementId
+            ? refinementStatus.get(asset.boundaryRefinementId) ?? null
+            : null,
+        ),
+      ),
       pagination: {
         page,
         pageSize,
@@ -448,7 +591,12 @@ export class TaskSegmentService {
     requireAdmin(actor);
     const asset = await this.dataSource.getRepository(TaskSegmentAssetEntity).findOneBy({ id: assetId });
     if (!asset) throw new OperationsFailure("NOT_FOUND", "任务片段资产不存在", 404);
-    return { asset: publicAsset(asset) };
+    const refinement = asset.boundaryRefinementId
+      ? await this.dataSource.getRepository(TaskBoundaryRefinementEntity).findOneBy({
+          id: asset.boundaryRefinementId,
+        })
+      : null;
+    return { asset: publicAsset(asset, refinement?.executionStatus ?? null) };
   }
 
   async preview(actor: PublicUser, assetId: string) {
