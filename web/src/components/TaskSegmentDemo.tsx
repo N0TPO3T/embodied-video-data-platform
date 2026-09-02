@@ -171,6 +171,10 @@ export function TaskSegmentDemo({
     return () => window.clearInterval(timer);
   }, [hasActiveAssets, load]);
 
+  const displayedAssets = structured
+    ? [...assets].sort((left, right) => left.taskIndex - right.taskIndex || left.clipStartMs - right.clipStartMs)
+    : assets;
+
   async function generate() {
     try {
       setSaving(true);
@@ -260,7 +264,7 @@ export function TaskSegmentDemo({
         <p>尚未生成任务片段。</p>
       ) : (
         <div className="task-segment-list">
-          {assets.map((asset) => {
+          {displayedAssets.map((asset) => {
             const currentStatus = status(asset, structured);
             const annotation = annotationsByTask.get(asset.taskIndex);
             const objects = annotation?.objects.length
@@ -278,7 +282,7 @@ export function TaskSegmentDemo({
               <fieldset className="issue-editor task-segment-card" key={asset.id}>
                 <legend>
                   {structured
-                    ? `${compactTimestamp(asset.clipStartMs)}～${compactTimestamp(asset.clipEndMs)} ${asset.taskLabel}`
+                    ? <><span className="submission-task-number">任务 {asset.taskIndex + 1}</span>{" "}<span>{compactTimestamp(asset.clipStartMs)}～{compactTimestamp(asset.clipEndMs)} {asset.taskLabel}</span></>
                     : `Task #${asset.taskIndex} · ${asset.taskLabel}`}
                 </legend>
                 <div className="issue-editor-heading">

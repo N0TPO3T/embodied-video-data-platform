@@ -910,6 +910,11 @@ describe("collector journey", () => {
 
     const notice = await screen.findByRole("region", { name: "人工复核原因" });
     expect(notice.closest(".submission-detail-page")).not.toBeNull();
+    expect(notice.querySelector("details")).not.toHaveAttribute("open");
+    expect(within(notice).getByText("共 7 项待核实，展开查看完整原因")).toBeVisible();
+    expect(within(notice).getByText(reviewReasons[0])).not.toBeVisible();
+    await user.click(within(notice).getByText("该视频需要人工复核"));
+    expect(notice.querySelector("details")).toHaveAttribute("open");
     expect(within(notice).getAllByRole("listitem")).toHaveLength(reviewReasons.length);
     expect(notice).toHaveTextContent(reviewReasons[0]);
     expect(notice).toHaveTextContent("第一人称与构图因垂直俯拍角度扣分较多");
@@ -925,6 +930,8 @@ describe("collector journey", () => {
 
     expect(screen.getAllByText("视频与帧质量/分辨率偏低 扣分缺少证据时间点")).toHaveLength(2);
     expect(document.body).not.toHaveTextContent(/RESOLUTION_LOW|TASK_SCENE_UNDEFINED|NON_FIRST_PERSON|frame_and_video_quality|task_authenticity_completeness|\[object Object\]|D[1-5]维度/);
+    await user.click(within(notice).getByText("该视频需要人工复核"));
+    expect(within(notice).getByText(reviewReasons[0])).not.toBeVisible();
     expect(JSON.stringify(submission)).toBe(originalSnapshot);
   });
 
@@ -959,9 +966,14 @@ describe("collector journey", () => {
     expect(await screen.findByText("5.1s～11.9s")).toBeVisible();
     expect(screen.getByText("“整理餐具”")).toBeVisible();
     expect(screen.getByRole("region", { name: "视频介绍" })).toHaveTextContent("整理物品");
+    const videoColumn = screen.getByRole("region", { name: "视频介绍" }).closest(".submission-video-column");
+    expect(videoColumn).not.toBeNull();
+    expect(videoColumn?.querySelector("video")).not.toBeNull();
     const segmentRegion = await screen.findByRole("region", { name: "任务切片" });
     expect(segmentRegion).toBeVisible();
     expect(await screen.findByText("5.1s～11.9s 整理餐具")).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "任务时间轴" })).getByText("任务 1")).toBeVisible();
+    expect(within(segmentRegion).getByText("任务 1")).toBeVisible();
     // 结构化字段：标签与值分开展示
     expect(screen.getByText("对象")).toBeVisible();
     expect(screen.getByText("物品")).toBeVisible();

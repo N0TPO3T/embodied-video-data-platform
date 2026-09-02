@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, CopyCheck, FileVideo } from "lucide-react";
+import { ArrowLeft, ChevronDown, CopyCheck, FileVideo } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { dimensionLabel, hardVetoReasonLabel } from "../../ai-quality/dimensionLabels";
@@ -423,7 +423,15 @@ export function SubmissionDetail({
   return (
     <div className="page-stack submission-detail-page">
       <button className="back-page" onClick={() => navigate(backPath)}><ArrowLeft size={16} />{backLabel}</button>
-      <div className="page-heading"><div><p className="page-kicker">{item.id}</p><h1>{item.fileName}</h1><span>{item.createdAt} · {item.resolution} · {item.sizeMb} MB</span></div><StatusBadge label={label} tone={tone} /></div>
+      <div className="page-heading">
+        <div>
+          <p className="page-kicker">视频详情</p>
+          <h1>{item.fileName}</h1>
+          <span>{item.createdAt} · {item.resolution} · {item.sizeMb} MB</span>
+          <p className="submission-reference">记录编号：{item.id}</p>
+        </div>
+        <StatusBadge label={label} tone={tone} />
+      </div>
       {item.assetStatus === "quarantined" && <div className="form-message error">该视频已进入敏感隔离区：{item.quarantine?.reason ?? "敏感内容隔离"}</div>}
       {item.storageStatus === "deleted" && <div className="form-message error">该视频对象已删除：{item.storage?.deleteReason ?? "对象已删除"}</div>}
       {item.storageStatus === "delete_pending" && <div className="form-message warning">该视频对象正在删除，完成前不可预览或重新处理。</div>}
@@ -431,32 +439,37 @@ export function SubmissionDetail({
       {item.qualityResult?.status === "review_pending" &&
         reviewReasons.length > 0 ? (
         <section className="form-message warning submission-review-notice" aria-label="人工复核原因">
-          <CopyCheck size={18} aria-hidden="true" />
-          <div>
-            <strong>该视频需要人工复核</strong>
+          <details>
+            <summary>
+              <CopyCheck size={18} aria-hidden="true" />
+              <span><strong>该视频需要人工复核</strong><small>共 {reviewReasons.length} 项待核实，展开查看完整原因</small></span>
+              <ChevronDown size={18} aria-hidden="true" />
+            </summary>
             <ul>
               {reviewReasons.map((reason, index) => (
                 <li key={`qc-reason-${index}`}>{reason}</li>
               ))}
             </ul>
-          </div>
+          </details>
         </section>
       ) : null}
       <div className="detail-grid report-layout">
+        <div className="submission-video-column">
         <section className="video-preview">{preview ? <><video controls preload="metadata" poster={preview.thumbnail?.url} aria-label={`${preview.fileName} 预览`}>{preview.hls ? <source src={preview.hls.url} type={preview.hls.contentType} /> : null}<source src={preview.url} type={preview.contentType} /></video><span>{preview.hls ? `${preview.hls.qualities.map((quality) => quality.quality).join(" / ")}` : `${Math.floor(item.durationSeconds / 60)}:${String(item.durationSeconds % 60).padStart(2, "0")}`}</span></> : <div><FileVideo size={42} /><strong>{previewState === "loading" ? "正在生成预览地址" : "已保存原始视频"}</strong><small>{previewState === "unavailable" ? "预览暂时无法生成" : "视频已保存至平台对象存储"}</small></div>} {!preview ? <span>{Math.floor(item.durationSeconds / 60)}:{String(item.durationSeconds % 60).padStart(2, "0")}</span> : null}</section>
+          {currentAccount.role === "admin" &&
+          timelineState === "ready" && timeline?.videoSummary ? (
+            <section className="content-card submission-video-summary" aria-label="视频介绍">
+              <div className="card-heading"><h2>视频介绍</h2></div>
+              <p className="report-summary">{timeline.videoSummary}</p>
+            </section>
+          ) : null}
+        </div>
         <QualityReportCard
           submission={displayItem}
           pointsLabel={pointsLabel}
           evidenceByRange={evidenceByRange}
         />
       </div>
-      {currentAccount.role === "admin" &&
-      timelineState === "ready" && timeline?.videoSummary ? (
-        <section className="content-card" aria-label="视频介绍">
-          <div className="card-heading"><h2>视频介绍</h2></div>
-          <p className="report-summary">{timeline.videoSummary}</p>
-        </section>
-      ) : null}
       {currentAccount.role === "admin" ? (
         <section className="content-card admin-task-timeline" aria-label="任务时间轴">
           <div className="card-heading">
@@ -490,9 +503,10 @@ export function SubmissionDetail({
             <ol className="admin-task-timeline-list">
               {timeline!.items.map((task, index) => (
                 <li key={`${task.startMs}-${task.endMs}-${index}`}>
-                  <time>
-                    {formatTimelineSeconds(task.startMs)}～{formatTimelineSeconds(task.endMs)}
-                  </time>
+                  <div className="submission-task-reference">
+                    <span className="submission-task-number">任务 {task.taskIndex + 1}</span>
+                    <time>{formatTimelineSeconds(task.startMs)}～{formatTimelineSeconds(task.endMs)}</time>
+                  </div>
                   <strong>“{task.label}”</strong>
                 </li>
               ))}
@@ -508,7 +522,7 @@ export function SubmissionDetail({
           <div className="card-heading">
             <div>
               <h2>任务切片</h2>
-              <p>当前已发布标注对应的片段状态、标注与预览</p>
+              <p>与上方任务编号对应；切片范围可能包含任务前后的保留画面。</p>
             </div>
           </div>
           <TaskSegmentDemo

@@ -231,6 +231,30 @@ describe("TaskSegmentDemo", () => {
     expect(screen.queryByText(/精修边界：/u)).not.toBeInTheDocument();
   });
 
+  it.each(["structured", "technical"] as const)("keeps %s ordering scoped and plays the matching asset", async (presentation) => {
+    const user = userEvent.setup();
+    const assets = [failedAsset, baseAsset];
+    api.list.mockResolvedValue({
+      assets,
+      pagination: { page: 1, pageSize: 50, total: 2, totalPages: 1 },
+    });
+    render(<TaskSegmentDemo annotationRunId="RUN-SEG" submissionId="SUB-SEG" canGenerate presentation={presentation} />);
+
+    const cards = await screen.findAllByRole("group", { name: /^(任务 \d|Task #\d)/ });
+    if (presentation === "structured") {
+      expect(cards[0]).toHaveAccessibleName("任务 1 1.0s～2.5s 打开冰箱");
+      expect(cards[1]).toHaveAccessibleName("任务 2 1.0s～2.5s 关闭冰箱");
+    } else {
+      expect(cards[0]).toHaveAccessibleName("Task #1 · 关闭冰箱");
+      expect(cards[1]).toHaveAccessibleName("Task #0 · 打开冰箱");
+    }
+    expect(assets.map((asset) => asset.id)).toEqual(["TSA-FAILED", "TSA-READY"]);
+    await user.click(screen.getByRole("button", { name: "播放片段" }));
+    expect(api.preview).toHaveBeenCalledWith("TSA-READY");
+    expect(api.generate).not.toHaveBeenCalled();
+    expect(api.retry).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["complete", "已完成"],
     ["completed", "已完成"],
