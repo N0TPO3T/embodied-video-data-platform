@@ -4,7 +4,10 @@ import type {
 } from "./qwen-video-quality.provider.js";
 import type { ReviewWindow } from "./media-preprocessor.js";
 import { buildVideoQcInput } from "./video-qc-input.js";
-import { normalizeVideoQcResult } from "./video-qc-rule-engine.js";
+import {
+  decisiveVetoPresent,
+  normalizeVideoQcResult,
+} from "./video-qc-rule-engine.js";
 import type {
   InventoryContextInput,
   NormalizedVideoQcResultV1,
@@ -65,19 +68,17 @@ function needsReview(
   raw: RawVideoQcResultV1,
   normalized: NormalizedVideoQcResultV1,
 ): boolean {
-  if (raw.evaluation_status === "review_pending") return true;
-  if (raw.review.review_required || raw.hard_reject.triggered) return true;
-  if (raw.hard_reject.candidates.length > 0) return true;
-  if (
-    Object.values(raw.dimensions).some(
-      (dimension) => dimension.confidence < 0.75,
-    )
-  ) {
-    return true;
-  }
+  // 人工复核降频（2026-09-02）：
+  // - 决定性硬否决（损坏/重复/虚假/隐私安全/第三人称）与校验错误 → 复核；
+  // - 时段性类型（手未出镜、部分内容无关）与低置信/证据不足 → 不触发复核，
+  //   由分数表达价值，任务切片粒度可规避；
+  // - 疑似重复（S_total>=0.92）转独立 duplicate 流程，不占复核。
+  if (raw.hard_reject.triggered) return true;
+  if (decisiveVetoPresent(raw.hard_reject.candidates)) return true;
   if (normalized.validation.errors.length > 0) return true;
-  const similarity = raw.dimensions.D5.metrics.S_total ?? null;
-  return typeof similarity === "number" && similarity >= 0.92;
+  const missingInputs =
+    (raw.input_status.missing_required_inputs?.length ?? 0) > 0;
+  return missingInputs;
 }
 
 function reviewWindows(
@@ -270,7 +271,7 @@ export class VideoQualityService {
         {
           ...initial,
           evaluationStatus: "review_pending",
-          settlementRatio: null,
+          // 价值解耦：复核中保留自动分数计算的结算比率（initial 已计算）
           reviewRequired: true,
           reviewReasons: [
             ...initial.reviewReasons,

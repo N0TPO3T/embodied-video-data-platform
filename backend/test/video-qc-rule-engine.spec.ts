@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeVideoQcResult } from "../src/video-quality/video-qc-rule-engine.js";
+import {
+  applyServerTaskCompliance,
+  normalizeVideoQcResult,
+} from "../src/video-quality/video-qc-rule-engine.js";
 import type {
   PreparedVideoEvidence,
   RawQualityDimension,
@@ -144,13 +147,15 @@ describe("video_qc_v2 rule engine", () => {
     expect(result.settlementRatio).toBe(0);
   });
 
-  it("does not settle incomplete or review-pending results", () => {
+  it("keeps incomplete input non-settleable but computes value while review-pending", () => {
+    // 缺输入：数据不可用，不计算价值
     expect(
       normalize(rawAt(88, "incomplete_input")).settlementRatio,
     ).toBeNull();
-    expect(
-      normalize(rawAt(88, "review_pending")).settlementRatio,
-    ).toBeNull();
+    // 人工复核降频：模型标 review_pending 但无可决问题 → 服务端放行为 scored，价值照算
+    const reviewed = normalize(rawAt(88, "review_pending"));
+    expect(reviewed.evaluationStatus).toBe("scored");
+    expect(reviewed.settlementRatio).toBe(1);
   });
 
   it("unions deterministic and semantic invalid intervals", () => {
@@ -173,7 +178,7 @@ describe("video_qc_v2 rule engine", () => {
     expect(result.billableDurationMs).toBe(7_000);
   });
 
-  it("recomputes scores and makes evidence-free deductions non-settleable", () => {
+  it("recomputes scores; evidence-free deductions stay review-pending but value is computed", () => {
     const raw = rawAt(80);
     raw.dimensions.D1.score = 20;
     raw.dimensions.D1.issues.push({
@@ -191,8 +196,55 @@ describe("video_qc_v2 rule engine", () => {
 
     expect(result.dimensions.first_person_and_composition.score).toBe(16);
     expect(result.evaluationStatus).toBe("review_pending");
-    expect(result.settlementRatio).toBeNull();
+    // 价值解耦：复核中也按自动分数计算结算比率
+    expect(result.settlementRatio).not.toBeNull();
     expect(result.validation.errors.join(" ")).toContain("证据");
+  });
+
+  it("downgrades segmentable veto candidates and low confidence to scored (review reduction)", () => {
+    // 时段性候选（NO_HAND_OR_OBJECT）：任务切片粒度可规避 → 不触发复核
+    const noHand = rawAt(70);
+    noHand.evaluation_status = "review_pending";
+    noHand.hard_reject.candidates = ["NO_HAND_OR_OBJECT"];
+    noHand.review.review_required = true;
+    noHand.review.review_reasons = ["主体操作中 70% 看不到手部或对象"];
+    const noHandResult = normalize(noHand);
+    expect(noHandResult.evaluationStatus).toBe("scored");
+    expect(noHandResult.reviewReasons.join(" ")).toContain("时段性");
+
+    // 低置信度：分数表达价值，不触发复核
+    const lowConfidence = rawAt(70);
+    lowConfidence.evaluation_status = "review_pending";
+    lowConfidence.dimensions.D1.confidence = 0.5;
+    expect(normalize(lowConfidence).evaluationStatus).toBe("scored");
+
+    // 疑似重复（S_total>=0.92）：转 duplicate 流程，不触发复核
+    const duplicate = rawAt(70);
+    duplicate.evaluation_status = "review_pending";
+    duplicate.dimensions.D5.metrics.S_total = 0.95;
+    expect(normalize(duplicate).evaluationStatus).toBe("scored");
+  });
+
+  it("keeps decisive veto candidates and scene mismatch in review", () => {
+    const privacy = rawAt(70);
+    privacy.evaluation_status = "review_pending";
+    privacy.hard_reject.candidates = ["PRIVACY_OR_SAFETY"];
+    expect(normalize(privacy).evaluationStatus).toBe("review_pending");
+
+    const sceneMismatch = rawAt(70);
+    sceneMismatch.evaluation_status = "review_pending";
+    sceneMismatch.task_compliance = {
+      scene_match: { matched: false, confidence: 0.9, note: "mismatch" },
+      items: [],
+      compliance_ratio: 0,
+      review_required: false,
+    };
+    // 场景不匹配（全局性）在服务端任务符合度复算时进入复核（applyServerTaskCompliance）
+    const complianceApplied = applyServerTaskCompliance(
+      normalize(sceneMismatch),
+      sceneMismatch.task_compliance,
+    );
+    expect(complianceApplied.evaluationStatus).toBe("review_pending");
   });
 
   it("uses the unrounded dimension values before final rounding", () => {

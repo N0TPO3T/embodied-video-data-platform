@@ -310,27 +310,50 @@ export function normalizeVideoQcResult(
     errors.push("模型 effective_duration_ms 与服务端复算结果不一致");
   }
 
+  // 人工复核降频：模型 evaluation_status 仅作输入，服务端按类型重判定。
+  // 决定性候选/缺输入/校验错误 → review_pending；仅时段性候选或模型证据不足 → scored（原因留 advisory）。
+  const decisiveCandidate = decisiveVetoPresent(input.raw.hard_reject.candidates);
+  const missingInputs =
+    input.sourceInput.missing_inputs.length > 0 ||
+    (input.raw.input_status.missing_required_inputs?.length ?? 0) > 0;
+  const reviewRequiredByServer =
+    errors.length > 0 || missingInputs || decisiveCandidate;
   let evaluationStatus: NormalizedVideoQcResultV1["evaluationStatus"] =
-    input.raw.evaluation_status === "completed"
-      ? "scored"
-      : input.raw.evaluation_status;
+    input.raw.evaluation_status === "hard_reject"
+      ? "hard_reject"
+      : input.raw.evaluation_status === "incomplete_input"
+        ? "incomplete_input"
+        : reviewRequiredByServer
+          ? "review_pending"
+          : "scored";
   if (errors.length > 0) {
     evaluationStatus = "review_pending";
   }
+  // 价值解耦：复核中（review_pending）也按自动分数计算结算比率，复核只决定最终有用性；
+  // 缺输入（incomplete_input）数据不可用，不计算价值。
   const settlementRatio =
     evaluationStatus === "hard_reject"
       ? 0
-      : evaluationStatus === "scored"
-        ? coefficientForScore(finalScore ?? 0)
-        : null;
+      : evaluationStatus === "incomplete_input"
+        ? null
+        : coefficientForScore(finalScore ?? 0);
 
   if (input.raw.review.review_required && input.raw.review.review_reasons.length === 0) {
     warnings.push("模型要求复核但没有给出复核原因");
   }
 
   const reviewReasons = [...input.raw.review.review_reasons];
+  const segmentableCandidates = input.raw.hard_reject.candidates.filter(
+    (candidate) =>
+      (SEGMENTABLE_VETO_TYPES as readonly string[]).includes(vetoType(candidate)),
+  );
+  if (segmentableCandidates.length > 0) {
+    reviewReasons.push(
+      `整段视频存在时段性问题（任务切片粒度可规避，不阻断）：${segmentableCandidates.join("、")}`,
+    );
+  }
   if (
-    input.raw.hard_reject.candidates.length > 0 &&
+    decisiveCandidate &&
     input.raw.evaluation_status !== "hard_reject"
   ) {
     reviewReasons.push(
@@ -375,7 +398,7 @@ export function normalizeVideoQcResult(
     deductions,
     recommendations: input.raw.recommendations,
     summary: input.raw.overall_result.summary,
-    reviewRequired: input.raw.review.review_required || errors.length > 0,
+    reviewRequired: evaluationStatus === "review_pending",
     reviewReasons: [...new Set(reviewReasons)],
     missingInputs: [
       ...new Set([
@@ -481,6 +504,41 @@ function canonicalRequirement(value: string): string {
  * 将模型条目逐条绑定到提交时锁定的任务要求。
  * 要求文本和 hard/soft 类型由服务端快照覆盖；缺项不得静默跳过。
  */
+/**
+ * 人工复核降频（2026-09-02 产品规则）：
+ * - 决定性类型：数据完整性/合规/内容性质问题，任务切片无法规避 → 保留人工介入；
+ * - 时段性类型：整段视频的局部问题（如部分时段手未出镜、部分内容无关），
+ *   最终数据以任务切片为粒度，切片可规避 → 降为 advisory（记录原因，不触发复核）。
+ */
+export const DECISIVE_VETO_TYPES = [
+  "BROKEN_UNPLAYABLE",
+  "EXACT_DUPLICATE",
+  "FAKE_OR_NON_TASK",
+  "NON_FIRST_PERSON",
+  "PRIVACY_OR_SAFETY",
+] as const;
+
+export const SEGMENTABLE_VETO_TYPES = [
+  "NO_HAND_OR_OBJECT",
+  "UNRELATED_CONTENT",
+] as const;
+
+export function vetoType(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (typeof record.code === "string") return record.code;
+    if (typeof record.type === "string") return record.type;
+  }
+  return "";
+}
+
+export function decisiveVetoPresent(values: unknown[]): boolean {
+  return values.some((value) =>
+    (DECISIVE_VETO_TYPES as readonly string[]).includes(vetoType(value)),
+  );
+}
+
 export function alignTaskComplianceToRequirements(
   compliance: TaskComplianceResult | null,
   expectedRequirements: Array<{
@@ -587,18 +645,19 @@ export function applyServerTaskCompliance(
   const hardUnmet = compliance.items.filter(
     (item) => item.type === "hard" && item.result === "unmet",
   );
-  const complianceReview =
-    compliance.review_required || !sceneMatched || hardUnmet.length > 0;
+  // 人工复核降频：仅场景不匹配（全局性：整段内容与任务不符）触发复核；
+  // 硬性要求未满足/符合度证据不足多为时段性问题，任务切片粒度可规避 → advisory 记录。
+  const complianceReview = !sceneMatched;
   const reviewReasons = [...normalized.reviewReasons];
   if (compliance.review_required) {
-    reviewReasons.push("任务符合度：条目不完整或证据不足，需人工复核");
+    reviewReasons.push("任务符合度：条目不完整或证据不足（advisory，切片粒度可规避）");
   }
   if (!sceneMatched) {
     reviewReasons.push("任务符合度：视频内容与任务声明场景不匹配");
   }
   if (hardUnmet.length > 0) {
     reviewReasons.push(
-      `任务符合度：${hardUnmet.length} 条硬性要求未满足（${hardUnmet
+      `任务符合度：${hardUnmet.length} 条硬性要求未满足（advisory，切片粒度可规避：${hardUnmet
         .slice(0, 5)
         .map((item) => item.requirement)
         .join("；")}）`,
@@ -642,12 +701,11 @@ export function applyServerTaskCompliance(
     complianceReview && normalized.evaluationStatus === "scored"
       ? "review_pending"
       : normalized.evaluationStatus;
+  // 价值解耦：复核中（review_pending）也按自动分数计算结算比率；复核确认后人工可覆盖。
   const settlementRatio =
     evaluationStatus === "hard_reject"
       ? 0
-      : evaluationStatus === "scored"
-        ? coefficientForScore(finalScore ?? 0)
-        : null;
+      : coefficientForScore(finalScore ?? 0);
 
   return {
     ...normalized,

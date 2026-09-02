@@ -435,6 +435,7 @@ export function ReviewDrawer({
       ) : <form className="review-form" onSubmit={save}>
         <div className="review-guide">
           <strong>本次复核可以调整什么</strong>
+          <p className="form-message info">质量分数用于计算视频价值；人工复核只决定视频是否有用。分数已预填 AI 结果，无需调整时直接确认放行或隔离。</p>
           <ul>
             <li><b>最终评分</b>：修改 AI 给出的分数，保存后按新分数判定是否通过并计算金额。</li>
             <li><b>问题区间</b>：仅标记真正没有任务内容的片段（黑屏、冻结、与任务无关的空镜）。分辨率、模糊、遮挡等质量扣分请通过最终评分体现，不要标记为无效。</li>
@@ -485,7 +486,7 @@ export function ReviewDrawer({
         <label className="checkbox-line"><input type="checkbox" checked={quarantine} onChange={(event) => setQuarantine(event.target.checked)} />敏感内容隔离，不进入普通资产和交付候选</label>
         {submission.issues.length > 0 && <div className="review-issues"><AlertTriangle size={15} /><span>AI 标记 {submission.issues.length} 个问题区间，人工确认无效时长 {finalInvalidSeconds} 秒</span></div>}
         {error && <p className="form-message error">{error}</p>}
-        <button className="button button-primary" disabled={saving} type="submit"><CheckCircle2 size={16} />{saving ? "保存中" : "保存调整"}</button>
+        <button className="button button-primary" disabled={saving} type="submit"><CheckCircle2 size={16} />{saving ? "保存中" : quarantine ? "确认隔离（视频无用）" : "确认放行（视频有用）"}</button>
       </form>}
       <section className="audit-timeline"><div className="card-heading"><div><h2>审计记录</h2><p>保留原始结果和每次人工调整</p></div><History size={17} /></div>{submission.audit.length ? submission.audit.map((record) => <div key={record.id}><i /><span><strong>{record.action}</strong><small>{record.actor} · {record.createdAt}</small><em>{record.reason}</em></span></div>) : <p className="form-message">暂无人工调整记录。</p>}</section>
     </>
