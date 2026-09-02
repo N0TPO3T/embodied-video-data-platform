@@ -206,9 +206,21 @@ docker compose exec api node dist/cli/seed-video-test-data.js
 
 ## 验证
 
+后端数据库测试会清空目标库。只允许连接可销毁的专用测试库，不能使用业务库或手工验收库。
+Vitest 统一入口要求 `NODE_ENV=test`、`ALLOW_TEST_DATABASE_RESET=true`，数据库名须包含独立的
+`_test` / `test_` / `_e2e` / `e2e_` 标记（例如 `evdp_test`、`evdp_e2e_<uuid>`）。
+每次交出 PostgreSQL 连接前还会用 `SELECT current_database()` 校验实际库名与配置一致。
+`evdp`、`postgres`、`template0/1` 和未明确命名的数据库均拒绝；临时容器也必须使用测试库名。
+保护仅由后端 Vitest 加载，不代替数据库权限隔离，不保护手工 SQL 或独立 CLI。
+不要绕过测试配置运行重置脚本，不要对业务库执行 migration down 或日常执行 `docker compose down -v`。
+
+先创建独立临时 PostgreSQL 实例及可销毁的 `evdp_test`，再显式配置连接；以下命令不会创建或备份数据库：
+
 ```bash
 cd backend
-pnpm test
+NODE_ENV=test ALLOW_TEST_DATABASE_RESET=true \
+  TEST_DATABASE_URL="$DISPOSABLE_TEST_DATABASE_URL" \
+  DATABASE_URL="$DISPOSABLE_TEST_DATABASE_URL" pnpm test
 pnpm typecheck
 pnpm build
 
@@ -218,6 +230,9 @@ pnpm typecheck
 pnpm build
 pnpm test:render
 ```
+
+只验证防误删规则、不连接任何数据库：`cd backend && pnpm exec vitest run test/database-safety.spec.ts`。
+CI 的显式授权只用于独立 PostgreSQL service 中的 `evdp_test`。
 
 CI、迁移发布、容量/性能检查和告警建议见 `docs/operations/release-readiness.md`。
 
