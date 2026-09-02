@@ -301,7 +301,7 @@ describe("review workflows", () => {
     await user.click((await screen.findAllByRole("button", { name: "复核" }))[0]);
     await user.clear(screen.getByLabelText("最终评分"));
     await user.type(screen.getByLabelText("最终评分"), "88");
-    await user.click(screen.getByRole("button", { name: "保存调整" }));
+    await user.click(screen.getByRole("button", { name: "确认放行（视频有用）" }));
 
     expect(screen.getByText("请填写调整原因")).toBeVisible();
   });
@@ -321,7 +321,7 @@ describe("review workflows", () => {
     expect(screen.getByText("团队质检结果已连接后端")).toBeVisible();
     expect(screen.getByRole("region", { name: "最终质检结果" })).toBeVisible();
     expect(screen.queryByLabelText("最终评分")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "保存调整" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "确认放行（视频有用）" })).not.toBeInTheDocument();
   });
 
   it("saves backend quality review and refreshes the visible submission", async () => {
@@ -414,7 +414,7 @@ describe("review workflows", () => {
     await user.clear(screen.getByLabelText("最终评分"));
     await user.type(screen.getByLabelText("最终评分"), "92");
     await user.type(screen.getByLabelText("调整原因"), "人工确认可用");
-    await user.click(screen.getByRole("button", { name: "保存调整" }));
+    await user.click(screen.getByRole("button", { name: "确认放行（视频有用）" }));
 
     await waitFor(() =>
       expect(reviewSubmissionQuality).toHaveBeenCalledWith(
@@ -464,7 +464,7 @@ describe("review workflows", () => {
     expect(await screen.findByText("结构化内容标注（旧影子结果，只读）")).toBeVisible();
     expect(screen.queryByLabelText("候选内容标注结论")).not.toBeInTheDocument();
     await user.type(screen.getByLabelText("调整原因"), "逐帧检查后确认标注正确");
-    await user.click(screen.getByRole("button", { name: "保存调整" }));
+    await user.click(screen.getByRole("button", { name: "确认放行（视频有用）" }));
 
     await waitFor(() => expect(reviewSubmissionQuality).toHaveBeenCalled());
     const input = vi.mocked(reviewSubmissionQuality).mock.calls[0]?.[1];
