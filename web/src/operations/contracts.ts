@@ -267,6 +267,8 @@ export type BackendTaskSegmentAsset = {
   refinedEndMs: number | null;
   actualClipStartMs: number | null;
   actualClipEndMs: number | null;
+  requestedStartMs: number;
+  requestedEndMs: number;
   boundarySource: "coarse" | "refined" | "coarse_fallback";
   boundaryRefinementId: string | null;
   boundaryRefinementStatus:
@@ -277,6 +279,19 @@ export type BackendTaskSegmentAsset = {
     | "system_failed"
     | null;
   boundaryRefinementPolicyVersion: string | null;
+  materializationPolicyVersion: string;
+  materializationMode: "stream_copy" | "exact_clip_transcode";
+  predictedCopyStartMs: number | null;
+  keyframeDistanceStartMs: number | null;
+  boundaryToleranceMs: number | null;
+  startDriftMs: number | null;
+  endDriftMs: number | null;
+  validationStatus: "pending" | "passed" | "failed";
+  validationFailureCode: string | null;
+  validationFailureMessage: string | null;
+  streamCopyAttempted: boolean;
+  copyRejectedReason: string | null;
+  materializationDurationMs: number | null;
   clipStartMs: number;
   clipEndMs: number;
   coverageSnapshot: unknown;

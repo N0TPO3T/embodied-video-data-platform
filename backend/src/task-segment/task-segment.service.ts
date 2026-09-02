@@ -30,6 +30,7 @@ import {
   TASK_BOUNDARY_REFINEMENT_PROMPT_VERSION,
   taskBoundaryRefinementEnabled,
 } from "./task-boundary-refinement.policy.js";
+import { TASK_SEGMENT_MATERIALIZATION_POLICY_VERSION } from "./task-segment-materialization.policy.js";
 
 export const TASK_SEGMENT_GENERATION_POLICY_VERSION =
   "task_segment_v1_policy_v1" as const;
@@ -87,12 +88,27 @@ function publicAsset(
     coarseEndMs: asset.sourceEndMs,
     refinedStartMs: asset.refinedStartMs,
     refinedEndMs: asset.refinedEndMs,
-    actualClipStartMs: asset.generationStatus === "ready" ? asset.clipStartMs : null,
-    actualClipEndMs: asset.generationStatus === "ready" ? asset.clipEndMs : null,
+    requestedStartMs: asset.requestedStartMs,
+    requestedEndMs: asset.requestedEndMs,
+    actualClipStartMs: asset.actualStartMs,
+    actualClipEndMs: asset.actualEndMs,
     boundarySource: asset.boundarySource,
     boundaryRefinementId: asset.boundaryRefinementId,
     boundaryRefinementPolicyVersion: asset.boundaryRefinementPolicyVersion,
     boundaryRefinementStatus,
+    materializationPolicyVersion: asset.materializationPolicyVersion,
+    materializationMode: asset.materializationMode,
+    predictedCopyStartMs: asset.predictedCopyStartMs,
+    keyframeDistanceStartMs: asset.keyframeDistanceStartMs,
+    boundaryToleranceMs: asset.boundaryToleranceMs,
+    startDriftMs: asset.startDriftMs,
+    endDriftMs: asset.endDriftMs,
+    validationStatus: asset.validationStatus,
+    validationFailureCode: asset.validationFailureCode,
+    validationFailureMessage: asset.validationFailureMessage,
+    streamCopyAttempted: asset.streamCopyAttempted,
+    copyRejectedReason: asset.copyRejectedReason,
+    materializationDurationMs: asset.materializationDurationMs,
     clipStartMs: asset.clipStartMs,
     clipEndMs: asset.clipEndMs,
     coverageSnapshot: asset.coverageSnapshot,
@@ -468,6 +484,15 @@ export class TaskSegmentService {
         boundaryRefinementPolicyVersion: refinement?.policyVersion ?? null,
         clipStartMs,
         clipEndMs,
+        requestedStartMs: clipStartMs,
+        requestedEndMs: clipEndMs,
+        actualStartMs: null,
+        actualEndMs: null,
+        materializationPolicyVersion:
+          TASK_SEGMENT_MATERIALIZATION_POLICY_VERSION,
+        materializationMode: "stream_copy",
+        validationStatus: "pending",
+        streamCopyAttempted: false,
         coverageSnapshot: jsonSnapshot(linkedCoverage),
         evidenceSnapshot: evidenceSnapshot(task),
         validationWarnings: timestampWarnings({
@@ -525,6 +550,9 @@ export class TaskSegmentService {
       current.generationStatus = "queued";
       current.failureCode = null;
       current.failureMessage = null;
+      current.validationStatus = "pending";
+      current.validationFailureCode = null;
+      current.validationFailureMessage = null;
       current.startedAt = null;
       current.completedAt = null;
       await repository.save(current);

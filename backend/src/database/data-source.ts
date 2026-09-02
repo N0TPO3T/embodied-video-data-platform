@@ -79,6 +79,7 @@ import { AddDedupIndexes2026090400001 } from "./migrations/202609040001-add-dedu
 import { WalletAndSettlement2026083100001 } from "./migrations/202608310001-wallet-and-settlement.js";
 import { TaskSegmentAssets2026090300001 } from "./migrations/202609030001-task-segment-assets.js";
 import { TaskBoundaryRefinements2026090500001 } from "./migrations/202609050001-task-boundary-refinements.js";
+import { TaskSegmentAdaptiveCut2026090600001 } from "./migrations/202609060001-task-segment-adaptive-cut.js";
 
 export const identityEntities = [
   TeamEntity,
@@ -172,6 +173,7 @@ export function createDataSource(
       TaskSegmentAssets2026090300001,
       AddDedupIndexes2026090400001,
       TaskBoundaryRefinements2026090500001,
+      TaskSegmentAdaptiveCut2026090600001,
     ],
     synchronize: false,
     logging: false,

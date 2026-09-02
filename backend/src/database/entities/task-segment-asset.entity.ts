@@ -24,6 +24,12 @@ export type TaskSegmentBoundarySource =
   | "refined"
   | "coarse_fallback";
 
+export type TaskSegmentMaterializationMode =
+  | "stream_copy"
+  | "exact_clip_transcode";
+
+export type TaskSegmentValidationStatus = "pending" | "passed" | "failed";
+
 @Entity({ name: "task_segment_assets" })
 @Index("uq_task_segment_assets_run_task", ["annotationRunId", "taskIndex"], {
   unique: true,
@@ -109,6 +115,85 @@ export class TaskSegmentAssetEntity {
 
   @Column({ name: "clip_end_ms", type: "double precision" })
   clipEndMs!: number;
+
+  @Column({ name: "requested_start_ms", type: "double precision" })
+  requestedStartMs!: number;
+
+  @Column({ name: "requested_end_ms", type: "double precision" })
+  requestedEndMs!: number;
+
+  @Column({ name: "actual_start_ms", type: "double precision", nullable: true })
+  actualStartMs: number | null = null;
+
+  @Column({ name: "actual_end_ms", type: "double precision", nullable: true })
+  actualEndMs: number | null = null;
+
+  @Column({
+    name: "materialization_policy_version",
+    type: "varchar",
+    length: 80,
+  })
+  materializationPolicyVersion!: string;
+
+  @Column({ name: "materialization_mode", type: "varchar", length: 32 })
+  materializationMode: TaskSegmentMaterializationMode = "stream_copy";
+
+  @Column({ name: "source_codec", type: "varchar", length: 64, nullable: true })
+  sourceCodec: string | null = null;
+
+  @Column({ name: "source_nominal_fps", type: "double precision", nullable: true })
+  sourceNominalFps: number | null = null;
+
+  @Column({ name: "source_has_audio", type: "boolean", nullable: true })
+  sourceHasAudio: boolean | null = null;
+
+  @Column({ name: "source_duration_ms", type: "integer", nullable: true })
+  sourceDurationMs: number | null = null;
+
+  @Column({ name: "requested_duration_ms", type: "integer", nullable: true })
+  requestedDurationMs: number | null = null;
+
+  @Column({ name: "predicted_copy_start_ms", type: "double precision", nullable: true })
+  predictedCopyStartMs: number | null = null;
+
+  @Column({ name: "keyframe_distance_start_ms", type: "double precision", nullable: true })
+  keyframeDistanceStartMs: number | null = null;
+
+  @Column({ name: "boundary_tolerance_ms", type: "double precision", nullable: true })
+  boundaryToleranceMs: number | null = null;
+
+  @Column({ name: "start_drift_ms", type: "double precision", nullable: true })
+  startDriftMs: number | null = null;
+
+  @Column({ name: "end_drift_ms", type: "double precision", nullable: true })
+  endDriftMs: number | null = null;
+
+  @Column({ name: "validation_status", type: "varchar", length: 24 })
+  validationStatus: TaskSegmentValidationStatus = "pending";
+
+  @Column({ name: "validation_failure_code", type: "varchar", length: 80, nullable: true })
+  validationFailureCode: string | null = null;
+
+  @Column({ name: "validation_failure_message", type: "text", nullable: true })
+  validationFailureMessage: string | null = null;
+
+  @Column({ name: "stream_copy_attempted", type: "boolean", default: false })
+  streamCopyAttempted = false;
+
+  @Column({ name: "copy_rejected_reason", type: "varchar", length: 120, nullable: true })
+  copyRejectedReason: string | null = null;
+
+  @Column({ name: "transcoded_input_duration_ms", type: "integer", nullable: true })
+  transcodedInputDurationMs: number | null = null;
+
+  @Column({ name: "materialization_started_at", type: "timestamptz", nullable: true })
+  materializationStartedAt: Date | null = null;
+
+  @Column({ name: "materialization_completed_at", type: "timestamptz", nullable: true })
+  materializationCompletedAt: Date | null = null;
+
+  @Column({ name: "materialization_duration_ms", type: "integer", nullable: true })
+  materializationDurationMs: number | null = null;
 
   @Column({ name: "coverage_snapshot", type: "jsonb" })
   coverageSnapshot!: unknown;

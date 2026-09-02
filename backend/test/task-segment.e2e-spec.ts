@@ -28,7 +28,10 @@ import type {
 } from "../src/task-segment/task-boundary-refinement.provider.js";
 import { TaskBoundaryRefinementProcessor } from "../src/task-segment/task-boundary-refinement.processor.js";
 import type { TaskSegmentMediaTool } from "../src/task-segment/task-segment-media.js";
-import { TaskSegmentProcessor } from "../src/task-segment/task-segment.processor.js";
+import {
+  RetryableTaskSegmentError,
+  TaskSegmentProcessor,
+} from "../src/task-segment/task-segment.processor.js";
 import { TaskSegmentService } from "../src/task-segment/task-segment.service.js";
 
 const TEST_DATABASE_URL =
@@ -99,24 +102,75 @@ class MemoryStorage implements ObjectStoragePort {
 }
 
 class FakeSegmentMedia {
-  failStartMs: number | null = 4_000;
+  failStreamCopyStartMs: number | null = 4_000;
+  failExactStartMs: number | null = 4_000;
+  streamCopyStartDriftMs = 0;
+  keyframes: number[] | null = Array.from(
+    { length: 41 },
+    (_, index) => index * 500,
+  );
   transcodeCalls = 0;
-  lastStartMs = 0;
 
-  async transcode(input: { outputPath: string; startMs: number; endMs: number }) {
+  async inspectSource() {
+    return {
+      codec: "h264",
+      container: "mov",
+      nominalFps: 30,
+      hasAudio: true,
+      startMs: 0,
+      durationMs: 20_000,
+      timestampRisk: false,
+    };
+  }
+
+  async keyframeIndex() {
+    return this.keyframes;
+  }
+
+  async materializeByStreamCopy(input: {
+    outputPath: string;
+    requestedStartMs: number;
+    requestedEndMs: number;
+  }) {
     this.transcodeCalls += 1;
-    if (input.startMs === this.failStartMs) throw new Error("intentional ffmpeg failure");
-    // 模拟 stream copy 关键帧对齐：实际起点 = 请求起点
-    this.lastStartMs = input.startMs;
-    await writeFile(input.outputPath, Buffer.from(String(input.endMs - input.startMs)));
+    if (input.requestedStartMs === this.failStreamCopyStartMs) {
+      throw new Error("intentional stream-copy failure");
+    }
+    await writeFile(input.outputPath, Buffer.from(JSON.stringify({
+      startMs: input.requestedStartMs + this.streamCopyStartDriftMs,
+      durationMs:
+        input.requestedEndMs -
+        input.requestedStartMs -
+        this.streamCopyStartDriftMs,
+    })));
+  }
+
+  async materializeByExactTranscode(input: {
+    outputPath: string;
+    requestedStartMs: number;
+    requestedEndMs: number;
+  }) {
+    this.transcodeCalls += 1;
+    if (input.requestedStartMs === this.failExactStartMs) {
+      throw new Error("intentional exact-transcode failure");
+    }
+    await writeFile(input.outputPath, Buffer.from(JSON.stringify({
+      startMs: 0,
+      durationMs: input.requestedEndMs - input.requestedStartMs,
+    })));
   }
 
   async inspect(filePath: string) {
     const value = await readFile(filePath);
-    const durationMs = Number(value.toString("utf8"));
+    const parsed = JSON.parse(value.toString("utf8")) as {
+      startMs: number;
+      durationMs: number;
+    };
     return {
-      startMs: this.lastStartMs,
-      durationMs,
+      startMs: parsed.startMs,
+      durationMs: parsed.durationMs,
+      videoDurationMs: parsed.durationMs,
+      audioDurationMs: parsed.durationMs,
       sizeBytes: String(value.length),
       codec: "h264",
       width: 1280,
@@ -126,6 +180,8 @@ class FakeSegmentMedia {
       sha256: createHash("sha256").update(value).digest("hex"),
     };
   }
+
+  async assertFullyDecodable() {}
 }
 
 class FakeBoundarySampler implements TaskBoundaryFrameSampler {
@@ -319,6 +375,10 @@ describe("task segment demo", () => {
 
   afterEach(() => {
     process.env.TASK_BOUNDARY_REFINEMENT_ENABLED = "false";
+    media.failStreamCopyStartMs = null;
+    media.failExactStartMs = null;
+    media.streamCopyStartDriftMs = 0;
+    media.keyframes = Array.from({ length: 41 }, (_, index) => index * 500);
   });
 
   async function seedSubmission(id: string, objectKey: string, durationMs: number) {
@@ -433,17 +493,23 @@ describe("task segment demo", () => {
   });
 
   it("processes tasks independently, preserves source state, and retries one failure", async () => {
+    media.failStreamCopyStartMs = 4_000;
+    media.failExactStartMs = 4_000;
     const assets = await dataSource.getRepository(TaskSegmentAssetEntity).find({
       where: { annotationRunId: "RUN-SEG" },
       order: { taskIndex: "ASC" },
     });
-    // assets[1] 的 clipStartMs=4000 命中 Fake 的 failStartMs=4000 → FFMPEG_FAILED
+    // assets[1] 的 requestedStartMs=4000：copy 与 exact 都被故障注入阻断。
     await expect(processor.process({ assetId: assets[0]!.id })).resolves.toBe("ready");
-    await expect(processor.process({ assetId: assets[1]!.id })).resolves.toBe("failed");
+    await expect(
+      processor.process({ assetId: assets[1]!.id }),
+    ).rejects.toBeInstanceOf(RetryableTaskSegmentError);
     expect(await dataSource.getRepository(TaskSegmentAssetEntity).findOneByOrFail({ id: assets[1]!.id })).toMatchObject({
       generationStatus: "failed",
-      failureCode: "FFMPEG_FAILED",
+      failureCode: "EXACT_TRANSCODE_FAILED",
+      validationStatus: "failed",
     });
+    expect(storage.objects.has(assets[1]!.clipObjectKey!)).toBe(false);
     // skipped 资产不可处理（claim 返回 null）
     await expect(processor.process({ assetId: assets[2]!.id })).resolves.toBe("already_claimed");
     await expect(processor.process({ assetId: assets[3]!.id })).resolves.toBe("already_claimed");
@@ -458,7 +524,8 @@ describe("task segment demo", () => {
       publicationStatus: "auto_accepted",
     });
 
-    media.failStartMs = null;
+    media.failStreamCopyStartMs = null;
+    media.failExactStartMs = null;
     await service.retry(admin, assets[1]!.id);
     await expect(processor.process({ assetId: assets[1]!.id })).resolves.toBe("ready");
     const retried = await dataSource.getRepository(TaskSegmentAssetEntity).findOneByOrFail({ id: assets[1]!.id });
@@ -480,6 +547,97 @@ describe("task segment demo", () => {
       contentType: "video/mp4",
     });
     await expect(processor.process({ assetId: retried.id })).resolves.toBe("already_claimed");
+  });
+
+  it("rejects a drifting copy candidate and uploads only the exact transcode", async () => {
+    await seedSubmission("SUB-SEG-ADAPTIVE", "uploads/adaptive.mp4", 12_000);
+    storage.objects.set("uploads/adaptive.mp4", Buffer.from("adaptive-source"));
+    await seedRun("RUN-SEG-ADAPTIVE", "SUB-SEG-ADAPTIVE", [
+      task({ startMs: 4_500, endMs: 7_500, label: "精确放置" }),
+    ]);
+    await service.generate(admin, "RUN-SEG-ADAPTIVE");
+    const asset = await dataSource.getRepository(TaskSegmentAssetEntity)
+      .findOneByOrFail({ annotationRunId: "RUN-SEG-ADAPTIVE" });
+    expect(asset).toMatchObject({
+      requestedStartMs: 4_000,
+      requestedEndMs: 8_000,
+      validationStatus: "pending",
+    });
+    const callsBefore = media.transcodeCalls;
+    media.streamCopyStartDriftMs = -2_000;
+
+    await expect(processor.process({ assetId: asset.id })).resolves.toBe("ready");
+    const completed = await dataSource.getRepository(TaskSegmentAssetEntity)
+      .findOneByOrFail({ id: asset.id });
+    expect(completed).toMatchObject({
+      generationStatus: "ready",
+      validationStatus: "passed",
+      materializationPolicyVersion: "task_segment_adaptive_cut_policy_v1",
+      materializationMode: "exact_clip_transcode",
+      streamCopyAttempted: true,
+      copyRejectedReason: "STREAM_COPY_DRIFT_EXCEEDED",
+      predictedCopyStartMs: 4_000,
+      keyframeDistanceStartMs: 0,
+      requestedStartMs: 4_000,
+      requestedEndMs: 8_000,
+      actualStartMs: 4_000,
+      actualEndMs: 8_000,
+      startDriftMs: 0,
+      endDriftMs: 0,
+      transcodedInputDurationMs: 4_000,
+    });
+    expect(completed.boundaryToleranceMs).toBeCloseTo(66.667, 2);
+    expect(media.transcodeCalls).toBe(callsBefore + 2);
+    expect(storage.objects.has(completed.clipObjectKey!)).toBe(true);
+    expect(await processor.process({ assetId: completed.id })).toBe(
+      "already_claimed",
+    );
+  });
+
+  it("acks ready assets after source deletion and terminally fails unfinished assets", async () => {
+    await seedSubmission("SUB-SEG-DELETED", "uploads/deleted-source.mp4", 8_000);
+    storage.objects.set("uploads/deleted-source.mp4", Buffer.from("deleted-source"));
+    await seedRun("RUN-SEG-DELETED", "SUB-SEG-DELETED", [
+      task({ startMs: 1_000, endMs: 5_000, label: "删除后幂等" }),
+    ]);
+    await service.generate(admin, "RUN-SEG-DELETED");
+    const repository = dataSource.getRepository(TaskSegmentAssetEntity);
+    const asset = await repository.findOneByOrFail({
+      annotationRunId: "RUN-SEG-DELETED",
+    });
+
+    const submissionRepository = dataSource.getRepository(SubmissionEntity);
+    const submission = await submissionRepository.findOneByOrFail({
+      id: "SUB-SEG-DELETED",
+    });
+    submission.storageStatus = "deleted";
+    submission.storageDeletedAt = new Date();
+    await submissionRepository.save(submission);
+    storage.objects.delete(submission.objectKey);
+
+    await expect(processor.process({ assetId: asset.id })).resolves.toBe("failed");
+    expect(await repository.findOneByOrFail({ id: asset.id })).toMatchObject({
+      generationStatus: "failed",
+      validationStatus: "failed",
+      failureCode: "SOURCE_MEDIA_UNAVAILABLE",
+    });
+
+    const completed = await repository.findOneByOrFail({ id: asset.id });
+    completed.generationStatus = "ready";
+    completed.validationStatus = "passed";
+    completed.clipSha256 = "d".repeat(64);
+    completed.clipSizeBytes = "10";
+    completed.clipDurationMs = 5_000;
+    completed.codec = "h264";
+    completed.width = 1280;
+    completed.height = 720;
+    completed.frameRate = 30;
+    completed.hasAudio = true;
+    completed.completedAt = new Date();
+    await repository.save(completed);
+    await expect(processor.process({ assetId: asset.id })).resolves.toBe(
+      "already_claimed",
+    );
   });
 
   it("marks an invalid task skipped and rejects non-published runs", async () => {
@@ -677,6 +835,9 @@ describe("task segment demo", () => {
       status: 409,
     });
 
+    const outboxBefore = await dataSource.getRepository(JobOutboxEntity).countBy({
+      eventType: "task.segment.generate.v1",
+    });
     // 正式 Run：发布事务内调用创建资产；重复发布不重复创建
     const result = await dataSource.transaction(async (manager) => {
       const run = await manager.getRepository(AnnotationRunEntity).findOneByOrFail({
@@ -691,11 +852,10 @@ describe("task segment demo", () => {
       existing: 4,
       skipped: 0,
     });
-    // 幂等：未新增 outbox 消息（enqueueAsset 为 upsert）；
-    // RUN-SEG 的 2 个 queued 资产对应 2 条，加上本文件其他用例的 2 条共 4 条
+    // 幂等：未新增 outbox 消息（enqueueAsset 为 upsert）。
     expect(await dataSource.getRepository(JobOutboxEntity).countBy({
       eventType: "task.segment.generate.v1",
-    })).toBe(4);
+    })).toBe(outboxBefore);
   });
 
   it("refines one formal task once, preserves coarse boundaries, then applies existing padding", async () => {
@@ -814,7 +974,8 @@ describe("task segment demo", () => {
       actualClipEndMs: null,
       boundaryRefinementStatus: "succeeded",
     });
-    media.failStartMs = null;
+    media.failStreamCopyStartMs = null;
+    media.failExactStartMs = null;
     await expect(processor.process({ assetId: asset.id })).resolves.toBe("ready");
     await expect(service.get(admin, asset.id)).resolves.toMatchObject({
       asset: {
