@@ -3,19 +3,24 @@ import { z } from "zod";
 import type { TaskBoundarySampledFrame } from "./task-boundary-frame-sampler.js";
 import { TASK_BOUNDARY_REFINEMENT_PROMPT_VERSION } from "./task-boundary-refinement.policy.js";
 
-const startReason = z.enum([
+export const TASK_BOUNDARY_SIDE_STATUSES = [
+  "refined", "unchanged", "not_observable",
+] as const;
+export const TASK_BOUNDARY_START_REASON_CODES = [
   "CLEAR_TRANSITION",
   "GRADUAL_TRANSITION",
   "ACTION_ALREADY_STARTED",
   "INSUFFICIENT_EVIDENCE",
-]);
-const endReason = z.enum([
+] as const;
+export const TASK_BOUNDARY_END_REASON_CODES = [
   "CLEAR_TRANSITION",
   "GRADUAL_TRANSITION",
   "RESULT_NOT_VISIBLE",
   "INSUFFICIENT_EVIDENCE",
-]);
-const sideStatus = z.enum(["refined", "unchanged", "not_observable"]);
+] as const;
+const startReason = z.enum(TASK_BOUNDARY_START_REASON_CODES);
+const endReason = z.enum(TASK_BOUNDARY_END_REASON_CODES);
+const sideStatus = z.enum(TASK_BOUNDARY_SIDE_STATUSES);
 
 const outputSchema = z.object({
   task_index: z.number().int().nonnegative(),
@@ -35,7 +40,25 @@ const outputSchema = z.object({
   }).strict(),
 }).strict();
 
+// Keep the provider's strict JSON Schema identical to the server-side contract.
+const outputJsonSchema = z.toJSONSchema(outputSchema, { target: "draft-7" });
+
 export type TaskBoundaryRefinementOutput = z.infer<typeof outputSchema>;
+
+export class TaskBoundaryRefinementError extends Error {
+  constructor(
+    readonly failureCode:
+      | "REFINEMENT_HTTP_FAILED"
+      | "REFINEMENT_OUTPUT_NOT_JSON"
+      | "REFINEMENT_OUTPUT_SCHEMA_INVALID",
+    message: string,
+    readonly rawModelOutput: unknown = null,
+    readonly validationIssues: string[] = [message],
+  ) {
+    super(message);
+    this.name = "TaskBoundaryRefinementError";
+  }
+}
 
 export type TaskBoundaryRefinementRequest = {
   submissionId: string;
@@ -78,8 +101,15 @@ type ChatPart =
 
 const SYSTEM_PROMPT = `你是第一视角视频任务边界精修器。你只能在给定局部采样帧中精修当前已发现任务的 start/end，不得重新发现任务、修改任务语义或评价视频质量。
 沿用上游 Annotation 对 task start/end 的既有定义，不重新定义“任务开始”和“任务结束”。
-refined_timestamp_ms 只能取 frame_manifest 中实际提供的 timestamp_ms；无法可靠判断时必须返回 not_observable，不得猜测任意毫秒。
-输出必须严格匹配 task_boundary_refinement_prompt_v1 JSON，不得增加 task label、verb、objects、tools、actions、completion、result 或其他字段。`;
+status 只能取：${TASK_BOUNDARY_SIDE_STATUSES.join(" | ")}。
+start.reason_code 只能取：${TASK_BOUNDARY_START_REASON_CODES.join(" | ")}。
+end.reason_code 只能取：${TASK_BOUNDARY_END_REASON_CODES.join(" | ")}。
+status=refined 时，refined_timestamp_ms 必须取 frame_manifest 中对应 start/end 窗口的实际 timestamp_ms，且距 coarse 不超过 3000ms，不得猜测任意毫秒。
+status=unchanged 时，refined_timestamp_ms 为 null 或属于实际采样帧的 coarse timestamp。
+status=not_observable 时，refined_timestamp_ms 必须为 null，reason_code 应为 INSUFFICIENT_EVIDENCE。无法可靠判断时返回 not_observable，不要为产生变化而移动边界。
+evidence_timestamps_ms 只能引用实际提供的采样帧；保持 task_index 和 coarse_timestamp_ms 不变。
+输出顶层必须是一个 JSON 对象，且仅包含 task_index、start、end；禁止顶层数组、Markdown 或 output_contract 包装。
+输出必须严格匹配 ${TASK_BOUNDARY_REFINEMENT_PROMPT_VERSION} JSON，不得增加 task label、verb、objects、tools、actions、completion、result 或其他字段。`;
 
 function stripTrailingSlash(value: string): string {
   return value.replace(/\/+$/u, "");
@@ -218,22 +248,67 @@ export class QwenTaskBoundaryRefinementProvider
         enable_thinking: false,
         temperature: 0,
         max_tokens: 2_000,
-        response_format: { type: "json_object" },
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "task_boundary_refinement_v1",
+            strict: true,
+            schema: outputJsonSchema,
+          },
+        },
       }),
       signal: requestSignal,
+    }).catch((error: unknown) => {
+      throw new TaskBoundaryRefinementError(
+        "REFINEMENT_HTTP_FAILED",
+        `边界精修请求未完成：${error instanceof Error ? error.message : String(error)}`,
+      );
     });
     if (!response.ok) {
-      throw new Error(`边界精修请求失败（HTTP ${response.status}）`);
+      throw new TaskBoundaryRefinementError(
+        "REFINEMENT_HTTP_FAILED",
+        `边界精修请求失败（HTTP ${response.status}）`,
+      );
     }
-    const document = (await response.json()) as unknown;
-    const rawModelOutput = extractJson(responseContent(document));
-    const output = outputSchema.parse(rawModelOutput);
+    const responseText = await response.text().catch((error: unknown) => {
+      throw new TaskBoundaryRefinementError(
+        "REFINEMENT_HTTP_FAILED",
+        `边界精修响应读取失败：${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+    let document: unknown;
+    let rawModelOutput: unknown = responseText;
+    try {
+      document = JSON.parse(responseText) as unknown;
+      rawModelOutput = document;
+      const content = responseContent(document);
+      rawModelOutput = content;
+      rawModelOutput = extractJson(content);
+    } catch {
+      throw new TaskBoundaryRefinementError(
+        "REFINEMENT_OUTPUT_NOT_JSON",
+        "边界精修响应缺少可解析的 JSON 模型内容",
+        rawModelOutput,
+      );
+    }
+    const parsed = outputSchema.safeParse(rawModelOutput);
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map(
+        (issue) => `${issue.path.join(".") || "$"}: ${issue.message}`,
+      );
+      throw new TaskBoundaryRefinementError(
+        "REFINEMENT_OUTPUT_SCHEMA_INVALID",
+        issues.join("; "),
+        rawModelOutput,
+        issues,
+      );
+    }
     const usage =
       document && typeof document === "object" && "usage" in document
         ? document.usage
         : null;
     return {
-      output,
+      output: parsed.data,
       rawModelOutput,
       inputTokens: usageValue(usage, "prompt_tokens"),
       outputTokens: usageValue(usage, "completion_tokens"),

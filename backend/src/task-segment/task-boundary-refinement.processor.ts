@@ -26,6 +26,7 @@ import {
 } from "./task-boundary-frame-sampler.js";
 import {
   TASK_BOUNDARY_REFINEMENT_PROVIDER,
+  TaskBoundaryRefinementError,
   type TaskBoundaryRefinementOutput,
   type TaskBoundaryRefinementProvider,
 } from "./task-boundary-refinement.provider.js";
@@ -271,7 +272,7 @@ export class TaskBoundaryRefinementProcessor {
         return await this.completeFallback({
           refinementId: claimed.refinement.id,
           executionStatus: "fallback",
-          failureCode: "REFINEMENT_OUTPUT_INVALID",
+          failureCode: "REFINEMENT_OUTPUT_SEMANTIC_INVALID",
           failureMessage: validated.issues.join("; "),
           validationIssues: validated.issues,
           sampleManifest: sample.manifest,
@@ -299,8 +300,16 @@ export class TaskBoundaryRefinementProcessor {
       return await this.completeFallback({
         refinementId: claimed.refinement.id,
         executionStatus: "fallback",
-        failureCode: "REFINEMENT_PROVIDER_FAILED",
+        failureCode: error instanceof TaskBoundaryRefinementError
+          ? error.failureCode
+          : "REFINEMENT_PROVIDER_FAILED",
         failureMessage: errorMessage(error),
+        rawModelOutput: error instanceof TaskBoundaryRefinementError
+          ? error.rawModelOutput
+          : undefined,
+        validationIssues: error instanceof TaskBoundaryRefinementError
+          ? error.validationIssues
+          : undefined,
       });
     } finally {
       if (directory) await rm(directory, { recursive: true, force: true });
