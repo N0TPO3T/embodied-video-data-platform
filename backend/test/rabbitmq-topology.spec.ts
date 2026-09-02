@@ -14,12 +14,15 @@ import {
   assertAiAnnotationTopology,
   assertMediaTopology,
   assertSubmissionSourceRetentionTopology,
+  assertTaskBoundaryRefinementTopology,
   assertTaskSegmentTopology,
   EVENTS_EXCHANGE,
   MEDIA_QUEUE,
   MEDIA_QUEUE_OPTIONS,
   SUBMISSION_SOURCE_RETENTION_QUEUE,
   SUBMISSION_SOURCE_RETENTION_QUEUE_OPTIONS,
+  TASK_BOUNDARY_REFINEMENT_QUEUE,
+  TASK_BOUNDARY_REFINEMENT_QUEUE_OPTIONS,
   TASK_SEGMENT_QUEUE,
   TASK_SEGMENT_QUEUE_OPTIONS,
 } from "../src/messaging/rabbitmq-topology.js";
@@ -156,6 +159,28 @@ describe("RabbitMQ task segment topology", () => {
       TASK_SEGMENT_QUEUE,
       EVENTS_EXCHANGE,
       "task.segment.generate.v1",
+    );
+  });
+});
+
+describe("RabbitMQ task boundary refinement topology", () => {
+  it("declares the durable boundary queue before outbox publication", async () => {
+    const channel = {
+      assertExchange: vi.fn().mockResolvedValue(undefined),
+      assertQueue: vi.fn().mockResolvedValue(undefined),
+      bindQueue: vi.fn().mockResolvedValue(undefined),
+    } as unknown as ConfirmChannel;
+
+    await assertTaskBoundaryRefinementTopology(channel);
+
+    expect(channel.assertQueue).toHaveBeenCalledWith(
+      TASK_BOUNDARY_REFINEMENT_QUEUE,
+      TASK_BOUNDARY_REFINEMENT_QUEUE_OPTIONS,
+    );
+    expect(channel.bindQueue).toHaveBeenCalledWith(
+      TASK_BOUNDARY_REFINEMENT_QUEUE,
+      EVENTS_EXCHANGE,
+      "task.boundary.refine.v1",
     );
   });
 });

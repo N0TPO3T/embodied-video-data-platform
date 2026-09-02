@@ -261,6 +261,37 @@ export type BackendTaskSegmentAsset = {
   resultStatus: string;
   sourceStartMs: number;
   sourceEndMs: number;
+  coarseStartMs: number;
+  coarseEndMs: number;
+  refinedStartMs: number | null;
+  refinedEndMs: number | null;
+  actualClipStartMs: number | null;
+  actualClipEndMs: number | null;
+  requestedStartMs: number;
+  requestedEndMs: number;
+  boundarySource: "coarse" | "refined" | "coarse_fallback";
+  boundaryRefinementId: string | null;
+  boundaryRefinementStatus:
+    | "queued"
+    | "running"
+    | "succeeded"
+    | "fallback"
+    | "system_failed"
+    | null;
+  boundaryRefinementPolicyVersion: string | null;
+  materializationPolicyVersion: string;
+  materializationMode: "stream_copy" | "exact_clip_transcode";
+  predictedCopyStartMs: number | null;
+  keyframeDistanceStartMs: number | null;
+  boundaryToleranceMs: number | null;
+  startDriftMs: number | null;
+  endDriftMs: number | null;
+  validationStatus: "pending" | "passed" | "failed";
+  validationFailureCode: string | null;
+  validationFailureMessage: string | null;
+  streamCopyAttempted: boolean;
+  copyRejectedReason: string | null;
+  materializationDurationMs: number | null;
   clipStartMs: number;
   clipEndMs: number;
   coverageSnapshot: unknown;
@@ -282,7 +313,7 @@ export type BackendTaskSegmentAsset = {
   failureCode: string | null;
   failureMessage: string | null;
   usageStatus: "internal_only";
-  generationPolicyVersion: "task_segment_demo_policy_v1";
+  generationPolicyVersion: string;
   createdAt: number;
   startedAt: number | null;
   completedAt: number | null;

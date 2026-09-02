@@ -8,6 +8,7 @@ import { AnnotationRunEntity } from "../src/database/entities/annotation-run.ent
 import { AuditLogEntity } from "../src/database/entities/audit-log.entity.js";
 import { MediaMetadataEntity } from "../src/database/entities/media-metadata.entity.js";
 import { SubmissionEntity } from "../src/database/entities/submission.entity.js";
+import { TaskBoundaryRefinementEntity } from "../src/database/entities/task-boundary-refinement.entity.js";
 import { TaskSegmentAssetEntity } from "../src/database/entities/task-segment-asset.entity.js";
 import { TeamEntity } from "../src/database/entities/team.entity.js";
 import { UserEntity } from "../src/database/entities/user.entity.js";
@@ -41,8 +42,9 @@ class RetentionStorage implements ObjectStoragePort {
     throw new Error("not used");
   }
   async headObject(input: { objectKey: string }) {
-    if (!this.objects.has(input.objectKey)) throw new Error("object not found");
-    return { sizeBytes: "1" };
+    const value = this.objects.get(input.objectKey);
+    if (!value) throw new Error("object not found");
+    return { sizeBytes: String(value.length) };
   }
   async deleteObject(input: { objectKey: string }) {
     this.objects.delete(input.objectKey);
@@ -136,7 +138,16 @@ describe("source retention (SEG-DEC-006a)", () => {
       executionStatus: "succeeded",
       reviewStatus: "not_required",
       publicationStatus: "auto_accepted",
-      normalizedResult: { status: "candidate" },
+      normalizedResult: {
+        schemaVersion: "ego_video_annotation_v2",
+        policyVersion: "ego_annotation_evidence_policy_v3",
+        promptVersion: "ego_video_annotation_prompt_v2",
+        promptContentSha256: "a".repeat(64),
+        model: "qwen-demo",
+        effective: { tasks: [{ task_label: "测试任务" }] },
+        labelMappings: [],
+        validation: { errors: [] },
+      },
       autoEligibility: "eligible",
       autoGateVersion: "annotation_auto_gate_v1",
       autoGateIssues: [],
@@ -164,6 +175,27 @@ describe("source retention (SEG-DEC-006a)", () => {
       sourceEndMs: 4_000,
       clipStartMs: 0,
       clipEndMs: 4_000,
+      requestedStartMs: 0,
+      requestedEndMs: 4_000,
+      actualStartMs: 0,
+      actualEndMs: 4_000,
+      materializationPolicyVersion: "task_segment_adaptive_cut_policy_v1",
+      materializationMode: "stream_copy",
+      sourceCodec: "h264",
+      sourceNominalFps: 30,
+      sourceHasAudio: true,
+      sourceDurationMs: 10_000,
+      requestedDurationMs: 4_000,
+      predictedCopyStartMs: 0,
+      keyframeDistanceStartMs: 0,
+      boundaryToleranceMs: 66.667,
+      startDriftMs: 0,
+      endDriftMs: 0,
+      validationStatus: "passed",
+      streamCopyAttempted: true,
+      materializationStartedAt: new Date(),
+      materializationCompletedAt: new Date(),
+      materializationDurationMs: 10,
       coverageSnapshot: {},
       evidenceSnapshot: {},
       validationWarnings: [],
@@ -211,6 +243,67 @@ describe("source retention (SEG-DEC-006a)", () => {
     expect(storage.objects.has("uploads/ret-busy.mp4")).toBe(true);
   });
 
+  it("defers archive while boundary refinement is queued even if the segment is terminal", async () => {
+    await seedSubmission("SUB-RET-REFINING", "uploads/ret-refining.mp4");
+    storage.objects.set("uploads/ret-refining.mp4", Buffer.from("source"));
+    await seedReadyAsset("SUB-RET-REFINING", "RUN-RET-REFINING");
+    const refinement: TaskBoundaryRefinementEntity = await dataSource
+      .getRepository(TaskBoundaryRefinementEntity)
+      .save({
+        id: "TBR-RET-REFINING",
+        submissionId: "SUB-RET-REFINING",
+        annotationRunId: "RUN-RET-REFINING",
+        taskIndex: 0,
+        policyVersion: "task_boundary_refinement_policy_v1",
+        promptVersion: "task_boundary_refinement_prompt_v1",
+        modelVersion: "qwen-demo",
+        coarseStartMs: 0,
+        coarseEndMs: 4_000,
+        refinedStartMs: null,
+        refinedEndMs: null,
+        startStatus: "unchanged",
+        endStatus: "unchanged",
+        startReasonCode: null,
+        endReasonCode: null,
+        sampleManifest: null,
+        rawModelOutput: null,
+        validationIssues: [],
+        inputTokens: null,
+        outputTokens: null,
+        modelLatencyMs: null,
+        executionStatus: "queued",
+        failureCode: null,
+        failureMessage: null,
+        completedAt: null,
+      });
+    const asset = await dataSource.getRepository(TaskSegmentAssetEntity).findOneByOrFail({
+      annotationRunId: "RUN-RET-REFINING",
+    });
+    asset.boundaryRefinementId = refinement.id;
+    asset.boundaryRefinementPolicyVersion = refinement.policyVersion;
+    await dataSource.getRepository(TaskSegmentAssetEntity).save(asset);
+
+    await expect(processor.process({
+      submissionId: "SUB-RET-REFINING",
+      reason: "settlement:TEST",
+    })).rejects.toBeInstanceOf(RetryableSourceRetentionError);
+    expect(storage.objects.has("uploads/ret-refining.mp4")).toBe(true);
+
+    refinement.executionStatus = "fallback";
+    refinement.startStatus = "failed";
+    refinement.endStatus = "failed";
+    refinement.completedAt = new Date();
+    await dataSource.getRepository(TaskBoundaryRefinementEntity).save(refinement);
+    storage.objects.set(
+      "task-segments/demo/SUB-RET-REFINING/RUN-RET-REFINING/task-0.mp4",
+      Buffer.from("clip"),
+    );
+    await expect(processor.process({
+      submissionId: "SUB-RET-REFINING",
+      reason: "settlement:TEST",
+    })).resolves.toBe("archived");
+  });
+
   it("archives the source object after settlement when all segments are final", async () => {
     await seedSubmission("SUB-RET-READY", "uploads/ret-ready.mp4");
     storage.objects.set("uploads/ret-ready.mp4", Buffer.from("source"));
@@ -233,5 +326,87 @@ describe("source retention (SEG-DEC-006a)", () => {
 
     // 幂等：重复处理返回 already_deleted
     await expect(processor.process({ submissionId: "SUB-RET-READY", reason: "settlement:TEST" })).resolves.toBe("already_deleted");
+  });
+
+  it("blocks source deletion for failed or unvalidated required assets", async () => {
+    for (const [suffix, generationStatus, validationStatus] of [
+      ["FAILED", "failed", "failed"],
+      ["PENDING", "ready", "pending"],
+    ] as const) {
+      const submissionId = `SUB-RET-${suffix}`;
+      const runId = `RUN-RET-${suffix}`;
+      await seedSubmission(submissionId, `uploads/ret-${suffix.toLowerCase()}.mp4`);
+      storage.objects.set(
+        `uploads/ret-${suffix.toLowerCase()}.mp4`,
+        Buffer.from("source"),
+      );
+      await seedReadyAsset(submissionId, runId);
+      const asset = await dataSource.getRepository(TaskSegmentAssetEntity)
+        .findOneByOrFail({ annotationRunId: runId });
+      asset.generationStatus = generationStatus;
+      asset.validationStatus = validationStatus;
+      await dataSource.getRepository(TaskSegmentAssetEntity).save(asset);
+      await expect(processor.process({
+        submissionId,
+        reason: "settlement:TEST",
+      })).rejects.toBeInstanceOf(RetryableSourceRetentionError);
+      expect(storage.objects.has(`uploads/ret-${suffix.toLowerCase()}.mp4`)).toBe(true);
+    }
+  });
+
+  it("blocks source deletion when a formal task has no asset row", async () => {
+    await seedSubmission("SUB-RET-MISSING", "uploads/ret-missing.mp4");
+    storage.objects.set("uploads/ret-missing.mp4", Buffer.from("source"));
+    await seedReadyAsset("SUB-RET-MISSING", "RUN-RET-MISSING");
+    const run = await dataSource.getRepository(AnnotationRunEntity).findOneByOrFail({
+      id: "RUN-RET-MISSING",
+    });
+    run.normalizedResult = {
+      ...run.normalizedResult,
+      effective: {
+        tasks: [
+          { task_label: "已有资产" },
+          { task_label: "缺失资产" },
+        ],
+      },
+    };
+    await dataSource.getRepository(AnnotationRunEntity).save(run);
+
+    await expect(processor.process({
+      submissionId: "SUB-RET-MISSING",
+      reason: "settlement:TEST",
+    })).rejects.toBeInstanceOf(RetryableSourceRetentionError);
+    expect(storage.objects.has("uploads/ret-missing.mp4")).toBe(true);
+  });
+
+  it("retains the source when all tasks are explicitly skipped", async () => {
+    await seedSubmission("SUB-RET-SKIPPED", "uploads/ret-skipped.mp4");
+    storage.objects.set("uploads/ret-skipped.mp4", Buffer.from("source"));
+    await seedReadyAsset("SUB-RET-SKIPPED", "RUN-RET-SKIPPED");
+    const asset = await dataSource.getRepository(TaskSegmentAssetEntity)
+      .findOneByOrFail({ annotationRunId: "RUN-RET-SKIPPED" });
+    asset.generationStatus = "skipped";
+    asset.validationStatus = "pending";
+    asset.failureCode = "TASK_TOO_SHORT";
+    asset.failureMessage = "allowed skipped reason";
+    await dataSource.getRepository(TaskSegmentAssetEntity).save(asset);
+
+    await expect(processor.process({
+      submissionId: "SUB-RET-SKIPPED",
+      reason: "settlement:TEST",
+    })).resolves.toBe("skipped");
+    expect(storage.objects.has("uploads/ret-skipped.mp4")).toBe(true);
+  });
+
+  it("blocks deletion when a canonical object cannot be verified", async () => {
+    await seedSubmission("SUB-RET-OBJECT", "uploads/ret-object.mp4");
+    storage.objects.set("uploads/ret-object.mp4", Buffer.from("source"));
+    await seedReadyAsset("SUB-RET-OBJECT", "RUN-RET-OBJECT");
+
+    await expect(processor.process({
+      submissionId: "SUB-RET-OBJECT",
+      reason: "settlement:TEST",
+    })).rejects.toBeInstanceOf(RetryableSourceRetentionError);
+    expect(storage.objects.has("uploads/ret-object.mp4")).toBe(true);
   });
 });
