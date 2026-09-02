@@ -313,11 +313,12 @@ export function normalizeVideoQcResult(
   // 人工复核降频：模型 evaluation_status 仅作输入，服务端按类型重判定。
   // 决定性候选/缺输入/校验错误 → review_pending；仅时段性候选或模型证据不足 → scored（原因留 advisory）。
   const decisiveCandidate = decisiveVetoPresent(input.raw.hard_reject.candidates);
-  const missingInputs =
-    input.sourceInput.missing_inputs.length > 0 ||
+  // 缺必要输入只看模型侧判定（missing_required_inputs）；
+  // sourceInput.missing_inputs 是可选技术指标（如 blur_ratio 探测失败），不触发复核。
+  const missingRequiredInputs =
     (input.raw.input_status.missing_required_inputs?.length ?? 0) > 0;
   const reviewRequiredByServer =
-    errors.length > 0 || missingInputs || decisiveCandidate;
+    errors.length > 0 || missingRequiredInputs || decisiveCandidate;
   let evaluationStatus: NormalizedVideoQcResultV1["evaluationStatus"] =
     input.raw.evaluation_status === "hard_reject"
       ? "hard_reject"
