@@ -1,7 +1,7 @@
 export const TASK_BOUNDARY_REFINEMENT_POLICY_VERSION =
   "task_boundary_refinement_policy_v1" as const;
 export const TASK_BOUNDARY_REFINEMENT_PROMPT_VERSION =
-  "task_boundary_refinement_prompt_v1" as const;
+  "task_boundary_refinement_prompt_v2" as const;
 export const TASK_BOUNDARY_WINDOW_BEFORE_MS = 3_000;
 export const TASK_BOUNDARY_WINDOW_AFTER_MS = 3_000;
 export const TASK_BOUNDARY_SAMPLE_INTERVAL_MS = 1_000;

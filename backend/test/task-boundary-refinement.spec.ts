@@ -261,14 +261,14 @@ describe("Qwen boundary-only provider", () => {
     previousTask: null,
     nextTask: null,
     frames: [frame(9_000, ["start"]), frame(21_000, ["end"])],
-    modelVersion: "qwen-vl-max",
+    modelVersion: "qwen3.7-plus",
   };
 
   it("makes one request and parses the strict boundary-only response", async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+    const fetcher = vi.fn(async (_input: unknown, _init?: RequestInit) => new Response(JSON.stringify({
       choices: [{ message: { content: JSON.stringify(output()) } }],
       usage: { prompt_tokens: 10, completion_tokens: 20 },
-      model: "qwen-vl-max",
+      model: "qwen3.7-plus",
     }), { status: 200 }));
     const provider = new QwenTaskBoundaryRefinementProvider({
       apiKey: "test-key",
@@ -283,6 +283,42 @@ describe("Qwen boundary-only provider", () => {
       outputTokens: 20,
     });
     expect(fetcher).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(fetcher.mock.calls[0]![1]!.body as string);
+    const format = body.response_format;
+    expect(format).toMatchObject({
+      type: "json_schema",
+      json_schema: {
+        name: "task_boundary_refinement_v1",
+        strict: true,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["task_index", "start", "end"],
+          properties: { task_index: { type: "integer", minimum: 0 } },
+        },
+      },
+    });
+    for (const [side, specificReason] of [
+      ["start", "ACTION_ALREADY_STARTED"],
+      ["end", "RESULT_NOT_VISIBLE"],
+    ] as const) {
+      const reasons = ["CLEAR_TRANSITION", "GRADUAL_TRANSITION", specificReason, "INSUFFICIENT_EVIDENCE"];
+      expect(format.json_schema.schema.properties[side]).toMatchObject({
+        additionalProperties: false,
+        required: ["coarse_timestamp_ms", "refined_timestamp_ms", "status", "evidence_timestamps_ms", "reason_code"],
+        properties: {
+          coarse_timestamp_ms: { type: "number" },
+          refined_timestamp_ms: { anyOf: [{ type: "number" }, { type: "null" }] },
+          status: { type: "string", enum: ["refined", "unchanged", "not_observable"] },
+          evidence_timestamps_ms: { type: "array", maxItems: 14, items: { type: "number" } },
+          reason_code: { type: "string", enum: reasons },
+        },
+      });
+      for (const reason of reasons) expect(body.messages[0].content).toContain(reason);
+    }
+    expect(body.messages[0].content).toContain("status=unchanged");
+    expect(body.messages[0].content).toContain("status=not_observable");
+    expect(body.messages[0].content).toContain("禁止顶层数组");
   });
 
   it("rejects an attempted task-label modification as an extra output field", async () => {
@@ -301,6 +337,94 @@ describe("Qwen boundary-only provider", () => {
     });
 
     await expect(provider.refine(request)).rejects.toThrow();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["unchanged", "not_observable"] as const)("accepts %s without requiring a boundary move", async (status) => {
+    const candidate = output({ start: null, end: null, startStatus: status, endStatus: status });
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify(candidate) } }],
+    })));
+    const provider = new QwenTaskBoundaryRefinementProvider({
+      apiKey: "test-key", baseUrl: "https://qwen.test/v1", timeoutMs: 1_000,
+      fetcher: fetcher as unknown as typeof fetch,
+    });
+    await expect(provider.refine(request)).resolves.toMatchObject({ output: candidate });
+    expect(validate(candidate).issues).toEqual([]);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["invented reason", { ...output().start, reason_code: "VISIBLE_ACTION_START" }, "start.reason_code"],
+    ["wrong-side reason", { ...output().start, reason_code: "RESULT_NOT_VISIBLE" }, "start.reason_code"],
+    ["uppercase status", { ...output().start, status: "REFINED" }, "start.status"],
+    ["too many timestamps", { ...output().start, evidence_timestamps_ms: Array(15).fill(9_000) }, "start.evidence_timestamps_ms"],
+  ])("retains raw output and issues for %s without another call", async (_label, start, issuePath) => {
+    const raw = { ...output(), start };
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify(raw) } }],
+    })));
+    const provider = new QwenTaskBoundaryRefinementProvider({
+      apiKey: "test-key", baseUrl: "https://qwen.test/v1", timeoutMs: 1_000,
+      fetcher: fetcher as unknown as typeof fetch,
+    });
+    await expect(provider.refine(request)).rejects.toMatchObject({
+      failureCode: "REFINEMENT_OUTPUT_SCHEMA_INVALID",
+      rawModelOutput: raw,
+      validationIssues: expect.arrayContaining([expect.stringContaining(issuePath as string)]),
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains non-JSON model content with a distinct failure code", async () => {
+    const raw = '{"task_index":';
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: raw } }],
+    })));
+    const provider = new QwenTaskBoundaryRefinementProvider({
+      apiKey: "test-key", baseUrl: "https://qwen.test/v1", timeoutMs: 1_000,
+      fetcher: fetcher as unknown as typeof fetch,
+    });
+    await expect(provider.refine(request)).rejects.toMatchObject({
+      failureCode: "REFINEMENT_OUTPUT_NOT_JSON", rawModelOutput: raw,
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects and retains an array-wrapped result instead of silently unwrapping it", async () => {
+    const raw = [output()];
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify(raw) } }],
+    })));
+    const provider = new QwenTaskBoundaryRefinementProvider({
+      apiKey: "test-key", baseUrl: "https://qwen.test/v1", timeoutMs: 1_000,
+      fetcher: fetcher as unknown as typeof fetch,
+    });
+    await expect(provider.refine(request)).rejects.toMatchObject({
+      failureCode: "REFINEMENT_OUTPUT_SCHEMA_INVALID", rawModelOutput: raw,
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("classifies HTTP failure separately and does not retry", async () => {
+    const fetcher = vi.fn(async () => new Response("unavailable", { status: 503 }));
+    const provider = new QwenTaskBoundaryRefinementProvider({
+      apiKey: "test-key", baseUrl: "https://qwen.test/v1", timeoutMs: 1_000,
+      fetcher: fetcher as unknown as typeof fetch,
+    });
+    await expect(provider.refine(request)).rejects.toMatchObject({
+      failureCode: "REFINEMENT_HTTP_FAILED", message: expect.stringContaining("503"),
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("classifies transport failure separately and does not retry", async () => {
+    const fetcher = vi.fn(async () => { throw new TypeError("fetch failed"); });
+    const provider = new QwenTaskBoundaryRefinementProvider({
+      apiKey: "test-key", baseUrl: "https://qwen.test/v1", timeoutMs: 1_000,
+      fetcher: fetcher as unknown as typeof fetch,
+    });
+    await expect(provider.refine(request)).rejects.toMatchObject({ failureCode: "REFINEMENT_HTTP_FAILED" });
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });

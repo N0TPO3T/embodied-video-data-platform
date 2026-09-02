@@ -22,9 +22,10 @@ import {
   taskBoundarySamplePlan,
   type TaskBoundaryFrameSampler,
 } from "../src/task-segment/task-boundary-frame-sampler.js";
-import type {
-  TaskBoundaryRefinementProvider,
-  TaskBoundaryRefinementRequest,
+import {
+  QwenTaskBoundaryRefinementProvider,
+  type TaskBoundaryRefinementProvider,
+  type TaskBoundaryRefinementRequest,
 } from "../src/task-segment/task-boundary-refinement.provider.js";
 import { TaskBoundaryRefinementProcessor } from "../src/task-segment/task-boundary-refinement.processor.js";
 import type { TaskSegmentMediaTool } from "../src/task-segment/task-segment-media.js";
@@ -1021,7 +1022,7 @@ describe("task segment demo", () => {
     ])).toEqual(isolatedBefore);
   });
 
-  it("falls back the whole task to coarse boundaries on provider or schema failure", async () => {
+  it("falls back the whole task to coarse boundaries on provider or semantic failure", async () => {
     process.env.TASK_BOUNDARY_REFINEMENT_ENABLED = "true";
     for (const [suffix, mode] of [
       ["PROVIDER", "throw"],
@@ -1059,6 +1060,9 @@ describe("task segment demo", () => {
       });
       expect(fallback).toMatchObject({
         executionStatus: "fallback",
+        failureCode: mode === "throw"
+          ? "REFINEMENT_PROVIDER_FAILED"
+          : "REFINEMENT_OUTPUT_SEMANTIC_INVALID",
         startStatus: "failed",
         endStatus: "failed",
         refinedStartMs: null,
@@ -1080,6 +1084,53 @@ describe("task segment demo", () => {
         eventType: "task.segment.generate.v1",
       })).toBe(1);
     }
+  });
+
+  it.each([
+    ["SCHEMA", 200, JSON.stringify({ task_index: 0, start: { reason_code: "INVENTED_REASON" } }), "REFINEMENT_OUTPUT_SCHEMA_INVALID"],
+    ["NOT-JSON", 200, '{"task_index":', "REFINEMENT_OUTPUT_NOT_JSON"],
+    ["HTTP", 503, "unavailable", "REFINEMENT_HTTP_FAILED"],
+  ] as const)("persists %s failure evidence without issuing another model call", async (suffix, status, content, failureCode) => {
+    process.env.TASK_BOUNDARY_REFINEMENT_ENABLED = "true";
+    const submissionId = `SUB-CONTRACT-${suffix}`;
+    const runId = `RUN-CONTRACT-${suffix}`;
+    const objectKey = `uploads/contract-${suffix}.mp4`;
+    await seedSubmission(submissionId, objectKey, 15_000);
+    storage.objects.set(objectKey, Buffer.from("source"));
+    await seedRun(runId, submissionId, [
+      task({ startMs: 5_000, endMs: 10_000, label: "放置杯子" }),
+    ]);
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content } }],
+    }), { status }));
+    const boundaryProcessor = new TaskBoundaryRefinementProcessor(
+      dataSource,
+      storage,
+      new FakeBoundarySampler(),
+      new QwenTaskBoundaryRefinementProvider({
+        apiKey: "test-key", baseUrl: "https://qwen.test/v1", timeoutMs: 1_000,
+        fetcher: fetcher as unknown as typeof fetch,
+      }),
+    );
+    await service.generate(admin, runId);
+    const repository = dataSource.getRepository(TaskBoundaryRefinementEntity);
+    const refinement = await repository.findOneByOrFail({ annotationRunId: runId });
+    await expect(boundaryProcessor.process({ refinementId: refinement.id })).resolves.toBe("fallback");
+    await expect(boundaryProcessor.process({ refinementId: refinement.id })).resolves.toBe("already_claimed");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const saved = await repository.findOneByOrFail({ id: refinement.id });
+    expect(saved).toMatchObject({
+      executionStatus: "fallback",
+      failureCode,
+      rawModelOutput: suffix === "SCHEMA" ? JSON.parse(content) : suffix === "NOT-JSON" ? content : null,
+    });
+    expect(saved.validationIssues).not.toEqual([]);
+    if (suffix === "SCHEMA") {
+      expect(saved.validationIssues).toEqual(expect.arrayContaining([expect.stringContaining("start.reason_code")]));
+    }
+    expect(await dataSource.getRepository(TaskSegmentAssetEntity).findOneByOrFail({ annotationRunId: runId })).toMatchObject({
+      boundarySource: "coarse_fallback", clipStartMs: 4_500, clipEndMs: 10_500,
+    });
   });
 
   it("does not issue a second model call when recovering a running refinement", async () => {
