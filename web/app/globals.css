@@ -507,6 +507,32 @@ a { color: inherit; text-decoration: none; }
 .report-issue-group li em { color: #725c3c; font-size: 9px; font-style: normal; line-height: 1.5; }
 .report-issue-group li small { color: #b08b58; font-size: 8px; }
 .report-fold-empty { margin: 0; color: #9aa5b5; font-size: 9px; }
+
+/* Submission detail readability; keep shared reports and other pages unchanged. */
+.submission-detail-page { font-size: 16px; line-height: 1.65; }
+.submission-detail-page .card-heading h2 { font-size: 18px; }
+.submission-detail-page :is(.report-summary, .admin-task-timeline-list strong, .task-segment-card legend, .task-segment-meta-item, .report-metrics strong) { font-size: 16px; line-height: 1.75; }
+.submission-detail-page :is(.form-message, .report-fold-toggle, .report-issue-group > strong, .report-issue-group li em, .report-dimension strong, .video-preview strong) { font-size: 15px; line-height: 1.65; }
+.submission-detail-page :is(.back-page, .page-heading p, .page-heading span, .card-heading p, .text-button, .table-action, .field-hint, .status-badge, .report-conclusion, .report-total small, .report-dimension span, .report-dimensions-empty, .report-metrics small, .report-timeline span, .report-issue-group li small, .report-fold-empty, .task-segment-meta-item em, .video-preview small, .video-preview > span, .ai-progress-steps span, .ai-progress p) { font-size: 14px; line-height: 1.6; }
+.submission-detail-page :is(.card-heading p, .field-hint, .report-metrics small, .report-issue-group li small, .report-fold-empty, .ai-progress p) { color: #5f6d82; }
+.submission-detail-page .admin-task-timeline-list time { font-size: 15px; }
+.submission-detail-page .report-dimension { grid-template-columns: minmax(90px, 1.5fr) minmax(20px, 1fr) 28px; }
+.submission-detail-page .report-timeline { margin-bottom: 20px; }
+.submission-detail-page .ai-progress-steps > div { grid-template-columns: 1fr; justify-items: center; text-align: center; }
+.submission-detail-page .ai-progress-steps i { width: 22px; height: 22px; font-size: 14px; }
+.submission-detail-page .task-segment-actions { flex-wrap: wrap; }
+.submission-detail-page .task-segment-demo-structured .issue-editor-heading { flex-wrap: wrap; }
+.submission-detail-page :is(.report-head > div, .report-issue-group li span, .task-segment-meta, .task-segment-meta-item) { min-width: 0; overflow-wrap: anywhere; }
+.submission-detail-page .submission-review-notice { align-items: flex-start; gap: 10px; padding: 16px 18px; color: #79551d; }
+.submission-detail-page .submission-review-notice > svg { flex: 0 0 auto; margin-top: 4px; }
+.submission-detail-page .submission-review-notice > div { min-width: 0; overflow-wrap: anywhere; }
+.submission-detail-page .submission-review-notice strong { font-size: 16px; }
+.submission-detail-page .submission-review-notice ul { display: grid; margin: 8px 0 0; padding-left: 20px; gap: 6px; }
+@media (max-width: 680px) {
+  .submission-detail-page .report-head { grid-template-columns: 1fr; }
+  .submission-detail-page .report-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .submission-detail-page .admin-task-timeline-list li { grid-template-columns: 1fr; gap: 4px; }
+}
 .ai-conclusion-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .ai-conclusion .report-total { font-size: 34px; }
 .review-page-layout { grid-template-columns: minmax(0, 1fr) minmax(min(360px, 100%), 1.15fr); }

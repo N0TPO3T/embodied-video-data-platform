@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PlatformApp } from "../../app/PlatformApp";
@@ -881,6 +881,69 @@ describe("collector journey", () => {
     renderAdminDetail(24);
 
     expect(await screen.findByText("28.00 分")).toBeVisible();
+  });
+
+  it("shows readable Chinese review reasons without changing the original quality result", async () => {
+    const user = userEvent.setup();
+    const original = backendSubmission();
+    const reviewReasons = [
+      "场景标签字典缺失'桌面/书桌'类别，需人工确认是否映射至'办公室/工位'。",
+      "D1维度因垂直俯拍角度扣分较多，需确认是否符合采集规范。",
+      "D3（frame_and_video_quality）/RESOLUTION_LOW 扣分缺少证据时间点",
+      "D4（task_authenticity_completeness）/TASK_SCENE_UNDEFINED 扣分缺少证据时间点",
+      "疑似硬性否决候选：[object Object]、NON_FIRST_PERSON",
+      "服务端规则校验未通过",
+      "任务符合度：1 条硬性要求未满足（第一视角拍摄）",
+    ];
+    const submission = backendSubmission({
+      quality: {
+        ...original.quality!,
+        status: "review_pending",
+        reviewRequired: true,
+        reviewReasons,
+      },
+    });
+    const originalSnapshot = JSON.stringify(submission);
+    vi.mocked(getSubmission).mockResolvedValue(submission);
+
+    renderAdminDetail(24);
+
+    const notice = await screen.findByRole("region", { name: "人工复核原因" });
+    expect(notice.closest(".submission-detail-page")).not.toBeNull();
+    expect(within(notice).getAllByRole("listitem")).toHaveLength(reviewReasons.length);
+    expect(notice).toHaveTextContent(reviewReasons[0]);
+    expect(notice).toHaveTextContent("第一人称与构图因垂直俯拍角度扣分较多");
+    expect(notice).toHaveTextContent("视频与帧质量/分辨率偏低 扣分缺少证据时间点");
+    expect(notice).toHaveTextContent("任务符合度与真实性/任务场景尚未明确 扣分缺少证据时间点");
+    expect(notice).toHaveTextContent("疑似触及质量否决条件：原因详情缺失，需人工核实、非第一人称占比过高");
+    expect(notice).toHaveTextContent("质检结果存在规则冲突或信息缺失，需要人工核实");
+    expect(notice).toHaveTextContent(reviewReasons[6]);
+    expect(screen.getAllByText("等待人工复核").length).toBeGreaterThan(0);
+    expect(screen.getByText("76")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: /评分依据与扣分明细/ }));
+
+    expect(screen.getAllByText("视频与帧质量/分辨率偏低 扣分缺少证据时间点")).toHaveLength(2);
+    expect(document.body).not.toHaveTextContent(/RESOLUTION_LOW|TASK_SCENE_UNDEFINED|NON_FIRST_PERSON|frame_and_video_quality|task_authenticity_completeness|\[object Object\]|D[1-5]维度/);
+    expect(JSON.stringify(submission)).toBe(originalSnapshot);
+  });
+
+  it("keeps the reason and need for review visible for an unfamiliar technical code", async () => {
+    const original = backendSubmission();
+    vi.mocked(getSubmission).mockResolvedValue(backendSubmission({
+      quality: {
+        ...original.quality!,
+        status: "review_pending",
+        reviewRequired: true,
+        reviewReasons: ["D2（hand_forearm_object_integrity）/NEW_QUALITY_CODE 的证据超出视频时间轴"],
+      },
+    }));
+
+    renderAdminDetail(24);
+
+    const notice = await screen.findByRole("region", { name: "人工复核原因" });
+    expect(notice).toHaveTextContent("手部、前臂与对象/未识别的质检项（需人工核实） 的证据超出视频时间轴");
+    expect(notice).not.toHaveTextContent("NEW_QUALITY_CODE");
   });
 
   it("shows timestamped tasks and their generated clips for administrators", async () => {

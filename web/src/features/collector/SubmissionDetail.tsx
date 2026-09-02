@@ -3,6 +3,7 @@
 import { ArrowLeft, CopyCheck, FileVideo } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { dimensionLabel, hardVetoReasonLabel } from "../../ai-quality/dimensionLabels";
 import { QualityReportCard } from "../../components/QualityReportCard";
 import { StatusBadge } from "../../components/StatusBadge";
 import { TaskSegmentDemo } from "../../components/TaskSegmentDemo";
@@ -39,6 +40,39 @@ type AdminTaskTimelineResult = {
   status: "empty" | "failed" | "processing" | "ready" | "unpublished";
   videoSummary?: string;
 };
+
+const REVIEW_DIMENSIONS: Record<string, string> = {
+  D1: "first_person_and_composition",
+  D2: "hand_forearm_object_integrity",
+  D3: "frame_and_video_quality",
+  D4: "task_authenticity_completeness",
+  D5: "task_value_uniqueness",
+};
+
+function reviewReasonLabel(reason: string): string {
+  const labels: Record<string, string> = {
+    RESOLUTION_LOW: "分辨率偏低",
+    TASK_SCENE_UNDEFINED: "任务场景尚未明确",
+    effective_duration_ms: "有效时长",
+    coefficient: "评分系数",
+    score: "分数",
+  };
+  return reason
+    .replace(/服务端规则校验未通过/g, "质检结果存在规则冲突或信息缺失，需要人工核实")
+    .replace(/疑似硬性否决候选/g, "疑似触及质量否决条件")
+    // Historical reasons may already have lost their object content; do not invent it.
+    .replace(/\[object Object\]/g, "原因详情缺失，需人工核实")
+    .replace(/\bD[1-5]\b(?:[（(][a-z_]+[）)]|维度)?/g, (code) =>
+      dimensionLabel(REVIEW_DIMENSIONS[code.slice(0, 2)]))
+    .replace(/\b(?:[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+|coefficient|score)\b/g, (code) => {
+      if (labels[code]) return labels[code];
+      const dimension = dimensionLabel(code);
+      if (dimension !== code) return dimension;
+      const veto = hardVetoReasonLabel(code);
+      return veto !== code ? veto : "未识别的质检项（需人工核实）";
+    })
+    .replace(/（SHA-256 一致）/g, "（文件内容一致）");
+}
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -380,9 +414,14 @@ export function SubmissionDetail({
       : item.qualityResult?.status === "scored"
         ? "success"
         : "warning";
+  const reviewReasons = item.qualityResult?.reviewReasons?.map(reviewReasonLabel) ?? [];
+  // Only adapt presentation on this page; retain the original result and review decision.
+  const displayItem = item.qualityResult
+    ? { ...item, qualityResult: { ...item.qualityResult, reviewReasons } }
+    : item;
 
   return (
-    <div className="page-stack">
+    <div className="page-stack submission-detail-page">
       <button className="back-page" onClick={() => navigate(backPath)}><ArrowLeft size={16} />{backLabel}</button>
       <div className="page-heading"><div><p className="page-kicker">{item.id}</p><h1>{item.fileName}</h1><span>{item.createdAt} · {item.resolution} · {item.sizeMb} MB</span></div><StatusBadge label={label} tone={tone} /></div>
       {item.assetStatus === "quarantined" && <div className="form-message error">该视频已进入敏感隔离区：{item.quarantine?.reason ?? "敏感内容隔离"}</div>}
@@ -390,19 +429,23 @@ export function SubmissionDetail({
       {item.storageStatus === "delete_pending" && <div className="form-message warning">该视频对象正在删除，完成前不可预览或重新处理。</div>}
       {duplicateCandidate && <div className="form-message warning"><CopyCheck size={14} />该视频疑似与 {duplicateCandidate.candidateFileName ?? duplicateCandidate.candidateSubmissionId} 重复，相似度 {Math.round(duplicateCandidate.similarity * 100)}%，管理员确认前不会进入金额锁定。</div>}
       {item.qualityResult?.status === "review_pending" &&
-        item.qualityResult.reviewReasons?.length ? (
-        <div className="form-message warning">
-          <CopyCheck size={14} />
-          该视频需要人工复核：
-          {item.qualityResult.reviewReasons.map((reason, index) => (
-            <span key={`qc-reason-${index}`}>{index > 0 ? "；" : ""}{reason}</span>
-          ))}
-        </div>
+        reviewReasons.length > 0 ? (
+        <section className="form-message warning submission-review-notice" aria-label="人工复核原因">
+          <CopyCheck size={18} aria-hidden="true" />
+          <div>
+            <strong>该视频需要人工复核</strong>
+            <ul>
+              {reviewReasons.map((reason, index) => (
+                <li key={`qc-reason-${index}`}>{reason}</li>
+              ))}
+            </ul>
+          </div>
+        </section>
       ) : null}
       <div className="detail-grid report-layout">
         <section className="video-preview">{preview ? <><video controls preload="metadata" poster={preview.thumbnail?.url} aria-label={`${preview.fileName} 预览`}>{preview.hls ? <source src={preview.hls.url} type={preview.hls.contentType} /> : null}<source src={preview.url} type={preview.contentType} /></video><span>{preview.hls ? `${preview.hls.qualities.map((quality) => quality.quality).join(" / ")}` : `${Math.floor(item.durationSeconds / 60)}:${String(item.durationSeconds % 60).padStart(2, "0")}`}</span></> : <div><FileVideo size={42} /><strong>{previewState === "loading" ? "正在生成预览地址" : "已保存原始视频"}</strong><small>{previewState === "unavailable" ? "预览暂时无法生成" : "视频已保存至平台对象存储"}</small></div>} {!preview ? <span>{Math.floor(item.durationSeconds / 60)}:{String(item.durationSeconds % 60).padStart(2, "0")}</span> : null}</section>
         <QualityReportCard
-          submission={item}
+          submission={displayItem}
           pointsLabel={pointsLabel}
           evidenceByRange={evidenceByRange}
         />
@@ -419,7 +462,7 @@ export function SubmissionDetail({
           <div className="card-heading">
             <div>
               <h2>任务时间轴</h2>
-              <p>当前正式 Annotation Run 中的任务边界与描述</p>
+              <p>当前已发布标注中的任务边界与描述</p>
             </div>
           </div>
           {timelineState === "loading" ? (
@@ -465,7 +508,7 @@ export function SubmissionDetail({
           <div className="card-heading">
             <div>
               <h2>任务切片</h2>
-              <p>当前正式 Annotation Run 对应的片段状态、标注与预览</p>
+              <p>当前已发布标注对应的片段状态、标注与预览</p>
             </div>
           </div>
           <TaskSegmentDemo
