@@ -206,7 +206,7 @@ describe("TaskSegmentDemo", () => {
             taskIndex: 0,
             objects: ["冰箱门", "冰箱"],
             actions: ["grasp", "open", "release"],
-            completion: "complete",
+            completion: "partial",
           },
         ]}
       />,
@@ -219,7 +219,8 @@ describe("TaskSegmentDemo", () => {
     expect(screen.getAllByText("动作").length).toBeGreaterThan(0);
     expect(screen.getByText("抓取、打开、松开")).toBeInTheDocument();
     expect(screen.getAllByText("完成状态").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("completed").length).toBeGreaterThan(0);
+    expect(screen.getByText("部分完成")).toBeInTheDocument();
+    expect(screen.getByText("已完成")).toBeInTheDocument();
     expect(screen.getByText("切片就绪")).toBeInTheDocument();
     expect(screen.queryByText(/Run：/u)).not.toBeInTheDocument();
     expect(screen.queryByText(/Submission：/u)).not.toBeInTheDocument();
@@ -228,6 +229,34 @@ describe("TaskSegmentDemo", () => {
     expect(screen.queryByText(/技术校验 warning/u)).not.toBeInTheDocument();
     expect(screen.queryByText(/粗边界：/u)).not.toBeInTheDocument();
     expect(screen.queryByText(/精修边界：/u)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["complete", "已完成"],
+    ["completed", "已完成"],
+    ["incomplete", "未完成"],
+    ["partial", "部分完成"],
+    ["uncertain", "不确定"],
+    ["unexpected_value", "未知"],
+  ])("translates completion %s without changing the asset value", async (completion, label) => {
+    const asset = { ...baseAsset, completion };
+    api.list.mockResolvedValue({
+      assets: [asset],
+      pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 },
+    });
+
+    render(
+      <TaskSegmentDemo
+        annotationRunId="RUN-SEG"
+        submissionId="SUB-SEG"
+        canGenerate
+        presentation="structured"
+      />,
+    );
+
+    expect(await screen.findByText(label)).toBeInTheDocument();
+    expect(screen.queryByText(completion, { exact: true })).not.toBeInTheDocument();
+    expect(asset.completion).toBe(completion);
   });
 
   it("renders queued and processing assets without exposing playback or retry", async () => {

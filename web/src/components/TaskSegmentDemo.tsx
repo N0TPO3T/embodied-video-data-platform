@@ -83,7 +83,19 @@ function compactTimestamp(milliseconds: number): string {
 }
 
 function completionLabel(value: string): string {
-  return value === "complete" ? "completed" : value;
+  switch (value) {
+    case "complete":
+    case "completed":
+      return "已完成";
+    case "incomplete":
+      return "未完成";
+    case "partial":
+      return "部分完成";
+    case "uncertain":
+      return "不确定";
+    default:
+      return "未知";
+  }
 }
 
 function fileSize(value: string | null): string {

@@ -846,6 +846,7 @@ describe("collector journey", () => {
     expect(getPointRule).toHaveBeenCalledTimes(1);
     expect(listAnnotationRuns).not.toHaveBeenCalled();
     expect(screen.queryByRole("region", { name: "任务时间轴" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "视频介绍" })).not.toBeInTheDocument();
   });
 
   it("shows zero estimated points when the result is below its locked threshold", async () => {
@@ -894,6 +895,7 @@ describe("collector journey", () => {
     expect(await screen.findByRole("region", { name: "任务时间轴" })).toBeVisible();
     expect(await screen.findByText("5.1s～11.9s")).toBeVisible();
     expect(screen.getByText("“整理餐具”")).toBeVisible();
+    expect(screen.getByRole("region", { name: "视频介绍" })).toHaveTextContent("整理物品");
     const segmentRegion = await screen.findByRole("region", { name: "任务切片" });
     expect(segmentRegion).toBeVisible();
     expect(await screen.findByText("5.1s～11.9s 整理餐具")).toBeVisible();
@@ -903,7 +905,7 @@ describe("collector journey", () => {
     expect(screen.getByText("动作")).toBeVisible();
     expect(screen.getByText("抓取、放置")).toBeVisible();
     expect(screen.getByText("完成状态")).toBeVisible();
-    expect(screen.getByText("completed")).toBeVisible();
+    expect(screen.getByText("已完成")).toBeVisible();
     expect(segmentRegion).toHaveTextContent("切片就绪");
     expect(segmentRegion).not.toHaveTextContent("Run：");
     expect(segmentRegion).not.toHaveTextContent("Submission：");
@@ -917,13 +919,14 @@ describe("collector journey", () => {
     });
   });
 
-  it("prefers human-corrected tasks over the candidate task list", async () => {
+  it("prefers human-corrected tasks and video summary over the candidate", async () => {
     vi.mocked(listAnnotationRuns).mockResolvedValue([
       formalAnnotationRun({
         reviewStatus: "accepted_corrected",
         publicationStatus: "human_verified",
         humanResult: {
           effective: {
+            video_summary: "人工修正后的视频介绍",
             tasks: [
               {
                 start_ms: 6_250,
@@ -941,6 +944,29 @@ describe("collector journey", () => {
     expect(await screen.findByText("6.3s～12.8s")).toBeVisible();
     expect(screen.getByText("“人工修正后的任务”")).toBeVisible();
     expect(screen.queryByText("“整理餐具”")).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "视频介绍" })).toHaveTextContent("人工修正后的视频介绍");
+    expect(screen.queryByText("整理物品")).not.toBeInTheDocument();
+  });
+
+  it.each([undefined, "", "   ", null])("omits a missing or empty formal video summary (%s)", async (videoSummary) => {
+    vi.mocked(listAnnotationRuns).mockResolvedValue([
+      formalAnnotationRun({
+        reviewStatus: "accepted_corrected",
+        publicationStatus: "human_verified",
+        humanResult: {
+          effective: {
+            video_summary: videoSummary,
+            tasks: [annotationTask("整理餐具", 5_100, 11_900)],
+          },
+        },
+      }),
+    ]);
+
+    renderAdminDetail(24);
+
+    expect(await screen.findByText("5.1s～11.9s")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "视频介绍" })).not.toBeInTheDocument();
+    expect(screen.queryByText("整理物品")).not.toBeInTheDocument();
   });
 
   it("does not present candidate, rejected, or superseded runs as formal tasks", async () => {
@@ -956,6 +982,8 @@ describe("collector journey", () => {
       await screen.findByText("Annotation 已生成候选结果，等待管理员审核并正式发布。"),
     ).toBeVisible();
     expect(screen.queryByText("“整理餐具”")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "视频介绍" })).not.toBeInTheDocument();
+    expect(screen.queryByText("整理物品")).not.toBeInTheDocument();
   });
 
   it("shows the annotation failure instead of an empty-task message", async () => {

@@ -37,6 +37,7 @@ type AdminTaskTimelineResult = {
   message: string | null;
   runId: string | null;
   status: "empty" | "failed" | "processing" | "ready" | "unpublished";
+  videoSummary?: string;
 };
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -119,6 +120,9 @@ function taskTimelineResult(runs: BackendAnnotationRun[]): AdminTaskTimelineResu
       message: null,
       runId: run.id,
       status: items.length > 0 ? "ready" : "empty",
+      videoSummary: typeof effective?.video_summary === "string"
+        ? effective.video_summary.trim()
+        : "",
     };
   }
 
@@ -403,6 +407,13 @@ export function SubmissionDetail({
           evidenceByRange={evidenceByRange}
         />
       </div>
+      {currentAccount.role === "admin" &&
+      timelineState === "ready" && timeline?.videoSummary ? (
+        <section className="content-card" aria-label="视频介绍">
+          <div className="card-heading"><h2>视频介绍</h2></div>
+          <p className="report-summary">{timeline.videoSummary}</p>
+        </section>
+      ) : null}
       {currentAccount.role === "admin" ? (
         <section className="content-card admin-task-timeline" aria-label="任务时间轴">
           <div className="card-heading">
