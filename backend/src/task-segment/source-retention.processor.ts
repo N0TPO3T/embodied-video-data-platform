@@ -4,6 +4,7 @@ import { DataSource } from "typeorm";
 import { AuditService } from "../audit/audit.service.js";
 import { SubmissionEntity } from "../database/entities/submission.entity.js";
 import { TaskSegmentAssetEntity } from "../database/entities/task-segment-asset.entity.js";
+import { TaskBoundaryRefinementEntity } from "../database/entities/task-boundary-refinement.entity.js";
 import {
   OBJECT_STORAGE,
   type ObjectStoragePort,
@@ -48,6 +49,17 @@ export class SourceRetentionProcessor {
     if (incomplete.length > 0) {
       throw new RetryableSourceRetentionError(
         `存在未完成切片资产 ${incomplete.length} 个（${incomplete[0]?.generationStatus}），等待切片生成完成`,
+      );
+    }
+    const refinements = await this.dataSource
+      .getRepository(TaskBoundaryRefinementEntity)
+      .findBy({ submissionId: input.submissionId });
+    const incompleteRefinements = refinements.filter((refinement) =>
+      ["queued", "running"].includes(refinement.executionStatus),
+    );
+    if (incompleteRefinements.length > 0) {
+      throw new RetryableSourceRetentionError(
+        `存在未完成边界精修 ${incompleteRefinements.length} 个（${incompleteRefinements[0]?.executionStatus}），等待精修完成或回退`,
       );
     }
 

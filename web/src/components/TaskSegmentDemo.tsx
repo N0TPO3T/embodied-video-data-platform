@@ -283,6 +283,21 @@ export function TaskSegmentDemo({
                 </div>
                 {!structured ? (
                   <>
+                    <details>
+                      <summary>边界技术信息</summary>
+                      <small>
+                        粗边界：{timestamp(asset.coarseStartMs)} → {timestamp(asset.coarseEndMs)}
+                      </small>
+                      <small>
+                        精修边界：{asset.refinedStartMs === null ? "—" : timestamp(asset.refinedStartMs)} → {asset.refinedEndMs === null ? "—" : timestamp(asset.refinedEndMs)}
+                      </small>
+                      <small>
+                        实际切片：{asset.actualClipStartMs === null ? "—" : timestamp(asset.actualClipStartMs)} → {asset.actualClipEndMs === null ? "—" : timestamp(asset.actualClipEndMs)}
+                      </small>
+                      <small>
+                        来源：{asset.boundarySource} · 精修状态：{asset.boundaryRefinementStatus ?? "未启用"} · {asset.boundaryRefinementPolicyVersion ?? "—"}
+                      </small>
+                    </details>
                     <small>{asset.completion} / {asset.resultStatus} · {asset.taskVerb}</small>
                     <small>
                       Run：<a href={`/admin/ai/annotation-runs/${encodeURIComponent(asset.annotationRunId)}/review`}>{asset.annotationRunId}</a>

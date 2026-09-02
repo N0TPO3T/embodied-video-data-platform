@@ -10,7 +10,10 @@ import {
   AI_ANNOTATION_QUEUE,
   AI_ANNOTATION_ROUTING_KEY,
   EVENTS_EXCHANGE,
+  TASK_BOUNDARY_REFINEMENT_QUEUE,
+  TASK_BOUNDARY_REFINEMENT_ROUTING_KEY,
   assertAiAnnotationTopology,
+  assertTaskBoundaryRefinementTopology,
 } from "../messaging/rabbitmq-topology.js";
 import { WorkerHeartbeatService } from "../operations/worker-heartbeat.service.js";
 import { aiAnnotationModelTimeoutMs } from "../ai-quality/ai-quality.config.js";
@@ -18,6 +21,7 @@ import {
   AnnotationRunService,
   RetryableAnnotationRunError,
 } from "./annotation-run.service.js";
+import { TaskBoundaryRefinementProcessor } from "../task-segment/task-boundary-refinement.processor.js";
 
 const RETRY_DELAYS = [5_000, 30_000, 120_000] as const;
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -36,6 +40,7 @@ export class RabbitAnnotationWorker {
 
   constructor(
     private readonly runs: AnnotationRunService,
+    private readonly boundaryRefinements: TaskBoundaryRefinementProcessor,
     private readonly heartbeats?: WorkerHeartbeatService,
   ) {}
 
@@ -48,6 +53,7 @@ export class RabbitAnnotationWorker {
     this.connection = await connector(url);
     this.channel = await this.connection.createConfirmChannel();
     await assertAiAnnotationTopology(this.channel);
+    await assertTaskBoundaryRefinementTopology(this.channel);
     for (const [index, delay] of RETRY_DELAYS.entries()) {
       await this.channel.assertQueue(`${AI_ANNOTATION_QUEUE}.retry.${index + 1}`, {
         durable: true,
@@ -58,9 +64,25 @@ export class RabbitAnnotationWorker {
         },
       });
     }
+    for (const [index, delay] of RETRY_DELAYS.entries()) {
+      await this.channel.assertQueue(
+        `${TASK_BOUNDARY_REFINEMENT_QUEUE}.retry.${index + 1}`,
+        {
+          durable: true,
+          arguments: {
+            "x-message-ttl": delay,
+            "x-dead-letter-exchange": EVENTS_EXCHANGE,
+            "x-dead-letter-routing-key": TASK_BOUNDARY_REFINEMENT_ROUTING_KEY,
+          },
+        },
+      );
+    }
     await this.channel.prefetch(concurrency);
     await this.channel.consume(AI_ANNOTATION_QUEUE, (message) => {
       if (message) void this.handle(message);
+    });
+    await this.channel.consume(TASK_BOUNDARY_REFINEMENT_QUEUE, (message) => {
+      if (message) void this.handleBoundaryRefinement(message);
     });
   }
 
@@ -178,6 +200,84 @@ export class RabbitAnnotationWorker {
       ]);
     } finally {
       clearTimeout(timeout);
+    }
+  }
+
+  private async handleBoundaryRefinement(message: ConsumeMessage): Promise<void> {
+    const channel = this.channel;
+    if (!channel) return;
+    const retryAttempt = Number(message.properties.headers?.["retry-attempt"] ?? 0);
+    let refinementId: string | null = null;
+    let taskError: string | null = null;
+    let deadLetter = false;
+    try {
+      const payload = JSON.parse(message.content.toString("utf8")) as {
+        refinementId?: unknown;
+      };
+      if (typeof payload.refinementId !== "string") {
+        throw new Error("Boundary refinement job refinementId is invalid");
+      }
+      refinementId = payload.refinementId;
+      this.activeRuns.set(refinementId, new Date());
+      await this.publishHeartbeat();
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(
+          () => controller.abort(new Error("边界精修任务超时")),
+          this.taskTimeoutMs,
+        );
+        if (typeof timeout.unref === "function") timeout.unref();
+        try {
+          await this.boundaryRefinements.process({
+            refinementId,
+            recoverRunning: retryAttempt > 0 || message.fields.redelivered,
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timeout);
+        }
+      } catch (error) {
+        taskError = error instanceof Error ? error.message.slice(0, 1_000) : "边界精修失败";
+        if (retryAttempt < RETRY_DELAYS.length) {
+          const retryQueueNumber = retryAttempt + 1;
+          channel.sendToQueue(
+            `${TASK_BOUNDARY_REFINEMENT_QUEUE}.retry.${retryQueueNumber}`,
+            message.content,
+            {
+              ...message.properties,
+              headers: {
+                ...message.properties.headers,
+                "retry-attempt": retryQueueNumber,
+              },
+              persistent: true,
+            },
+          );
+          await channel.waitForConfirms();
+        } else {
+          await this.boundaryRefinements.forceSystemFailed(refinementId, error);
+          deadLetter = true;
+        }
+      }
+    } catch (error) {
+      taskError = error instanceof Error ? error.message.slice(0, 1_000) : "边界精修消息无效";
+      deadLetter = true;
+    } finally {
+      if (refinementId) {
+        const startedAt = this.activeRuns.get(refinementId);
+        if (this.heartbeatId && startedAt) {
+          await this.bestEffort(() =>
+            this.heartbeats!.recordTaskFinished({
+              id: this.heartbeatId!,
+              durationMs: Date.now() - startedAt.getTime(),
+              failed: taskError !== null,
+            }),
+          );
+        }
+        this.activeRuns.delete(refinementId);
+        await this.publishHeartbeat(taskError);
+      }
+      if (deadLetter) channel.reject(message, false);
+      else channel.ack(message);
     }
   }
 
