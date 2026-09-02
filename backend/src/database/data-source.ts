@@ -31,6 +31,7 @@ import { SessionEntity } from "./entities/session.entity.js";
 import { SubmissionDuplicateCandidateEntity } from "./entities/submission-duplicate-candidate.entity.js";
 import { SubmissionEntity } from "./entities/submission.entity.js";
 import { TaskSegmentAssetEntity } from "./entities/task-segment-asset.entity.js";
+import { TaskBoundaryRefinementEntity } from "./entities/task-boundary-refinement.entity.js";
 import { TeamEntity } from "./entities/team.entity.js";
 import { UserEntity } from "./entities/user.entity.js";
 import { VideoQualityPromptVersionEntity } from "./entities/video-quality-prompt-version.entity.js";
@@ -77,6 +78,8 @@ import { SceneLevel1Table2026090300001 } from "./migrations/202609030001-scene-l
 import { AddDedupIndexes2026090400001 } from "./migrations/202609040001-add-dedup-indexes.js";
 import { WalletAndSettlement2026083100001 } from "./migrations/202608310001-wallet-and-settlement.js";
 import { TaskSegmentAssets2026090300001 } from "./migrations/202609030001-task-segment-assets.js";
+import { TaskBoundaryRefinements2026090500001 } from "./migrations/202609050001-task-boundary-refinements.js";
+import { TaskSegmentAdaptiveCut2026090600001 } from "./migrations/202609060001-task-segment-adaptive-cut.js";
 
 export const identityEntities = [
   TeamEntity,
@@ -114,6 +117,7 @@ export const identityEntities = [
   SceneLibraryEntity,
   SceneLevel1Entity,
   TaskSegmentAssetEntity,
+  TaskBoundaryRefinementEntity,
 ];
 
 export function createDataSource(
@@ -168,6 +172,8 @@ export function createDataSource(
       SceneLevel1Table2026090300001,
       TaskSegmentAssets2026090300001,
       AddDedupIndexes2026090400001,
+      TaskBoundaryRefinements2026090500001,
+      TaskSegmentAdaptiveCut2026090600001,
     ],
     synchronize: false,
     logging: false,

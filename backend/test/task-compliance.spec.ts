@@ -131,7 +131,7 @@ describe("applyServerTaskCompliance", () => {
     expect(applied.reviewRequired).toBe(false);
   });
 
-  it("enters review when a hard requirement is unmet", () => {
+  it("keeps a hard-requirement miss as advisory without review (segmentable)", () => {
     const compliance = normalizeTaskCompliance(
       {
         scene_match: { matched: true, confidence: 0.9 },
@@ -145,14 +145,16 @@ describe("applyServerTaskCompliance", () => {
       [],
     )!;
     const applied = applyServerTaskCompliance(baseNormalized(), compliance);
-    expect(applied.evaluationStatus).toBe("review_pending");
-    expect(applied.reviewRequired).toBe(true);
+    // 人工复核降频：hard 未满足多为时段性，任务切片可规避 → 不触发复核，advisory 记录
+    expect(applied.evaluationStatus).toBe("scored");
+    expect(applied.reviewRequired).toBe(false);
     expect(
       applied.reviewReasons.some((reason) => reason.includes("硬性要求未满足")),
     ).toBe(true);
     // D4 = 20 × 0.5 × 1（1 条 met 1 条 unmet）
     expect(applied.dimensions.task_authenticity_completeness.coefficient).toBe(0.5);
     expect(applied.finalScore).toBe(84);
+    expect(applied.settlementRatio).toBe(1);
   });
 
   it("enters review on scene mismatch and halves the D4 coefficient", () => {
@@ -175,7 +177,7 @@ describe("applyServerTaskCompliance", () => {
     expect(applied.dimensions.task_authenticity_completeness.coefficient).toBe(0.5);
   });
 
-  it("keeps evidence-incomplete compliance out of automatic settlement", () => {
+  it("keeps evidence-incomplete compliance as advisory with computed value", () => {
     const compliance = normalizeTaskCompliance(
       {
         scene_match: { matched: true, confidence: 0.95 },
@@ -195,9 +197,11 @@ describe("applyServerTaskCompliance", () => {
     )!;
 
     const applied = applyServerTaskCompliance(baseNormalized(), compliance);
-    expect(applied.evaluationStatus).toBe("review_pending");
-    expect(applied.reviewRequired).toBe(true);
+    // 人工复核降频：模型“证据不足”→ advisory，不再阻断自动结算
+    expect(applied.evaluationStatus).toBe("scored");
+    expect(applied.reviewRequired).toBe(false);
     expect(applied.reviewReasons.join(" ")).toContain("证据不足");
+    expect(applied.settlementRatio).not.toBeNull();
   });
 
   it("keeps hard_reject status when already rejected", () => {

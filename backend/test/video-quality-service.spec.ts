@@ -49,7 +49,10 @@ function evidence(): PreparedVideoEvidence {
   };
 }
 
-function raw(reviewRequired = false): RawVideoQcResultV1 {
+function raw(
+  reviewRequired = false,
+  decisiveCandidates: string[] = [],
+): RawVideoQcResultV1 {
   const confidence = reviewRequired ? 0.6 : 0.9;
   return {
     schema_version: "video_qc_v2",
@@ -68,7 +71,7 @@ function raw(reviewRequired = false): RawVideoQcResultV1 {
       final_score: 80,
       summary: "summary",
     },
-    hard_reject: { triggered: false, reasons: [], candidates: [] },
+    hard_reject: { triggered: false, reasons: [], candidates: decisiveCandidates },
     dimensions: Object.fromEntries(
       (["D1", "D2", "D3", "D4", "D5"] as const).map((key) => [
         key,
@@ -100,6 +103,7 @@ function raw(reviewRequired = false): RawVideoQcResultV1 {
 function setup(
   options: {
     review?: boolean;
+    decisive?: boolean;
     reviewFails?: boolean;
     annotationProvider?: VideoAnnotationProvider;
   } = {},
@@ -115,7 +119,10 @@ function setup(
   };
   const provider: VideoQualityModelProvider = {
     analyze: vi.fn().mockResolvedValue({
-      raw: raw(options.review),
+      raw: raw(
+        options.review,
+        options.decisive ? ["PRIVACY_OR_SAFETY"] : [],
+      ),
       metadata: {
         stage: "initial",
         model: "qwen3.7-plus",
@@ -199,8 +206,8 @@ describe("video quality service", () => {
     );
   });
 
-  it("runs the review model for review predicates and preserves pending state if it fails", async () => {
-    const reviewed = setup({ review: true });
+  it("runs the review model for decisive predicates and preserves pending state if it fails", async () => {
+    const reviewed = setup({ review: true, decisive: true });
     const stages: string[] = [];
     const result = await reviewed.service.evaluate(
       {
@@ -227,7 +234,7 @@ describe("video quality service", () => {
     );
     expect(result.modelRuns.map((run) => run.stage)).toEqual(["initial", "review"]);
 
-    const failed = setup({ review: true, reviewFails: true });
+    const failed = setup({ review: true, decisive: true, reviewFails: true });
     const pending = await failed.service.evaluate({
       videoId: "LAB-1",
       filePath: "/tmp/video.mp4",
@@ -235,8 +242,27 @@ describe("video quality service", () => {
       registerSha256: () => false,
     });
     expect(pending.evaluationStatus).toBe("review_pending");
-    expect(pending.settlementRatio).toBeNull();
+    // 价值解耦：复核中也保留自动分数计算的结算比率
+    expect(pending.settlementRatio).not.toBeNull();
     expect(pending.reviewReasons.join(" ")).toContain("复核模型");
+  });
+
+  it("skips the review model for low confidence or evidence-uncertain predicates (review reduction)", async () => {
+    // 仅低置信 + 模型 review_required（无决定性候选）→ 不再触发 secondary review
+    const plain = setup({ review: true });
+    const stages: string[] = [];
+    const result = await plain.service.evaluate(
+      {
+        videoId: "LAB-1",
+        filePath: "/tmp/video.mp4",
+        workDirectory: "/tmp/work",
+        registerSha256: () => false,
+      },
+      (stage) => stages.push(stage),
+    );
+    expect(plain.provider.review).not.toHaveBeenCalled();
+    expect(stages).toEqual(["media_analysis", "initial_review", "completed"]);
+    expect(result.evaluationStatus).toBe("scored");
   });
 
   it("attaches shadow annotations without changing the quality decision", async () => {

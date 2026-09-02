@@ -34,6 +34,31 @@ const baseAsset = {
   resultStatus: "success",
   sourceStartMs: 1_000,
   sourceEndMs: 2_500,
+  coarseStartMs: 1_000,
+  coarseEndMs: 2_500,
+  refinedStartMs: 1_100,
+  refinedEndMs: 2_600,
+  actualClipStartMs: 1_000,
+  actualClipEndMs: 2_500,
+  requestedStartMs: 1_000,
+  requestedEndMs: 2_500,
+  boundarySource: "refined" as const,
+  boundaryRefinementId: "TBR-READY",
+  boundaryRefinementStatus: "succeeded" as const,
+  boundaryRefinementPolicyVersion: "task_boundary_refinement_policy_v1",
+  materializationPolicyVersion: "task_segment_adaptive_cut_policy_v1",
+  materializationMode: "stream_copy" as const,
+  predictedCopyStartMs: 1_000,
+  keyframeDistanceStartMs: 0,
+  boundaryToleranceMs: 67,
+  startDriftMs: 0,
+  endDriftMs: 0,
+  validationStatus: "passed" as const,
+  validationFailureCode: null,
+  validationFailureMessage: null,
+  streamCopyAttempted: true,
+  copyRejectedReason: null,
+  materializationDurationMs: 10,
   clipStartMs: 1_000,
   clipEndMs: 2_500,
   coverageSnapshot: [],
@@ -119,6 +144,10 @@ describe("TaskSegmentDemo", () => {
     expect(await screen.findByText(/Task #0 · 打开冰箱/u)).toBeInTheDocument();
     expect(screen.getByText(/task-segments\/demo\/SUB-SEG\/RUN-SEG\/task-0.mp4/u)).toBeInTheDocument();
     expect(screen.getByText(/FFMPEG_FAILED：编码失败/u)).toBeInTheDocument();
+    expect(screen.getAllByText(/粗边界：00:01.000 → 00:02.500/u).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/精修边界：00:01.100 → 00:02.600/u).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/实际切片：00:01.000 → 00:02.500/u).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/来源：refined · 精修状态：succeeded/u).length).toBeGreaterThan(0);
     expect(screen.getAllByRole("link", { name: "RUN-SEG" })[0]).toHaveAttribute(
       "href",
       "/admin/ai/annotation-runs/RUN-SEG/review",
@@ -197,6 +226,8 @@ describe("TaskSegmentDemo", () => {
     expect(screen.queryByText(/MinIO Key：/u)).not.toBeInTheDocument();
     expect(screen.queryByText(/SHA-256：/u)).not.toBeInTheDocument();
     expect(screen.queryByText(/技术校验 warning/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/粗边界：/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/精修边界：/u)).not.toBeInTheDocument();
   });
 
   it("renders queued and processing assets without exposing playback or retry", async () => {
