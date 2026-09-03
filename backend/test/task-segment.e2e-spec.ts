@@ -302,6 +302,7 @@ function task(input: {
     effective_result_status: input.resultStatus ?? "success",
     effective_failure_recovery: "none_observed",
     evidence_level: "direct_visual",
+    atomic_action_sequence: [],
     evidence_timestamps_ms: [input.startMs],
     result_evidence_timestamps_ms: [input.endMs],
     failure_evidence_timestamps_ms: [],
@@ -737,11 +738,11 @@ describe("task segment demo", () => {
     });
   });
 
-  it("records coverage warnings without blocking a technically valid task", async () => {
+  it("blocks invalid evidence references even for an otherwise skippable uncertain task", async () => {
     await seedSubmission("SUB-SEG-WARNING", "uploads/warning.mp4", 5_000);
     storage.objects.set("uploads/warning.mp4", Buffer.from("warning-source"));
     await seedRun("RUN-SEG-WARNING", "SUB-SEG-WARNING", [
-      task({ startMs: 500, endMs: 2_500, label: "warning 测试" }),
+      task({ startMs: 500, endMs: 2_500, label: "warning 测试", completion: "uncertain" }),
     ]);
     const run = await dataSource.getRepository(AnnotationRunEntity).findOneByOrFail({
       id: "RUN-SEG-WARNING",
@@ -759,12 +760,14 @@ describe("task segment demo", () => {
 
     await expect(service.generate(admin, run.id)).resolves.toMatchObject({
       created: 1,
-      skipped: 0,
+      skipped: 1,
     });
     const asset = await dataSource.getRepository(TaskSegmentAssetEntity).findOneByOrFail({
       annotationRunId: run.id,
     });
-    expect(asset.generationStatus).toBe("queued");
+    expect(asset.generationStatus).toBe("skipped");
+    expect(asset.failureCode).toBe("SEGMENT_EVIDENCE_INVALID");
+    expect(asset.annotationPublicationFailureCode).toBe("SEGMENT_EVIDENCE_INVALID");
     expect(asset.validationWarnings).toEqual(expect.arrayContaining([
       expect.stringContaining("out-of-range timestamp"),
       expect.stringContaining("linked_task_index is invalid"),

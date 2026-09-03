@@ -8,10 +8,40 @@ import { vi } from "vitest";
 import {
   MEDIA_QUEUE,
   TASK_SEGMENT_QUEUE,
+  TASK_SEGMENT_ANNOTATION_QUEUE,
 } from "../src/messaging/rabbitmq-topology.js";
 import { RabbitMediaWorker } from "../src/media/rabbit-media-worker.js";
+import { SegmentAnnotationError } from "../src/task-segment/task-segment-annotation.js";
 
 describe("media worker", () => {
+  it.each(["success", "retry", "terminal", "confirm-failure", "exhausted", "malformed"])(
+    "handles JSON publication %s without reprocessing media", async kind => {
+      const consumers = new Map<string, (message: ConsumeMessage | null) => void>();
+      const channel = {
+        assertExchange: vi.fn(), assertQueue: vi.fn(), bindQueue: vi.fn(), prefetch: vi.fn(), close: vi.fn().mockResolvedValue(undefined),
+        consume: vi.fn(async (queue: string, handler: (message: ConsumeMessage | null) => void) => { consumers.set(queue, handler); }),
+        sendToQueue: vi.fn(), waitForConfirms: vi.fn().mockResolvedValue(undefined), ack: vi.fn(), nack: vi.fn(),
+      };
+      const analysis = { process: vi.fn() };
+      const segments = { process: vi.fn() };
+      const publication = { process: vi.fn().mockResolvedValue(kind === "terminal" ? "failed" : "published") };
+      if (["retry", "confirm-failure", "exhausted"].includes(kind)) publication.process.mockRejectedValue(new SegmentAnnotationError("SEGMENT_JSON_UPLOAD_FAILED", true));
+      if (kind === "confirm-failure") channel.waitForConfirms.mockRejectedValue(new Error("offline"));
+      const worker = new RabbitMediaWorker(analysis as never, undefined, segments as never, undefined, publication as never);
+      await worker.start("amqp://test", vi.fn().mockResolvedValue({ createConfirmChannel: async () => channel, close: async () => undefined }));
+      const message = { content: Buffer.from(kind === "malformed" ? "bad json" : '{"assetId":"TSA-JSON"}'),
+        fields: {}, properties: { headers: { "retry-attempt": kind === "exhausted" ? 3 : 0 } } } as unknown as ConsumeMessage;
+      consumers.get(TASK_SEGMENT_ANNOTATION_QUEUE)!(message);
+      await vi.waitFor(() => expect(channel.ack.mock.calls.length + channel.nack.mock.calls.length).toBe(1));
+      if (["terminal", "exhausted", "malformed"].includes(kind)) expect(channel.nack).toHaveBeenCalledWith(message, false, false);
+      else if (kind === "confirm-failure") expect(channel.nack).toHaveBeenCalledWith(message, false, true);
+      else expect(channel.ack).toHaveBeenCalledWith(message);
+      if (kind === "retry") expect(channel.sendToQueue).toHaveBeenCalledWith(`${TASK_SEGMENT_ANNOTATION_QUEUE}.retry.1`, message.content, expect.objectContaining({ persistent: true }));
+      expect(analysis.process).not.toHaveBeenCalled();
+      expect(segments.process).not.toHaveBeenCalled();
+      await worker.close();
+    },
+  );
   it("consumes task segment jobs in the existing media worker", async () => {
     const consumers = new Map<string, (message: ConsumeMessage | null) => void>();
     const ack = vi.fn();
