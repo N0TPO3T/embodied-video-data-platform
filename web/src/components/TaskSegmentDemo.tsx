@@ -83,7 +83,19 @@ function compactTimestamp(milliseconds: number): string {
 }
 
 function completionLabel(value: string): string {
-  return value === "complete" ? "completed" : value;
+  switch (value) {
+    case "complete":
+    case "completed":
+      return "已完成";
+    case "incomplete":
+      return "未完成";
+    case "partial":
+      return "部分完成";
+    case "uncertain":
+      return "不确定";
+    default:
+      return "未知";
+  }
 }
 
 function fileSize(value: string | null): string {
@@ -158,6 +170,10 @@ export function TaskSegmentDemo({
     const timer = window.setInterval(() => void load(true), 2_000);
     return () => window.clearInterval(timer);
   }, [hasActiveAssets, load]);
+
+  const displayedAssets = structured
+    ? [...assets].sort((left, right) => left.taskIndex - right.taskIndex || left.clipStartMs - right.clipStartMs)
+    : assets;
 
   async function generate() {
     try {
@@ -248,7 +264,7 @@ export function TaskSegmentDemo({
         <p>尚未生成任务片段。</p>
       ) : (
         <div className="task-segment-list">
-          {assets.map((asset) => {
+          {displayedAssets.map((asset) => {
             const currentStatus = status(asset, structured);
             const annotation = annotationsByTask.get(asset.taskIndex);
             const objects = annotation?.objects.length
@@ -266,7 +282,7 @@ export function TaskSegmentDemo({
               <fieldset className="issue-editor task-segment-card" key={asset.id}>
                 <legend>
                   {structured
-                    ? `${compactTimestamp(asset.clipStartMs)}～${compactTimestamp(asset.clipEndMs)} ${asset.taskLabel}`
+                    ? <><span className="submission-task-number">任务 {asset.taskIndex + 1}</span>{" "}<span>{compactTimestamp(asset.clipStartMs)}～{compactTimestamp(asset.clipEndMs)} {asset.taskLabel}</span></>
                     : `Task #${asset.taskIndex} · ${asset.taskLabel}`}
                 </legend>
                 <div className="issue-editor-heading">

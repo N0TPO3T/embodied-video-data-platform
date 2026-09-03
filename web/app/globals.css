@@ -507,6 +507,66 @@ a { color: inherit; text-decoration: none; }
 .report-issue-group li em { color: #725c3c; font-size: 9px; font-style: normal; line-height: 1.5; }
 .report-issue-group li small { color: #b08b58; font-size: 8px; }
 .report-fold-empty { margin: 0; color: #9aa5b5; font-size: 9px; }
+
+/* Submission detail readability; keep shared reports and other pages unchanged. */
+.submission-detail-page { font-size: 16px; line-height: 1.65; }
+.submission-detail-page > .page-heading h1 { font-size: 24px; line-height: 1.4; }
+.submission-detail-page .page-heading .submission-reference { margin: 8px 0 0; color: #657389; font-weight: 400; overflow-wrap: anywhere; }
+.submission-detail-page .card-heading h2 { font-size: 18px; }
+.submission-detail-page .content-card { padding: 20px; }
+.submission-detail-page .report-layout { grid-template-columns: minmax(0, 1.15fr) minmax(360px, 1fr); }
+.submission-detail-page .submission-video-column { display: grid; min-width: 0; gap: 16px; align-content: start; }
+.submission-detail-page .video-preview > span { top: 12px; bottom: auto; pointer-events: none; }
+.submission-detail-page .submission-video-summary .report-summary { padding: 0; background: transparent; }
+.submission-detail-page :is(.report-summary, .admin-task-timeline-list strong, .task-segment-card legend, .task-segment-meta-item, .report-metrics strong) { font-size: 16px; line-height: 1.75; }
+.submission-detail-page :is(.form-message, .report-fold-toggle, .report-issue-group > strong, .report-issue-group li em, .report-dimension strong, .video-preview strong) { font-size: 15px; line-height: 1.65; }
+.submission-detail-page :is(.back-page, .page-heading p, .page-heading span, .card-heading p, .text-button, .table-action, .field-hint, .status-badge, .report-conclusion, .report-total small, .report-dimension span, .report-dimensions-empty, .report-metrics small, .report-timeline span, .report-issue-group li small, .report-fold-empty, .task-segment-meta-item em, .video-preview small, .video-preview > span, .ai-progress-steps span, .ai-progress p) { font-size: 14px; line-height: 1.6; }
+.submission-detail-page :is(.card-heading p, .field-hint, .report-metrics small, .report-issue-group li small, .report-fold-empty, .ai-progress p) { color: #5f6d82; }
+.submission-detail-page .admin-task-timeline-list time { font-size: 15px; }
+.submission-detail-page .admin-task-timeline-list li { grid-template-columns: minmax(190px, max-content) minmax(0, 1fr); padding: 14px; }
+.submission-detail-page .submission-task-reference { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.submission-detail-page .submission-task-number { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 6px; color: #4169a1; background: #edf3ff; font-size: 14px; font-weight: 600; white-space: nowrap; }
+.submission-detail-page .report-total { display: flex; align-items: baseline; gap: 8px; }
+.submission-detail-page .report-total small { margin: 0; color: #657389; }
+.submission-detail-page .report-dimension { grid-template-columns: minmax(90px, 1.5fr) minmax(20px, 1fr) 40px; }
+.submission-detail-page .report-dimension strong { white-space: nowrap; }
+.submission-detail-page .report-timeline { margin-bottom: 20px; }
+.submission-detail-page .ai-progress-steps > div { grid-template-columns: 1fr; justify-items: center; text-align: center; }
+.submission-detail-page .ai-progress-steps i { width: 22px; height: 22px; font-size: 14px; }
+.submission-detail-page .task-segment-actions { flex-wrap: wrap; }
+.submission-detail-page .task-segment-demo-structured .issue-editor-heading { align-items: flex-start; flex-wrap: wrap; }
+.submission-detail-page .task-segment-list { gap: 18px; }
+.submission-detail-page .task-segment-card { min-width: 0; margin: 0; padding: 14px 16px 16px; gap: 12px; border: 1px solid #dfe5ef; border-radius: 12px; background: #fff; }
+.submission-detail-page .task-segment-card legend { max-width: 100%; padding: 0 6px; color: #354156; font-weight: 600; overflow-wrap: anywhere; }
+.submission-detail-page .task-segment-card legend .submission-task-number { margin-right: 8px; }
+.submission-detail-page .task-segment-meta { display: grid; flex: 1 1 360px; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 18px; }
+.submission-detail-page .task-segment-meta-item { align-items: baseline; }
+.submission-detail-page .task-segment-card > .table-action { justify-self: start; min-height: 34px; padding: 6px 12px; }
+.submission-detail-page .task-segment-player { max-height: 420px; }
+.submission-detail-page :is(.report-head > div, .report-issue-group li span, .task-segment-meta, .task-segment-meta-item) { min-width: 0; overflow-wrap: anywhere; }
+.submission-detail-page .submission-review-notice { display: block; padding: 0; color: #79551d; border: 1px solid #f2e5c8; border-radius: 10px; }
+.submission-detail-page .submission-review-notice summary { display: flex; align-items: center; gap: 12px; padding: 14px 18px; cursor: pointer; list-style: none; }
+.submission-detail-page .submission-review-notice summary::-webkit-details-marker { display: none; }
+.submission-detail-page .submission-review-notice summary:focus-visible { outline: 2px solid #b9761f; outline-offset: 2px; border-radius: 10px; }
+.submission-detail-page .submission-review-notice summary > svg { flex: 0 0 auto; }
+.submission-detail-page .submission-review-notice summary > span { display: grid; flex: 1; min-width: 0; gap: 2px; }
+.submission-detail-page .submission-review-notice summary small { font-size: 14px; font-weight: 400; }
+.submission-detail-page .submission-review-notice details[open] summary > svg:last-child { transform: rotate(180deg); }
+.submission-detail-page .submission-review-notice strong { font-size: 16px; }
+.submission-detail-page .submission-review-notice ul { display: grid; margin: 0; padding: 0 22px 16px 48px; gap: 8px; list-style: disc; overflow-wrap: anywhere; }
+@media (max-width: 1080px) {
+  .submission-detail-page .report-layout { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  .submission-detail-page .task-segment-meta { grid-template-columns: 1fr; }
+}
+@media (max-width: 680px) {
+  .submission-detail-page .content-card { padding: 16px; }
+  .submission-detail-page > .page-heading h1 { font-size: 20px; }
+  .submission-detail-page .report-head { grid-template-columns: 1fr; }
+  .submission-detail-page .report-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .submission-detail-page .admin-task-timeline-list li { grid-template-columns: 1fr; gap: 4px; }
+}
 .ai-conclusion-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .ai-conclusion .report-total { font-size: 34px; }
 .review-page-layout { grid-template-columns: minmax(0, 1fr) minmax(min(360px, 100%), 1.15fr); }
