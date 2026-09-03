@@ -1,4 +1,3 @@
-import { resolveApiBaseUrl } from "../../lib/api-base";
 import type {
   BackendOperationsStatus,
   BackendAnnotationOperations,
@@ -10,6 +9,7 @@ import type {
   TaskSegmentGenerateResult,
   TaskSegmentPreview,
 } from "../contracts";
+import { resolveApiBaseUrl } from "../../lib/api-base";
 
 export class OperationsApiError extends Error {
   constructor(
