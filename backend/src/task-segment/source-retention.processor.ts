@@ -4,6 +4,8 @@ import { DataSource, In, type EntityManager } from "typeorm";
 import { AuditService } from "../audit/audit.service.js";
 import { AnnotationRunEntity } from "../database/entities/annotation-run.entity.js";
 import { SubmissionEntity } from "../database/entities/submission.entity.js";
+import { MediaMetadataEntity } from "../database/entities/media-metadata.entity.js";
+import { TaskSegmentAnnotationRevisionEntity } from "../database/entities/task-segment-annotation-revision.entity.js";
 import { TaskBoundaryRefinementEntity } from "../database/entities/task-boundary-refinement.entity.js";
 import { TaskSegmentAssetEntity } from "../database/entities/task-segment-asset.entity.js";
 import {
@@ -170,9 +172,38 @@ export class SourceRetentionProcessor {
             `任务片段 ${asset.id} 的最终对象大小不匹配，禁止删除原视频`,
           );
         }
+        if (asset.annotationPublicationStatus !== "published" || !asset.currentAnnotationRevisionId) {
+          throw new RetryableSourceRetentionError(`任务片段 ${asset.id} 的 JSON 尚未成对发布，禁止删除原视频`);
+        }
+        const revision = await manager.getRepository(TaskSegmentAnnotationRevisionEntity).findOne({
+          where: { id: asset.currentAnnotationRevisionId, taskSegmentAssetId: asset.id },
+          lock: { mode: "pessimistic_write" },
+        });
+        if (!revision || revision.publicationStatus !== "published" || revision.videoSha256 !== asset.clipSha256 ||
+            !revision.jsonObjectKey || !revision.jsonSha256.match(/^[a-f0-9]{64}$/u) || Number(revision.jsonSizeBytes) <= 0) {
+          throw new RetryableSourceRetentionError(`任务片段 ${asset.id} 的当前 JSON 绑定无效，禁止删除原视频`);
+        }
+        try {
+          const json = await this.storage.headObject({ objectKey: revision.jsonObjectKey });
+          if (json.sizeBytes !== revision.jsonSizeBytes) throw new Error("size mismatch");
+        } catch {
+          throw new RetryableSourceRetentionError(`任务片段 ${asset.id} 的 JSON 对象校验失败，禁止删除原视频`);
+        }
       }
 
-      await this.storage.deleteObject({ objectKey: submission.objectKey });
+      const metadata = await manager.getRepository(MediaMetadataEntity).findOneBy({ submissionId: submission.id });
+      const derivedKeys = [...new Set([
+        metadata?.thumbnailObjectKey, metadata?.previewObjectKey,
+        metadata?.hlsMasterObjectKey, ...(metadata?.hlsObjectKeys ?? []),
+      ].filter((key): key is string => Boolean(key) && key !== submission.objectKey))];
+      const deletedObjectKeys = [...derivedKeys, submission.objectKey];
+      try {
+        // Last recovery source is deleted last. On partial failure the database
+        // transaction rolls back; idempotent object deletes resume on retry.
+        for (const objectKey of deletedObjectKeys) await this.storage.deleteObject({ objectKey });
+      } catch {
+        throw new RetryableSourceRetentionError("源视频及完整预览对象清理未完成，需要重试");
+      }
       const now = new Date();
       submission.storageStatus = "deleted";
       submission.storageDeletedAt = now;
@@ -198,6 +229,12 @@ export class SourceRetentionProcessor {
           storageStatus: "deleted",
           deletedAt: now.getTime(),
           archivedObjectKey: submission.objectKey,
+          deletedObjectKeys,
+          formalAnnotationRunId: formalRun.id,
+          taskSegmentAssetIds: readyAssets.map(asset => asset.id),
+          annotationRevisionIds: readyAssets.map(asset => asset.currentAnnotationRevisionId),
+          sourceSha256: submission.checksumSha256,
+          reason: input.reason,
         },
       );
       return "archived";

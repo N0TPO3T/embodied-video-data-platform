@@ -10,6 +10,7 @@ import { MediaMetadataEntity } from "../src/database/entities/media-metadata.ent
 import { SubmissionEntity } from "../src/database/entities/submission.entity.js";
 import { TaskBoundaryRefinementEntity } from "../src/database/entities/task-boundary-refinement.entity.js";
 import { TaskSegmentAssetEntity } from "../src/database/entities/task-segment-asset.entity.js";
+import { TaskSegmentAnnotationRevisionEntity } from "../src/database/entities/task-segment-annotation-revision.entity.js";
 import { TeamEntity } from "../src/database/entities/team.entity.js";
 import { UserEntity } from "../src/database/entities/user.entity.js";
 import type { ObjectStoragePort } from "../src/storage/object-storage.port.js";
@@ -217,6 +218,27 @@ describe("source retention (SEG-DEC-006a)", () => {
       startedAt: new Date(),
       completedAt: new Date(),
     });
+    // These retention-only fixtures represent a JSON already verified by the
+    // publisher; the publication suite exercises the actual contract/bytes.
+    const json = Buffer.from('{"retention_fixture":true}\n');
+    const revisionId = `TSAR-RET-${runId}`;
+    const jsonObjectKey = `segments/TSA-RET-${runId}/annotation.r0001.json`;
+    await dataSource.getRepository(TaskSegmentAnnotationRevisionEntity).save({
+      id: revisionId, taskSegmentAssetId: `TSA-RET-${runId}`, revision: 1,
+      schemaVersion: "task_segment.v1", sourceAnnotationRunId: runId,
+      sourceAnnotationReviewRevision: 0, sourceAnnotationPublicationStatus: "auto_accepted",
+      materializationPolicyVersion: "task_segment_adaptive_cut_policy_v1",
+      videoSha256: createHash("sha256").update("clip").digest("hex"),
+      sourceFingerprint: createHash("sha256").update(runId).digest("hex"),
+      jsonObjectKey, jsonSha256: createHash("sha256").update(json).digest("hex"),
+      jsonSizeBytes: String(json.length), contentJson: { retention_fixture: true },
+      canonicalJson: json.toString(), publicationStatus: "published", attemptCount: 1,
+      publishedAt: new Date(),
+    });
+    await dataSource.getRepository(TaskSegmentAssetEntity).update(`TSA-RET-${runId}`, {
+      annotationPublicationStatus: "published", currentAnnotationRevisionId: revisionId, annotationPublishedAt: new Date(),
+    });
+    storage.objects.set(jsonObjectKey, json);
   }
 
   it("skips submissions without any task segment asset (conservative)", async () => {
