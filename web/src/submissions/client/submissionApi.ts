@@ -1,3 +1,4 @@
+import { resolveApiBaseUrl } from "../../lib/api-base";
 import type {
   ActiveUploadResult,
   BackendSubmissionPreview,
@@ -30,17 +31,19 @@ export class SubmissionApiError extends Error {
 }
 
 function apiUrl(path: string): string {
-  const base =
-    process.env.NEXT_PUBLIC_API_BASE_URL ??
-    "http://localhost:4000/api/v1";
+  const base = resolveApiBaseUrl(
+    process.env.NEXT_PUBLIC_API_BASE_URL,
+    "http://localhost:4000/api/v1",
+  );
   return `${base.replace(/\/$/u, "")}/${path.replace(/^\//u, "")}`;
 }
 
 function publicApiUrl(pathOrUrl: string): string {
   if (/^https?:\/\//u.test(pathOrUrl)) return pathOrUrl;
-  const base =
-    process.env.NEXT_PUBLIC_API_BASE_URL ??
-    "http://localhost:4000/api/v1";
+  const base = resolveApiBaseUrl(
+    process.env.NEXT_PUBLIC_API_BASE_URL,
+    "http://localhost:4000/api/v1",
+  );
   const normalizedBase = base.replace(/\/$/u, "");
   if (pathOrUrl.startsWith("/api/v1/")) {
     return `${normalizedBase.replace(/\/api\/v1$/u, "")}${pathOrUrl}`;
