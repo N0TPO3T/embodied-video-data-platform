@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { upsertTaskAssetProjection } from "../task-asset/task-asset-projection.js";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,7 +20,7 @@ import { OperationsFailure } from "../operations/operations-failure.js";
 import { OBJECT_STORAGE, type ObjectStoragePort } from "../storage/object-storage.port.js";
 import { TASK_SEGMENT_ANNOTATION_ROUTING_KEY, SUBMISSION_SOURCE_RETENTION_ROUTING_KEY } from "../messaging/rabbitmq-topology.js";
 import { buildTaskSegmentAnnotation, taskSegmentSourceFingerprint, type SegmentAnnotationBuildInput } from "./task-segment-annotation-builder.js";
-import { canonicalSegmentJson, segmentJsonSha256, SegmentAnnotationError, taskSegmentAnnotationObjectKey, TASK_SEGMENT_ANNOTATION_SCHEMA_VERSION } from "./task-segment-annotation.js";
+import { canonicalSegmentJson, segmentJsonSha256, SegmentAnnotationError, taskSegmentAnnotationObjectKey, TASK_SEGMENT_ANNOTATION_SCHEMA_VERSION, validateSegmentAnnotation } from "./task-segment-annotation.js";
 
 export const SEGMENT_ANNOTATION_STALE_MS = 5 * 60 * 1000;
 
@@ -203,6 +204,10 @@ export class TaskSegmentAnnotationService {
           revision.sourceFingerprint !== taskSegmentSourceFingerprint(context)) {
         throw new SegmentAnnotationError("SEGMENT_MEDIA_BINDING_INVALID");
       }
+      // The reserved immutable JSON is the only semantic input. Projection and
+      // current revision become visible together, or neither change commits.
+      const document = validateSegmentAnnotation(revision.contentJson, { assetId: asset.id, revision: revision.revision, videoSha256: revision.videoSha256 });
+      await upsertTaskAssetProjection(manager, { assetId: asset.id, revisionId: revision.id, document });
       if (revision.publicationStatus !== "published") {
         if (revision.publicationStatus !== "publishing") throw new SegmentAnnotationError("SEGMENT_JSON_DATABASE_FINALIZE_FAILED", true);
         revision.publicationStatus = "published";

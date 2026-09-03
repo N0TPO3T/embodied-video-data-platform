@@ -24,6 +24,8 @@ import { SourceRetentionProcessor } from "../src/task-segment/source-retention.p
 import { canonicalSegmentJson, segmentJsonSha256 } from "../src/task-segment/task-segment-annotation.js";
 import { TaskSegmentAnnotationPublication2026091200001 } from "../src/database/migrations/202609120001-task-segment-annotation-publication.js";
 import { segmentAnnotationFixture } from "./fixtures/task-segment-annotation.js";
+import { TaskSegmentAssetProjectionEntity } from "../src/database/entities/task-segment-asset-projection.entity.js";
+import { TaskAssetProjection2026091300001 } from "../src/database/migrations/202609130001-task-asset-projection.js";
 
 export class AnnotationTestStorage implements ObjectStoragePort {
   objects = new Map<string, Buffer>();
@@ -123,6 +125,7 @@ describe("segment annotation publication / retention / backfill", () => {
     expect(rows[0]!.videoSha256).toBe(fixture.asset.clipSha256);
     expect(rows[0]!.jsonSha256).toBe(segmentJsonSha256(storage.get(rows[0]!.jsonObjectKey)));
     expect((await asset()).currentAnnotationRevisionId).toBe(rows[0]!.id);
+    expect(await ds.getRepository(TaskSegmentAssetProjectionEntity).findOneByOrFail({ assetId: fixture.asset.id })).toMatchObject({ currentAnnotationRevisionId: rows[0]!.id, sceneGroupKey: "label:SCENE-001" });
     expect((await service.current(admin, fixture.asset.id)).currentRevision?.contentJson).toEqual(rows[0]!.contentJson);
     expect((await service.download(admin, fixture.asset.id, 1)).jsonSha256).toBe(rows[0]!.jsonSha256);
     expect((await service.revisions(admin, fixture.asset.id)).revisions[0]?.isCurrent).toBe(true);
@@ -181,10 +184,30 @@ describe("segment annotation publication / retention / backfill", () => {
       expect((await asset()).currentAnnotationRevisionId).toBeNull();
       expect((await revisions())[0]!.publicationStatus).toBe("failed");
       expect((await revisions())[0]!.publishedAt).toBeNull();
+      expect(await ds.getRepository(TaskSegmentAssetProjectionEntity).findOneBy({ assetId: fixture.asset.id })).toBeNull();
       await expect(service.download(admin, fixture.asset.id, 1)).rejects.toThrow();
     } finally {
       await ds.query("DROP TRIGGER fail_test_segment_pointer ON task_segment_assets");
       await ds.query("DROP FUNCTION fail_test_segment_pointer()");
+    }
+    await service.process({ assetId: fixture.asset.id });
+    expect(await revisions()).toHaveLength(1);
+    expect(storage.uploads).toHaveLength(1);
+  });
+
+  it("rolls back publication and pointer when projection upsert fails, then retries the same JSON", async () => {
+    await ds.query(`CREATE FUNCTION fail_test_projection() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'injected projection failure'; END; $$ LANGUAGE plpgsql`);
+    await ds.query(`CREATE TRIGGER fail_test_projection BEFORE INSERT OR UPDATE ON task_segment_asset_projections
+      FOR EACH ROW EXECUTE FUNCTION fail_test_projection()`);
+    try {
+      await expect(service.process({ assetId: fixture.asset.id })).rejects.toThrow("SEGMENT_JSON_DATABASE_FINALIZE_FAILED");
+      expect((await asset()).currentAnnotationRevisionId).toBeNull();
+      expect((await revisions())[0]!.publicationStatus).toBe("failed");
+      expect(await ds.getRepository(TaskSegmentAssetProjectionEntity).countBy({ assetId: fixture.asset.id })).toBe(0);
+    } finally {
+      await ds.query("DROP TRIGGER fail_test_projection ON task_segment_asset_projections");
+      await ds.query("DROP FUNCTION fail_test_projection()");
     }
     await service.process({ assetId: fixture.asset.id });
     expect(await revisions()).toHaveLength(1);
@@ -253,6 +276,7 @@ describe("segment annotation publication / retention / backfill", () => {
       annotationPublicationFailureCode: "ANNOTATION_RUN_NOT_PUBLISHED" });
     expect((await service.current(admin, fixture.asset.id)).currentRevision).toBeNull();
     const rows = await revisions();
+    expect(await ds.getRepository(TaskSegmentAssetProjectionEntity).findOneBy({ assetId: fixture.asset.id })).toBeNull();
     expect(rows).toHaveLength(stage === "claim" ? 0 : 1);
     if (stage === "finalize") {
       expect(rows[0]).toMatchObject({ revision: 1, publicationStatus: "failed", publishedAt: null });
@@ -277,6 +301,8 @@ describe("segment annotation publication / retention / backfill", () => {
     await service.process({ assetId: fixture.asset.id });
     expect((await revisions()).map(r => r.revision)).toEqual([1, 2]);
     expect((await revisions())[0]!.canonicalJson).toBe(previous.canonicalJson);
+    expect(await ds.getRepository(TaskSegmentAssetProjectionEntity).findOneByOrFail({ assetId: fixture.asset.id })).toMatchObject({ currentAnnotationRevisionId: (await revisions())[1]!.id, toolRawTexts: ["另一个工具"] });
+    expect(await ds.getRepository(TaskSegmentAssetProjectionEntity).countBy({ assetId: fixture.asset.id })).toBe(1);
     expect(storage.get(fixture.asset.clipObjectKey!)).toEqual(Buffer.from("clip"));
   });
 
@@ -412,8 +438,10 @@ describe("segment annotation publication / retention / backfill", () => {
     const runner = ds.createQueryRunner();
     await runner.connect();
     try {
+      await new TaskAssetProjection2026091300001().down(runner);
       await migration.down(runner);
       await migration.up(runner);
+      await new TaskAssetProjection2026091300001().up(runner);
       expect(await asset()).toMatchObject({ storageLayoutVersion: "legacy_task_segment_layout_v0", annotationPublicationStatus: "pending", currentAnnotationRevisionId: null });
       expect(await revisions()).toHaveLength(0);
       expect(storage.uploads).toHaveLength(0);
