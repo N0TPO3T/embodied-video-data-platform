@@ -113,17 +113,27 @@ export class TaskAssetService {
   async facets(actor: PublicUser, input: unknown): Promise<TaskAssetFacets> {
     requireAdmin(actor);
     const sql = buildTaskAssetQuery(parseTaskAssetQuery(input));
-    const rows = await this.dataSource.query(`WITH filtered AS MATERIALIZED (SELECT ${TASK_ASSET_SELECT} ${sql.from}) ${TASK_ASSET_FACET_SELECT}`, sql.params) as TaskAssetFacets[];
-    return rows[0]!;
+    return this.dataSource.transaction(async manager => {
+      await manager.query("SET TRANSACTION READ ONLY");
+      // JSONB expansion estimates triggered seconds of JIT compilation in the
+      // 10k-row check. Keep this setting transaction-local, not pool/global state.
+      await manager.query("SET LOCAL jit = off");
+      const rows = await manager.query(`WITH filtered AS MATERIALIZED (SELECT ${TASK_ASSET_SELECT} ${sql.from}) ${TASK_ASSET_FACET_SELECT}`, sql.params) as TaskAssetFacets[];
+      return rows[0]!;
+    });
   }
 
   async sceneSummary(actor: PublicUser, input: unknown) {
     requireAdmin(actor);
     const sql = buildTaskAssetQuery(parseTaskAssetQuery(input));
-    const rows = await this.dataSource.query(`WITH filtered AS MATERIALIZED (SELECT ${TASK_ASSET_SELECT} ${sql.from}) ${TASK_ASSET_SCENE_SELECT}`, sql.params) as Array<{
-      rows: TaskAssetSceneRow[]; totals: Pick<TaskAssetSummary, "assetCount" | "totalSegmentDurationMs" | "totalStorageBytes" | "sourceGroupCount">;
-    }>;
-    return rows[0]!;
+    return this.dataSource.transaction(async manager => {
+      await manager.query("SET TRANSACTION READ ONLY");
+      await manager.query("SET LOCAL jit = off");
+      const rows = await manager.query(`WITH filtered AS MATERIALIZED (SELECT ${TASK_ASSET_SELECT} ${sql.from}) ${TASK_ASSET_SCENE_SELECT}`, sql.params) as Array<{
+        rows: TaskAssetSceneRow[]; totals: Pick<TaskAssetSummary, "assetCount" | "totalSegmentDurationMs" | "totalStorageBytes" | "sourceGroupCount">;
+      }>;
+      return rows[0]!;
+    });
   }
 
   async exportCsv(actor: PublicUser, input: unknown): Promise<string> {

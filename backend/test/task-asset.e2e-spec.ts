@@ -12,6 +12,8 @@ import { OperationsFailureFilter } from "../src/operations/operations-failure.fi
 import { configureApplication } from "../src/http/configure-application.js";
 import { TaskSegmentAssetProjectionEntity } from "../src/database/entities/task-segment-asset-projection.entity.js";
 import { TaskSegmentAssetEntity } from "../src/database/entities/task-segment-asset.entity.js";
+import { TaskSegmentAnnotationRevisionEntity } from "../src/database/entities/task-segment-annotation-revision.entity.js";
+import { canonicalSegmentJson, segmentJsonSha256 } from "../src/task-segment/task-segment-annotation.js";
 import { AnnotationRunEntity } from "../src/database/entities/annotation-run.entity.js";
 import { TaskAssetProjection2026091300001 } from "../src/database/migrations/202609130001-task-asset-projection.js";
 import { backfillTaskAssetProjections } from "../src/task-asset/task-asset-projection-backfill.js";
@@ -155,9 +157,68 @@ describe("task asset search, scene inventory and DB-only backfill", () => {
   it("CSV ignores pagination, preserves Chinese/quotes and neutralizes formulas without private fields", async () => {
     await seedPublishedTaskAsset(ds, "CSV", doc => { doc.task.description = '=HYPERLINK("evil"),中文\n下一行'; });
     const csv = await service.exportCsv(admin, { page: "99", pageSize: "1" });
-    expect(csv).toContain('"\'=HYPERLINK(""evil""),中文 下一行"');
+    expect(csv).toContain('"\'=HYPERLINK(""evil""),中文\n下一行"');
     expect(csv).toContain("grasp|rub_or_wipe"); expect(csv).toContain("source_group_id");
     for (const value of ["Private Owner", "Private Team", "uploads/", "video.mp4", "content_json", "prompt", "password"]) expect(csv).not.toContain(value);
+  });
+
+  it("replaces a stale revision projection using only the current JSON, never mutable Run semantics", async () => {
+    const { fixture, doc, revision } = await seedPublishedTaskAsset(ds, "REVISION");
+    doc.annotation_revision = 2; doc.task.description = "新版语义"; doc.task.verb = "open";
+    const canonical = canonicalSegmentJson(doc);
+    const next = await ds.getRepository(TaskSegmentAnnotationRevisionEntity).save({ ...revision, id: "REV-2", revision: 2,
+      jsonObjectKey: `segments/${fixture.asset.id}/annotation.r0002.json`, contentJson: doc, canonicalJson: canonical,
+      sourceFingerprint: segmentJsonSha256(canonical), jsonSha256: segmentJsonSha256(canonical), jsonSizeBytes: String(Buffer.byteLength(canonical)) });
+    await ds.getRepository(TaskSegmentAssetEntity).update(fixture.asset.id, { currentAnnotationRevisionId: next.id });
+    await ds.getRepository(AnnotationRunEntity).update(fixture.run.id, { normalizedResult: null });
+    expect((await service.list(admin, {})).indexHealth).toMatchObject({ staleProjectionAssets: 1, projectedCurrentAssets: 0 });
+    expect(await backfillTaskAssetProjections(ds, { dryRun: false, limit: 100 })).toMatchObject({ updated: 1 });
+    expect((await service.list(admin, {})).items[0]).toMatchObject({ currentAnnotationRevisionId: "REV-2", task: { description: "新版语义", verb: "open" } });
+    expect((await ds.getRepository(TaskSegmentAnnotationRevisionEntity).findOneByOrFail({ id: revision.id })).canonicalJson).toBe(revision.canonicalJson);
+  });
+
+  it("continues after one invalid current JSON and emits only a fixed failure code", async () => {
+    const { a } = await examples();
+    await ds.getRepository(TaskSegmentAssetProjectionEntity).clear();
+    const next = await ds.getRepository(TaskSegmentAnnotationRevisionEntity).save({ ...a.revision, id: "REV-BAD", revision: 2,
+      jsonObjectKey: "segments/test/annotation.r0002.json", contentJson: { secret: "private-key-never-log" }, canonicalJson: "{}",
+      sourceFingerprint: "f".repeat(64), jsonSha256: segmentJsonSha256("{}"), jsonSizeBytes: "2" });
+    await ds.getRepository(TaskSegmentAssetEntity).update(a.fixture.asset.id, { currentAnnotationRevisionId: next.id });
+    const result = await backfillTaskAssetProjections(ds, { dryRun: false, limit: 100 });
+    expect(result).toMatchObject({ scanned: 3, created: 2, failed: 1 });
+    expect(result.errors[0]?.assetId).toBe(a.fixture.asset.id);
+    expect(JSON.stringify(result)).not.toContain("private-key");
+    expect(JSON.stringify(result)).not.toContain("segments/");
+  });
+
+  it("rechecks the current revision after acquiring the asset lock during concurrent publication", async () => {
+    const { fixture, doc, revision } = await seedPublishedTaskAsset(ds, "LOCK");
+    await ds.getRepository(TaskSegmentAssetProjectionEntity).delete(fixture.asset.id);
+    doc.annotation_revision = 2; doc.task.description = "并发新版";
+    const canonical = canonicalSegmentJson(doc);
+    await ds.getRepository(TaskSegmentAnnotationRevisionEntity).save({ ...revision, id: "REV-CONCURRENT", revision: 2,
+      jsonObjectKey: "segments/lock/annotation.r0002.json", contentJson: doc, canonicalJson: canonical,
+      sourceFingerprint: segmentJsonSha256(canonical), jsonSha256: segmentJsonSha256(canonical), jsonSizeBytes: String(Buffer.byteLength(canonical)) });
+    const runner = ds.createQueryRunner(); await runner.connect(); await runner.startTransaction();
+    const originalQuery = ds.query.bind(ds);
+    let scanned!: () => void;
+    const scanComplete = new Promise<void>(resolve => { scanned = resolve; });
+    const spy = vi.spyOn(ds, "query").mockImplementationOnce(async (...args) => { const rows = await originalQuery(...args); scanned(); return rows; });
+    try {
+      await runner.query("UPDATE task_segment_assets SET current_annotation_revision_id = 'REV-CONCURRENT' WHERE id = $1", [fixture.asset.id]);
+      const job = backfillTaskAssetProjections(ds, { dryRun: false, limit: 100 });
+      await scanComplete; await runner.commitTransaction();
+      expect(await job).toMatchObject({ created: 1, failed: 0 });
+      expect(await ds.getRepository(TaskSegmentAssetProjectionEntity).findOneByOrFail({ assetId: fixture.asset.id })).toMatchObject({ currentAnnotationRevisionId: "REV-CONCURRENT", taskDescription: "并发新版" });
+    } finally { spy.mockRestore(); if (runner.isTransactionActive) await runner.rollbackTransaction(); await runner.release(); }
+  });
+
+  it("bounds CSV at 50,000 rows before serialization", async () => {
+    const spy = vi.spyOn(ds, "query").mockResolvedValueOnce(new Array(50_001));
+    try {
+      await expect(service.exportCsv(admin, {})).rejects.toMatchObject({ code: "TASK_ASSET_EXPORT_LIMIT_EXCEEDED" });
+      expect(spy.mock.calls[0]?.[0]).toContain("LIMIT 50001");
+    } finally { spy.mockRestore(); }
   });
 
   it.each(["", "/facets", "/scene-summary", "/export.csv"])("HTTP permissions and validation on %s", async path => {

@@ -54,6 +54,8 @@ export class TaskAssetProjection2026091300001 implements MigrationInterface {
         has_unmapped_labels boolean NOT NULL,
         object_labels jsonb NOT NULL,
         tool_labels jsonb NOT NULL,
+        CONSTRAINT fk_task_asset_projection_revision_owner FOREIGN KEY (current_annotation_revision_id, asset_id)
+          REFERENCES task_segment_annotation_revisions(id, task_segment_asset_id) ON DELETE RESTRICT,
         created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now(),
         CHECK (scene_mapping_status IN ('matched', 'proposed', 'unknown')),

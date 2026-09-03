@@ -18,6 +18,7 @@ const labels: Record<string, string> = {
 const label = (value: string) => labels[value] ?? value;
 const duration = (ms: number) => `${(ms / 1000).toLocaleString(undefined, { maximumFractionDigits: 2 })} 秒`;
 const bytes = (value: number) => value >= 1024 ** 3 ? `${(value / 1024 ** 3).toFixed(2)} GB` : value >= 1024 ** 2 ? `${(value / 1024 ** 2).toFixed(1)} MB` : `${value.toLocaleString()} B`;
+const listedLabels = (values: TaskAsset["tools"]) => [...new Set([...values.names, ...values.rawTexts])].join("、");
 
 function MultiFilter({ title, values, options, onChange }: {
   title: string; values: string[]; options: Array<{ value: string; label: string }>; onChange(values: string[]): void;
@@ -155,8 +156,8 @@ export function TaskAssetLibraryPage() {
         <td><strong>{asset.assetId}</strong><div className={styles.actions}><button onClick={() => void openAsset(asset, "play")}>播放</button><button onClick={() => void openAsset(asset, "json")}>查看 JSON</button><button onClick={() => void openAsset(asset, "download")}>下载 JSON</button><button onClick={() => void openAsset(asset, "technical")}>技术详情</button></div></td>
         <td>{asset.task.description}{asset.hasUncertainty && <small className={styles.flag}>含不确定信息</small>}</td>
         <td>{asset.scene.name ?? "未知场景"}{asset.scene.mappingStatus === "proposed" && <small className={styles.flag}>待映射</small>}</td>
-        <td>{asset.task.verb}</td><td>{asset.objects.rawTexts.join("、") || "未列出对象"}{asset.objects.unmappedCount > 0 && <small className={styles.flag}>含待映射项</small>}</td>
-        <td>{asset.tools.rawTexts.length ? asset.tools.rawTexts.join("、") : "未列出工具"}{asset.tools.unmappedCount > 0 && <small className={styles.flag}>含待映射项</small>}</td>
+        <td>{asset.task.verb}</td><td>{listedLabels(asset.objects) || "未列出对象"}{asset.objects.unmappedCount > 0 && <small className={styles.flag}>含待映射项</small>}</td>
+        <td>{listedLabels(asset.tools) || "未列出工具"}{asset.tools.unmappedCount > 0 && <small className={styles.flag}>含待映射项</small>}</td>
         <td>{asset.interactionPrimitives.join("、") || "未列出"}</td><td>{label(asset.completion)} / {label(asset.resultStatus)}</td><td>{duration(asset.media.durationMs)}</td>
         <td>{label(asset.semanticVerification)}</td><td>{label(asset.boundarySource)}</td><td>r{String(asset.annotationRevision).padStart(4, "0")}</td><td>{new Date(asset.createdAt).toLocaleString()}</td>
       </tr>)}</tbody></table></div>}

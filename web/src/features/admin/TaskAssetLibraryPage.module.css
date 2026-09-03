@@ -1,4 +1,4 @@
-.page { display: grid; gap: 18px; min-width: 0; }
+.page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; min-width: 0; }
 .page h1 { font-size: 24px; }
 .metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .notice { margin: 0; padding: 12px 16px; background: #fff8e8; border: 1px solid #edd8aa; border-radius: 8px; color: #75561f; font-size: 13px; line-height: 1.7; }

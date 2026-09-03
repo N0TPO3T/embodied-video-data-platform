@@ -325,7 +325,7 @@ Source Retention 保留现有正式 Run、完整任务对应关系、refinement 
 JSON 发布完成会为已结算 Submission 再次唤醒 retention，不改变 QC 或结算数据。
 
 修改语义/审核结论应在同一 Asset 上新增 JSON Revision；改变边界或视频字节则应创建新 Asset。
-本阶段不实现编辑 API、替代关系、客户 Delivery、场景库存 UI 或组合筛选。
+001A 不实现编辑 API、替代关系或客户 Delivery；场景库存 UI 和组合筛选见下节 001B。
 
 真实冒烟测试使用合成画面与预设语义（不调用 Qwen），覆盖 exact、stream copy、证据扩张、上传失败、历史回填及完整删源。
 仅在独立 PostgreSQL/MinIO/RabbitMQ 环境中运行；该测试会重置指定的测试数据库，并创建独立 smoke Bucket：
@@ -337,6 +337,87 @@ cd backend
 # 必须指向可销毁的 MinIO 实例；不设置 endpoint 时此项默认跳过。
 pnpm exec vitest run test/task-segment-annotation-smoke.e2e-spec.ts
 ```
+
+## 任务片段资产库（TASK-ASSET-001B）
+
+管理员入口 `/admin/task-assets` 提供资产明细、组合筛选、场景库存和 CSV。
+列表不会预签名所有视频：点击播放、查看/下载 JSON、技术详情时才调用现有片段接口。
+没有工具条目的含义是“未列出工具”，不是已经确认“无工具”；未知结果不等同失败。
+
+### 查询投影与发布一致性
+
+`task_segment_asset_projections` 每个 Asset 只有一行，版本为 `task_asset_projection_v1`。
+唯一语义来源是 **Asset.currentAnnotationRevisionId → 已发布 Revision.contentJson**。
+不读取实时 AnnotationRun/LabelSet/QC 的语义，不调用模型，不修改 `task_segment.v1` 或 OSS 对象。
+它是可重建的查询索引，不是第三份语义真相，也不是 Source Retention 的删源门禁。
+
+新 JSON 发布时，保留 submission → run → asset → revision 锁顺序及正式 Run、视频绑定、指纹校验，
+在同一事务内先 upsert 投影，再发布 Revision、切换 Asset 当前指针。任何一步失败都会回滚；
+新 Revision 覆盖同一条投影，历史 JSON 不变。并发回填重新锁定 Asset 后读取当前指针，不能覆盖新版本。
+
+场景只做确定性归组：正式标签为 `label:<labelId>`；无正式 ID 时使用 fine label（否则 coarse label）
+经 NFKC、trim、小写、空白折叠得到 `proposed:<text>`；无可读文本为 `unknown`。
+不自动生成 Label ID、不做模糊合并。对象、工具、交互原语分别建立数组索引；对象/工具另保留配对的 ID/name，
+避免独立排序的 ID/name 数组被错误配对。无正式标签的计数包含 proposed 子集，原始文本保留。
+
+### 接口与统计口径
+
+以下管理员 GET 接口均在 `/api/v1/operations/task-assets` 下；未登录 401、非管理员 403：
+
+- `/`：分页资产、筛选后 summary、indexHealth。
+- `/facets`：全部当前筛选条件内的分布，不排除该 facet 自身的过滤条件。
+- `/scene-summary`：按 sceneGroupKey 聚合及各场景 Top 10 动词/对象/工具。
+- `/export.csv`：相同筛选范围，忽略分页，超过 50,000 行返回 `TASK_ASSET_EXPORT_LIMIT_EXCEEDED`；复用 CSV 转义与公式注入防护。
+
+默认范围：Run succeeded 且 auto_accepted/human_verified；Asset ready、validation passed、JSON published；
+当前 Revision published；投影的 Revision 与当前指针一致且 projectionVersion 为当前版本。
+`includeHistorical=true` 额外包含 superseded Run 并标记 `isCurrent=false`，不包含 candidate/rejected。
+原视频删除不影响入库范围。缺失或过期投影不混入结果；indexHealth 统计整个上述已发布范围（不随语义筛选变化），
+分别报告当前、缺失和过期数量。资产表、统计、分面和 CSV 不逐条解析源 JSON，不做 Node 端全量过滤。
+
+支持参数：`q`；`sceneKeys`、`sceneMappingStatuses`、`taskVerbs`、`taskLabelIds`、`objectLabelIds`、`toolLabelIds`；
+`handModes`、`executionPatterns`、`interactionPrimitives`、`complexitySignals`；`completions`、`resultStatuses`、
+`failureRecoveryStatuses`、`semanticVerifications`、`sourceAnnotationAcceptances`、`boundarySources`、`materializationModes`；
+`hasAudio`、`hasUnmappedLabels`、`hasUncertainty`；`minDurationMs`、`maxDurationMs`、`sourceGroupId`。
+多值支持重复参数或逗号分隔，同维度 OR、跨维度 AND；最多 20 个去重值、每值 120 字符，关键词最多 200 字符。
+关键词为转义后的字面量 ILIKE 子串匹配（`%`/`_` 不作为通配符），没有全文、向量或 pg_trgm 索引。
+`page` 默认 1，`pageSize` 默认 50、最大 100；排序 `createdAt|duration|scene|task|result` + `asc|desc`，
+默认 createdAt DESC、assetId DESC，同值始终用 assetId 打破排序并列。
+
+`totalSegmentDurationMs` 是所有片段时长之和，**重叠任务可能重复计算原视频区间**，不是独立采集时长。
+`sourceGroupCount` 使用 COUNT(DISTINCT sourceGroupId)，表示原始上传数；全局总数不能把各场景去重数直接相加。
+不加入采集目标、库存缺口、定价、QC 或结算计算，不与旧“数据资产/交付包”页面混用口径。
+
+### 部署后的数据库回填
+
+先应用迁移 `TaskAssetProjection2026091300001`（只建表/约束/索引，不回填数据），再在 backend 执行：
+
+```bash
+pnpm task-asset:projection-backfill -- --dry-run --limit=100
+pnpm task-asset:projection-backfill -- --limit=100
+# 按输出 nextCursor 继续：--after=<asset-id>
+```
+
+只需要指向已核对环境的 `DATABASE_URL`，**不需要原视频、MinIO/OSS 或模型密钥**。
+非 dry-run 必须显式提供 limit（1–1000）；扫描已发布且有当前指针的资产。
+输出 scanned、eligible（需重建数）、created、updated、current、blocked、failed、nextCursor。
+dry-run 全程 SELECT，不写索引；单条失败不中断后续资产，错误仅含 Asset/Revision ID 和固定错误码。
+blocked/failed 时 CLI 返回非零退出码。回填完成后检查页面索引覆盖率和待映射/未知分布。
+
+本地验证使用 Node 22 及隔离测试环境：
+
+```bash
+cd backend
+pnpm exec vitest run test/task-asset-projection.spec.ts test/task-asset-query.spec.ts test/task-asset.e2e-spec.ts
+# 与 001A 相同的独立 PostgreSQL/MinIO/RabbitMQ/FFmpeg 环境，增加 A–G 资产库验收。
+pnpm exec vitest run test/task-segment-annotation-smoke.e2e-spec.ts
+# 会重置指定测试数据库；10,000 条 SQL 合成投影，不调用对象存储/模型。
+TASK_ASSET_PERF=true pnpm exec vitest run test/task-asset-performance.e2e-spec.ts
+```
+
+性能测试执行 EXPLAIN ANALYZE，检查稀有场景普通索引、对象/工具 GIN，并输出首页、场景汇总、facets 的查询计划。
+场景汇总和 facets 在只读事务内 `SET LOCAL jit = off`，避免 JSONB 展开行数估计引发高额编译开销；不改变连接池或数据库全局设置。
+合成数据只验证索引与查询形态，不代表生产延迟或真实数据分布。低内存机器全量测试建议 `--maxWorkers=1`，避免与已有容器争抢资源。
 
 ## 工程结构
 

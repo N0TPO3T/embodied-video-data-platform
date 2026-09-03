@@ -14,7 +14,7 @@ export function buildTaskAssetSearchText(document: TaskSegmentAnnotationV1): str
     scene.coarse_label, scene.fine_label, scene.mapping?.label_name,
     ...[task.object_mapping, ...task.manipulated_objects, ...task.tools].flatMap(v => [v.raw_text, v.label_name]),
     task.result.visible_postcondition, ...task.interaction_primitives, ...task.complexity_signals,
-  ].map(v => v?.toLowerCase())).join(" ");
+  ].map(v => v == null ? v : normalizeTaskAssetText(v).toLowerCase())).join(" ");
 }
 
 function mappedLabels(entries: TaskSegmentAnnotationV1["task"]["tools"]) {
@@ -61,8 +61,8 @@ export function buildTaskAssetProjection(input: { assetId: string; revisionId: s
     sceneMappingStatus: sceneStatus, primarySceneId: sceneId,
     primarySceneName: sceneId ? normalized(scene.mapping?.label_name) : rawScene,
     sceneCoarseLabel: normalized(scene.coarse_label), sceneFineLabel: normalized(scene.fine_label), sceneVerification: scene.verification,
-    taskDescription: normalizeTaskAssetText(task.description), taskVerb: task.verb,
-    taskMappingStatus: taskStatus, taskLabelId: taskId, taskLabelName: normalized(task.mapping?.label_name), taskObjectRaw: normalizeTaskAssetText(task.object),
+    taskDescription: task.description, taskVerb: task.verb,
+    taskMappingStatus: taskStatus, taskLabelId: taskId, taskLabelName: task.mapping?.label_name ?? null, taskObjectRaw: task.object,
     objectLabelIds: objects.ids, objectLabelNames: objects.names, objectRawTexts: objects.rawTexts,
     proposedObjectCount: objects.proposedCount, unmappedObjectCount: objects.unmappedCount, objectLabels: objects.labels,
     toolLabelIds: tools.ids, toolLabelNames: tools.names, toolRawTexts: tools.rawTexts,

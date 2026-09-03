@@ -141,6 +141,7 @@ describe("task segment adaptive-cut migration", () => {
       completedAt: new Date(),
     });
 
+    await dataSource.undoLastMigration(); // Search projection follows Segment JSON publication.
     await dataSource.undoLastMigration(); // Segment JSON publication follows adaptive cut.
     const latest = (await dataSource.query(
       "SELECT name FROM migrations ORDER BY id DESC LIMIT 1",
