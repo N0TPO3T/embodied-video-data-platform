@@ -10,6 +10,8 @@ import { JobOutboxEntity } from "../database/entities/job-outbox.entity.js";
 import { MediaMetadataEntity } from "../database/entities/media-metadata.entity.js";
 import { SubmissionEntity } from "../database/entities/submission.entity.js";
 import { TaskSegmentAssetEntity } from "../database/entities/task-segment-asset.entity.js";
+import { TaskSegmentAnnotationRevisionEntity } from "../database/entities/task-segment-annotation-revision.entity.js";
+import { TaskSegmentAnnotationService } from "./task-segment-annotation.service.js";
 import { TaskBoundaryRefinementEntity } from "../database/entities/task-boundary-refinement.entity.js";
 import { AllowedOriginGuard } from "../http/allowed-origin.guard.js";
 import { OperationsFailureFilter } from "../operations/operations-failure.filter.js";
@@ -39,6 +41,7 @@ import { TaskBoundaryRefinementProcessor } from "./task-boundary-refinement.proc
       MediaMetadataEntity,
       SubmissionEntity,
       TaskSegmentAssetEntity,
+      TaskSegmentAnnotationRevisionEntity,
       TaskBoundaryRefinementEntity,
     ]),
     AuthModule,
@@ -49,6 +52,7 @@ import { TaskBoundaryRefinementProcessor } from "./task-boundary-refinement.proc
   controllers: [TaskSegmentController],
   providers: [
     TaskSegmentService,
+    TaskSegmentAnnotationService,
     TaskSegmentMediaTool,
     TaskSegmentProcessor,
     SourceRetentionProcessor,
@@ -72,6 +76,7 @@ import { TaskBoundaryRefinementProcessor } from "./task-boundary-refinement.proc
     OperationsFailureFilter,
   ],
   exports: [
+    TaskSegmentAnnotationService,
     TaskSegmentProcessor,
     TaskSegmentService,
     SourceRetentionProcessor,

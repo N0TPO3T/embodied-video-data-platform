@@ -17,6 +17,8 @@ export const TASK_BOUNDARY_REFINEMENT_ROUTING_KEY = "task.boundary.refine.v1";
 export const TASK_SEGMENT_QUEUE = "evdp.task.segment.generate.v1";
 export const DEAD_TASK_SEGMENT_QUEUE = `${TASK_SEGMENT_QUEUE}.dead`;
 export const TASK_SEGMENT_ROUTING_KEY = "task.segment.generate.v1";
+export const TASK_SEGMENT_ANNOTATION_ROUTING_KEY = "task.segment.annotation.publish.v1";
+export const TASK_SEGMENT_ANNOTATION_QUEUE = "evdp.task.segment.annotation.publish.v1";
 export const SUBMISSION_SOURCE_RETENTION_QUEUE = "evdp.submission.source.retention.v1";
 export const DEAD_SUBMISSION_SOURCE_RETENTION_QUEUE = `${SUBMISSION_SOURCE_RETENTION_QUEUE}.dead`;
 export const SUBMISSION_SOURCE_RETENTION_ROUTING_KEY = "submission.source.retention.v1";
@@ -182,4 +184,15 @@ export async function assertSubmissionSourceRetentionTopology(
     EVENTS_EXCHANGE,
     SUBMISSION_SOURCE_RETENTION_ROUTING_KEY,
   );
+}
+
+export async function assertTaskSegmentAnnotationTopology(channel: ConfirmChannel): Promise<void> {
+  await channel.assertExchange(EVENTS_EXCHANGE, "topic", { durable: true });
+  await channel.assertExchange(DEAD_EVENTS_EXCHANGE, "topic", { durable: true });
+  await channel.assertQueue(`${TASK_SEGMENT_ANNOTATION_QUEUE}.dead`, { durable: true });
+  await channel.bindQueue(`${TASK_SEGMENT_ANNOTATION_QUEUE}.dead`, DEAD_EVENTS_EXCHANGE, TASK_SEGMENT_ANNOTATION_ROUTING_KEY);
+  await channel.assertQueue(TASK_SEGMENT_ANNOTATION_QUEUE, {
+    durable: true, arguments: { "x-dead-letter-exchange": DEAD_EVENTS_EXCHANGE },
+  });
+  await channel.bindQueue(TASK_SEGMENT_ANNOTATION_QUEUE, EVENTS_EXCHANGE, TASK_SEGMENT_ANNOTATION_ROUTING_KEY);
 }

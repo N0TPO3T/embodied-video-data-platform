@@ -14,6 +14,7 @@ import {
   type TaskSegmentMaterializationMode,
 } from "../database/entities/task-segment-asset.entity.js";
 import { acceptedAnnotationRun } from "../delivery/delivery-annotation.js";
+import { enqueueTaskSegmentAnnotation } from "./task-segment-annotation.service.js";
 import {
   OBJECT_STORAGE,
   type ObjectStoragePort,
@@ -635,6 +636,7 @@ export class TaskSegmentProcessor {
       asset.validationFailureCode = null;
       asset.validationFailureMessage = null;
       asset.generationStatus = "ready";
+      asset.annotationPublicationStatus = "pending";
       asset.failureCode = null;
       asset.failureMessage = null;
       asset.materializationCompletedAt = completedAt;
@@ -644,6 +646,7 @@ export class TaskSegmentProcessor {
       );
       asset.completedAt = completedAt;
       await repository.save(asset);
+      await enqueueTaskSegmentAnnotation(manager, asset);
     });
   }
 
@@ -656,6 +659,7 @@ export class TaskSegmentProcessor {
       { id: assetId, generationStatus: "processing" },
       {
         generationStatus: "skipped",
+        annotationPublicationStatus: "not_applicable",
         validationStatus: "failed",
         validationFailureCode: failureCode,
         validationFailureMessage: failureMessage.slice(0, 2_000),
@@ -687,6 +691,7 @@ export class TaskSegmentProcessor {
         { id: input.assetId, generationStatus: "processing" },
         {
           generationStatus: "failed",
+          annotationPublicationStatus: "not_applicable",
           validationStatus: "failed",
           validationFailureCode: input.failureCode,
           validationFailureMessage: failureMessage,

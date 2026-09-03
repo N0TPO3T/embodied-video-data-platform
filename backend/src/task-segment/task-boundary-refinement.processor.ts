@@ -562,6 +562,7 @@ export class TaskBoundaryRefinementProcessor {
       startMs: input.selectedStartMs,
       endMs: input.selectedEndMs,
       durationMs: input.durationMs,
+      evidenceTimestampsMs: (asset.evidenceSnapshot as { requiredSourceEvidenceTimestampsMs?: number[] } | null)?.requiredSourceEvidenceTimestampsMs,
     });
     asset.clipStartMs = target.clipStartMs;
     asset.clipEndMs = target.clipEndMs;
