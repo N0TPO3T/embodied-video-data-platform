@@ -16,6 +16,9 @@ import {
   assertMediaTopology,
   assertSubmissionSourceRetentionTopology,
   assertTaskSegmentTopology,
+  assertTaskSegmentAnnotationTopology,
+  TASK_SEGMENT_ANNOTATION_QUEUE,
+  TASK_SEGMENT_ANNOTATION_ROUTING_KEY,
   EVENTS_EXCHANGE,
   MEDIA_QUEUE,
   SUBMISSION_SOURCE_RETENTION_QUEUE,
@@ -32,6 +35,8 @@ import {
   RetryableSourceRetentionError,
   SourceRetentionProcessor,
 } from "../task-segment/source-retention.processor.js";
+import { TaskSegmentAnnotationService } from "../task-segment/task-segment-annotation.service.js";
+import { SegmentAnnotationError } from "../task-segment/task-segment-annotation.js";
 
 const RETRY_DELAYS = [5_000, 30_000, 120_000] as const;
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -69,6 +74,7 @@ export class RabbitMediaWorker {
     private readonly heartbeats?: WorkerHeartbeatService,
     @Optional() private readonly taskSegments?: TaskSegmentProcessor,
     @Optional() private readonly sourceRetention?: SourceRetentionProcessor,
+    @Optional() private readonly segmentAnnotations?: TaskSegmentAnnotationService,
   ) {}
 
   async start(
@@ -81,6 +87,14 @@ export class RabbitMediaWorker {
     await assertMediaTopology(this.channel);
     await assertTaskSegmentTopology(this.channel);
     await assertSubmissionSourceRetentionTopology(this.channel);
+    await assertTaskSegmentAnnotationTopology(this.channel);
+    for (const [index, delay] of RETRY_DELAYS.entries()) {
+      await this.channel.assertQueue(`${TASK_SEGMENT_ANNOTATION_QUEUE}.retry.${index + 1}`, {
+        durable: true,
+        arguments: { "x-message-ttl": delay, "x-dead-letter-exchange": EVENTS_EXCHANGE,
+          "x-dead-letter-routing-key": TASK_SEGMENT_ANNOTATION_ROUTING_KEY },
+      });
+    }
     for (const [index, delay] of RETRY_DELAYS.entries()) {
       await this.channel.assertQueue(`${MEDIA_QUEUE}.retry.${index + 1}`, {
         durable: true,
@@ -112,6 +126,11 @@ export class RabbitMediaWorker {
       });
     }
     await this.channel.prefetch(1);
+    if (this.segmentAnnotations) {
+      await this.channel.consume(TASK_SEGMENT_ANNOTATION_QUEUE, message => {
+        if (message) void this.handleSegmentAnnotation(message);
+      });
+    }
     if (this.taskSegments) {
       await this.channel.consume(TASK_SEGMENT_QUEUE, (message) => {
         if (message) void this.handleTaskSegment(message);
@@ -186,6 +205,37 @@ export class RabbitMediaWorker {
         );
       }
       channel.ack(message);
+    }
+  }
+
+  private async handleSegmentAnnotation(message: ConsumeMessage): Promise<void> {
+    const channel = this.channel;
+    if (!channel || !this.segmentAnnotations) return;
+    let assetId: string | null = null;
+    try {
+      const payload = JSON.parse(message.content.toString("utf8")) as { assetId?: unknown };
+      if (typeof payload.assetId !== "string") throw new SegmentAnnotationError("SEGMENT_NOT_READY");
+      assetId = payload.assetId;
+      const outcome = await this.segmentAnnotations.process({ assetId });
+      if (outcome === "failed") { channel.nack(message, false, false); return; }
+      channel.ack(message);
+    } catch (error) {
+      const attempt = Number(message.properties.headers?.["retry-attempt"] ?? 0);
+      const retryable = assetId !== null && (!(error instanceof SegmentAnnotationError) || error.retryable);
+      if (!retryable || !Number.isInteger(attempt) || attempt >= RETRY_DELAYS.length) {
+        channel.nack(message, false, false);
+        return;
+      }
+      try {
+        channel.sendToQueue(`${TASK_SEGMENT_ANNOTATION_QUEUE}.retry.${attempt + 1}`, message.content, {
+          ...message.properties, persistent: true,
+          headers: { ...message.properties.headers, "retry-attempt": attempt + 1 },
+        });
+        await channel.waitForConfirms();
+        channel.ack(message);
+      } catch {
+        channel.nack(message, false, true);
+      }
     }
   }
 

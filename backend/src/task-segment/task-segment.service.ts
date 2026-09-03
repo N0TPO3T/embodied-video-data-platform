@@ -31,9 +31,11 @@ import {
   taskBoundaryRefinementEnabled,
 } from "./task-boundary-refinement.policy.js";
 import { TASK_SEGMENT_MATERIALIZATION_POLICY_VERSION } from "./task-segment-materialization.policy.js";
+import { collectTaskSegmentEvidence } from "./task-segment-annotation-builder.js";
+import { SegmentAnnotationError, TASK_SEGMENT_STORAGE_LAYOUT_VERSION, TASK_SEGMENT_EVIDENCE_POLICY_VERSION, taskSegmentVideoObjectKey } from "./task-segment-annotation.js";
 
 export const TASK_SEGMENT_GENERATION_POLICY_VERSION =
-  "task_segment_v1_policy_v1" as const;
+  TASK_SEGMENT_EVIDENCE_POLICY_VERSION;
 /** SEG-DEC-002：pre/post padding（毫秒），正式规则为前后各 0.5s */
 export const TASK_SEGMENT_PADDING_MS = 500;
 /** SEG-DEC-003：最短片段时长（毫秒），按 padding 后的实际片段长度判定 */
@@ -70,6 +72,13 @@ function publicAsset(
 ) {
   return {
     id: asset.id,
+    storageLayoutVersion: asset.storageLayoutVersion,
+    currentAnnotationRevisionId: asset.currentAnnotationRevisionId,
+    annotationPublicationStatus: asset.annotationPublicationStatus,
+    annotationPublicationAttemptCount: asset.annotationPublicationAttemptCount,
+    annotationPublicationFailureCode: asset.annotationPublicationFailureCode,
+    annotationPublicationFailureMessage: asset.annotationPublicationFailureMessage,
+    annotationPublishedAt: asset.annotationPublishedAt?.getTime() ?? null,
     submissionId: asset.submissionId,
     annotationRunId: asset.annotationRunId,
     taskIndex: asset.taskIndex,
@@ -138,14 +147,6 @@ function publicAsset(
   };
 }
 
-function clipObjectKey(input: {
-  submissionId: string;
-  annotationRunId: string;
-  taskIndex: number;
-}): string {
-  return `task-segments/demo/${input.submissionId}/${input.annotationRunId}/task-${input.taskIndex}.mp4`;
-}
-
 function evidenceSnapshot(task: JsonRecord): JsonRecord {
   return jsonSnapshot({
     evidenceLevel: task.evidence_level ?? null,
@@ -204,9 +205,14 @@ export function taskSegmentTargetBounds(input: {
   startMs: number;
   endMs: number;
   durationMs: number;
+  evidenceTimestampsMs?: readonly number[];
 }): { clipStartMs: number; clipEndMs: number; tooShort: boolean } {
-  const clipStartMs = Math.max(0, input.startMs - TASK_SEGMENT_PADDING_MS);
-  const clipEndMs = Math.min(input.durationMs, input.endMs + TASK_SEGMENT_PADDING_MS);
+  const evidence = input.evidenceTimestampsMs ?? [];
+  if (evidence.some(t => !Number.isFinite(t) || t < 0 || t > input.durationMs)) {
+    throw new SegmentAnnotationError("SEGMENT_EVIDENCE_INVALID");
+  }
+  const clipStartMs = Math.max(0, Math.min(input.startMs, ...evidence) - TASK_SEGMENT_PADDING_MS);
+  const clipEndMs = Math.min(input.durationMs, Math.max(input.endMs, ...evidence) + TASK_SEGMENT_PADDING_MS);
   return {
     clipStartMs,
     clipEndMs,
@@ -375,6 +381,13 @@ export class TaskSegmentService {
       // SEG-DEC-005：completion=uncertain（采样不足以区分）不入库，
       // 记录 skipped + 原因码，保留审计链；failed/incomplete/complete/partial 均保留状态入库。
       const completion = stringValue(task.effective_completion ?? task.completion, "uncertain");
+      let requiredEvidence: number[] = [];
+      let evidenceInvalid = false;
+      try {
+        requiredEvidence = collectTaskSegmentEvidence({ effective: accepted.effective, taskIndex, durationMs });
+      } catch {
+        evidenceInvalid = true;
+      }
       let clipStartMs = startMs;
       let clipEndMs = endMs;
       let generationStatus: TaskSegmentGenerationStatus = "queued";
@@ -388,13 +401,17 @@ export class TaskSegmentService {
         generationStatus = "skipped";
         failureCode = "END_EXCEEDS_SOURCE_DURATION";
         failureMessage = `Task ${taskIndex} 结束时间 ${endMs}ms 超过原视频 ${durationMs}ms`;
+      } else if (evidenceInvalid) {
+        generationStatus = "skipped";
+        failureCode = "SEGMENT_EVIDENCE_INVALID";
+        failureMessage = "SEGMENT_EVIDENCE_INVALID";
       } else if (completion === "uncertain") {
         generationStatus = "skipped";
         failureCode = "TASK_STATUS_UNCERTAIN";
         failureMessage = `Task ${taskIndex} 的 completion=uncertain（采样不足以区分），不入库`;
       } else if (!refinementEnabled) {
         // SEG-DEC-002：前后各 0.5s padding，clamp 到视频范围
-        const target = taskSegmentTargetBounds({ startMs, endMs, durationMs });
+        const target = taskSegmentTargetBounds({ startMs, endMs, durationMs, evidenceTimestampsMs: requiredEvidence });
         clipStartMs = target.clipStartMs;
         clipEndMs = target.clipEndMs;
         if (target.tooShort) {
@@ -411,6 +428,7 @@ export class TaskSegmentService {
       let refinement: TaskBoundaryRefinementEntity | null = null;
       if (
         refinementEnabled &&
+        !evidenceInvalid &&
         startMs >= 0 &&
         endMs > startMs &&
         endMs <= durationMs
@@ -446,8 +464,13 @@ export class TaskSegmentService {
         });
         await refinementRepository.save(refinement);
       }
+      const assetId = `TSA-${randomUUID()}`;
       const asset = repository.create({
-        id: `TSA-${randomUUID()}`,
+        id: assetId,
+        storageLayoutVersion: TASK_SEGMENT_STORAGE_LAYOUT_VERSION,
+        annotationPublicationStatus: evidenceInvalid ? "failed" : generationStatus === "skipped" ? "not_applicable" : "pending",
+        annotationPublicationFailureCode: evidenceInvalid ? "SEGMENT_EVIDENCE_INVALID" : null,
+        annotationPublicationFailureMessage: evidenceInvalid ? "SEGMENT_EVIDENCE_INVALID" : null,
         submissionId: submission.id,
         annotationRunId: run.id,
         taskIndex,
@@ -480,7 +503,7 @@ export class TaskSegmentService {
         validationStatus: "pending",
         streamCopyAttempted: false,
         coverageSnapshot: jsonSnapshot(linkedCoverage),
-        evidenceSnapshot: evidenceSnapshot(task),
+        evidenceSnapshot: { ...evidenceSnapshot(task), requiredSourceEvidenceTimestampsMs: requiredEvidence },
         validationWarnings: timestampWarnings({
           task,
           coverage,
@@ -489,11 +512,7 @@ export class TaskSegmentService {
         }),
         sourceObjectKey: submission.objectKey,
         sourceSha256: submission.checksumSha256,
-        clipObjectKey: clipObjectKey({
-          submissionId: submission.id,
-          annotationRunId: run.id,
-          taskIndex,
-        }),
+        clipObjectKey: taskSegmentVideoObjectKey(assetId),
         generationStatus,
         failureCode,
         failureMessage,

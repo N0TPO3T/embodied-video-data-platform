@@ -19,6 +19,9 @@ export type TaskSegmentGenerationStatus =
   | "failed"
   | "skipped";
 
+export type TaskSegmentAnnotationPublicationStatus =
+  | "not_applicable" | "pending" | "publishing" | "published" | "failed";
+
 export type TaskSegmentBoundarySource =
   | "coarse"
   | "refined"
@@ -39,6 +42,27 @@ export type TaskSegmentValidationStatus = "pending" | "passed" | "failed";
 export class TaskSegmentAssetEntity {
   @PrimaryColumn({ type: "varchar", length: 64 })
   id!: string;
+
+  @Column({ name: "storage_layout_version", type: "varchar", length: 80, default: "legacy_task_segment_layout_v0" })
+  storageLayoutVersion = "legacy_task_segment_layout_v0";
+
+  @Column({ name: "current_annotation_revision_id", type: "varchar", length: 64, nullable: true })
+  currentAnnotationRevisionId: string | null = null;
+
+  @Column({ name: "annotation_publication_status", type: "varchar", length: 24, default: "pending" })
+  annotationPublicationStatus: TaskSegmentAnnotationPublicationStatus = "pending";
+
+  @Column({ name: "annotation_publication_attempt_count", type: "integer", default: 0 })
+  annotationPublicationAttemptCount = 0;
+
+  @Column({ name: "annotation_publication_failure_code", type: "varchar", length: 80, nullable: true })
+  annotationPublicationFailureCode: string | null = null;
+
+  @Column({ name: "annotation_publication_failure_message", type: "text", nullable: true })
+  annotationPublicationFailureMessage: string | null = null;
+
+  @Column({ name: "annotation_published_at", type: "timestamptz", nullable: true })
+  annotationPublishedAt: Date | null = null;
 
   @Column({ name: "submission_id", type: "varchar", length: 64 })
   submissionId!: string;

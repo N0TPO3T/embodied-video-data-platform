@@ -16,6 +16,8 @@ import {
   assertSubmissionSourceRetentionTopology,
   assertTaskBoundaryRefinementTopology,
   assertTaskSegmentTopology,
+  assertTaskSegmentAnnotationTopology,
+  TASK_SEGMENT_ANNOTATION_QUEUE,
   EVENTS_EXCHANGE,
   MEDIA_QUEUE,
   MEDIA_QUEUE_OPTIONS,
@@ -138,6 +140,13 @@ describe("RabbitMQ AI quality topology", () => {
 });
 
 describe("RabbitMQ task segment topology", () => {
+  it("declares a separate durable JSON publication queue", async () => {
+    const channel = { assertExchange: vi.fn(), assertQueue: vi.fn(), bindQueue: vi.fn() } as unknown as ConfirmChannel;
+    await assertTaskSegmentAnnotationTopology(channel);
+    expect(TASK_SEGMENT_ANNOTATION_QUEUE).not.toBe(TASK_SEGMENT_QUEUE);
+    expect(channel.assertQueue).toHaveBeenCalledWith(TASK_SEGMENT_ANNOTATION_QUEUE, { durable: true, arguments: { "x-dead-letter-exchange": "evdp.events.dead" } });
+    expect(channel.bindQueue).toHaveBeenCalledWith(TASK_SEGMENT_ANNOTATION_QUEUE, EVENTS_EXCHANGE, "task.segment.annotation.publish.v1");
+  });
   it("declares a dedicated durable queue with dead-letter routing", async () => {
     const channel = {
       assertExchange: vi.fn().mockResolvedValue(undefined),
