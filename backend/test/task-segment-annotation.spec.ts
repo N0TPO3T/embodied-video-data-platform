@@ -92,13 +92,27 @@ describe("task_segment.v1 contract", () => {
     expect(taskSegmentSourceFingerprint(input)).not.toBe(before);
   });
 
-  it.each(["scene-evidence", "task-policy", "mapping-confidence", "object-key"])("fingerprints the complete source snapshot: %s", change => {
+  it("excludes generated publication state and revision numbers from the source fingerprint", () => {
+    const input = segmentAnnotationFixture();
+    const before = taskSegmentSourceFingerprint(input);
+    input.asset.currentAnnotationRevisionId = "TSAR-another-revision";
+    input.asset.annotationPublicationStatus = "failed";
+    input.asset.annotationPublicationAttemptCount = 3;
+    input.asset.annotationPublishedAt = new Date(0);
+    input.asset.createdAt = new Date(0);
+    input.asset.updatedAt = new Date(0);
+    expect(buildTaskSegmentAnnotation(input, 2).annotation_revision).toBe(2);
+    expect(taskSegmentSourceFingerprint(input)).toBe(before);
+  });
+
+  it.each(["scene-evidence", "task-policy", "mapping-confidence", "object-key", "video-sha"])("fingerprints the complete source snapshot: %s", change => {
     const input = segmentAnnotationFixture();
     const before = taskSegmentSourceFingerprint(input);
     if (change === "scene-evidence") (input.accepted.effective.scene as any).evidence_timestamps_ms = [1000];
     if (change === "task-policy") (input.accepted.effective.tasks as any[])[0].policy_reasons = ["reviewed"];
     if (change === "mapping-confidence") (input.accepted.labelMappings[0] as any).confidence = 0.8;
     if (change === "object-key") input.asset.clipObjectKey = "legacy/clip.mp4";
+    if (change === "video-sha") input.asset.clipSha256 = "f".repeat(64);
     expect(taskSegmentSourceFingerprint(input)).not.toBe(before);
   });
 });

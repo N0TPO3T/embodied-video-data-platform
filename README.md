@@ -271,6 +271,8 @@ CI、迁移发布、容量/性能检查和告警建议见 `docs/operations/relea
 长期保存对象是任务切片 MP4 与 `task_segment.v1` JSON，不以完整视频作为切片使用的前提。
 新资产使用 `segments/{assetId}/video.mp4` 与 `segments/{assetId}/annotation.r0001.json`；
 历史 MP4 的 `clipObjectKey` 保持不变，JSON 仍进入对应 Asset 的 `segments/` 目录。
+历史文件不保证目录共置，通过 `asset_id`、数据库 `clipObjectKey` 和 Revision `videoSha256` 逻辑绑定；
+未来交付打包可统一导出为 `video.mp4 + annotation.json`，本阶段不实现该导出。
 数据库保存 Asset 当前指针、状态及 Revision 的不可变内容/校验快照；对象存储保存实际文件。
 契约入口为 `backend/src/task-segment/task-segment-annotation.ts`。
 
@@ -278,6 +280,8 @@ CI、迁移发布、容量/性能检查和告警建议见 `docs/operations/relea
 `task.segment.annotation.publish.v1` Outbox，由现有 Media Worker 消费。
 Asset 状态为 `pending → publishing → published`，失败为 `failed`；无需生成的切片为 `not_applicable`。
 Revision 状态为 `publishing → published / failed`，失败重试复用同一指纹、编号和字节。
+V1 业务链路仅完成初始 `r0001` 发布、同版本失败恢复及历史回填；不可变模型与状态机为后续版本保留能力。
+尚无管理员编辑、标签/QC/Human Review 变更自动触发新版本或通用 Revision 发布命令。
 对象上传、HEAD 大小及回读 SHA 校验通过后，事务再次验证输入指纹和视频绑定，才原子切换 Current Revision。
 `published` Revision 禁止修改；历史版本仍可下载。未发布文件即使已上传也不会暴露为当前版本。
 
@@ -293,6 +297,7 @@ Source Fingerprint 对固定 revision=1 的完整输出、完整 effective task/
 不声称切片级视觉复核。场景、任务及对象复用已发布映射；工具允许 unmapped，不重新匹配标签字典。
 `task.mapping` 和 `task.object_mapping` 明确保留任务标签与主对象映射。
 `source_group_id = submissionId`，scope 为 `original_upload`，不推断跨文件 session。
+`source_video_quality` 是本 Revision 发布时冻结的源视频 QC 快照，不是实时 QC；后续审核修改不会自动同步到已发布 JSON。
 
 管理员接口（以下均以 `/api/v1/operations/task-segment-assets/:assetId` 开头）：
 

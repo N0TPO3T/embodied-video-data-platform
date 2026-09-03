@@ -143,6 +143,7 @@ describe("segment annotation publication / retention / backfill", () => {
   it("retries an upload failure without touching video or exposing secrets", async () => {
     storage.failUpload = true;
     await expect(service.process({ assetId: fixture.asset.id })).rejects.toThrow("SEGMENT_JSON_UPLOAD_FAILED");
+    const reserved = (await revisions())[0]!;
     expect(await asset()).toMatchObject({ generationStatus: "ready", annotationPublicationStatus: "failed", currentAnnotationRevisionId: null,
       annotationPublicationFailureMessage: "SEGMENT_JSON_UPLOAD_FAILED" });
     await expect(retention.process({ submissionId: fixture.asset.submissionId, reason: "test" })).rejects.toThrow();
@@ -152,6 +153,7 @@ describe("segment annotation publication / retention / backfill", () => {
     await service.retry(admin, fixture.asset.id);
     await service.process({ assetId: fixture.asset.id });
     expect(await revisions()).toHaveLength(1);
+    expect((await revisions())[0]).toMatchObject({ id: reserved.id, revision: 1, sourceFingerprint: reserved.sourceFingerprint });
     expect((await revisions())[0]!.attemptCount).toBe(2);
     expect(storage.get(fixture.asset.clipObjectKey!)).toEqual(Buffer.from("clip"));
   });
@@ -214,6 +216,56 @@ describe("segment annotation publication / retention / backfill", () => {
     await service.process({ assetId: fixture.asset.id });
     expect((await revisions()).map(r => r.revision)).toEqual([1, 2]);
     expect((await asset()).currentAnnotationRevisionId).toBe((await revisions())[1]!.id);
+  });
+
+  it.each(["claim", "finalize"])("rejects a superseded Run at %s without publishing old JSON or changing the replacement asset", async stage => {
+    const cycleId = `SUPERSEDED-CYCLE-${sequence}`;
+    await ds.getRepository(PointCycleEntity).save({ id: cycleId, businessDate: "2026-09-03", status: "settled",
+      submissionCount: 1, effectiveDurationMs: "11000", totalPoints: "1", createdByAccountId: admin.id, createdByName: "test" });
+    await ds.getRepository(PointCycleItemEntity).save({ id: `SUPERSEDED-ITEM-${sequence}`, cycleId,
+      submissionId: fixture.asset.submissionId, ownerId: admin.id, ownerName: "test", teamId: "JSON-TEAM", teamName: "test",
+      fileName: "test.mp4", finalScore: "90", settlementRatio: "1", effectiveDurationMs: "11000", pointsPerMinute: "1", points: "1", qualityRevision: 1 });
+    const replacement = segmentAnnotationFixture(`REPLACEMENT-${sequence}`);
+    replacement.run.trigger = "manual";
+    replacement.run.submissionId = fixture.asset.submissionId;
+    for (const snapshot of [(replacement.run.normalizedResult as any).raw, (replacement.run.normalizedResult as any).effective]) {
+      snapshot.video_id = fixture.asset.submissionId;
+    }
+    replacement.asset.submissionId = fixture.asset.submissionId;
+    replacement.asset.sourceObjectKey = fixture.asset.sourceObjectKey;
+    replacement.asset.sourceSha256 = fixture.asset.sourceSha256;
+    let replacementBefore: TaskSegmentAssetEntity;
+    const supersede = async () => {
+      await ds.transaction(async manager => {
+        await manager.getRepository(SubmissionEntity).findOne({ where: { id: fixture.asset.submissionId }, lock: { mode: "pessimistic_write" } });
+        await manager.getRepository(AnnotationRunEntity).update(fixture.run.id, { publicationStatus: "superseded" });
+        await manager.getRepository(AnnotationRunEntity).save(replacement.run);
+        await manager.getRepository(TaskSegmentAssetEntity).save(replacement.asset);
+      });
+      replacementBefore = await ds.getRepository(TaskSegmentAssetEntity).findOneByOrFail({ id: replacement.asset.id });
+      storage.objects.set(replacement.asset.clipObjectKey!, Buffer.from("clip"));
+    };
+    if (stage === "claim") await supersede();
+    else storage.onUpload = supersede;
+
+    await expect(service.process({ assetId: fixture.asset.id })).resolves.toBe("failed");
+    expect(await asset()).toMatchObject({ currentAnnotationRevisionId: null, annotationPublicationStatus: "failed",
+      annotationPublicationFailureCode: "ANNOTATION_RUN_NOT_PUBLISHED" });
+    expect((await service.current(admin, fixture.asset.id)).currentRevision).toBeNull();
+    const rows = await revisions();
+    expect(rows).toHaveLength(stage === "claim" ? 0 : 1);
+    if (stage === "finalize") {
+      expect(rows[0]).toMatchObject({ revision: 1, publicationStatus: "failed", publishedAt: null });
+      expect(storage.get(rows[0]!.jsonObjectKey)).toBeDefined();
+      await expect(service.download(admin, fixture.asset.id, 1)).rejects.toThrow();
+    }
+    expect(await ds.getRepository(TaskSegmentAssetEntity).findOneByOrFail({ id: replacement.asset.id })).toEqual(replacementBefore!);
+    expect(await ds.getRepository(JobOutboxEntity).countBy({ aggregateId: fixture.asset.submissionId,
+      eventType: "submission.source.retention.v1" })).toBe(0);
+    await expect(retention.process({ submissionId: fixture.asset.submissionId, reason: "superseded-run-review" })).rejects.toThrow("JSON");
+    expect(storage.deletes).toHaveLength(0);
+    expect(storage.get(fixture.asset.sourceObjectKey)).toBeDefined();
+    expect((await ds.getRepository(SubmissionEntity).findOneByOrFail({ id: fixture.asset.submissionId })).storageStatus).toBe("available");
   });
 
   it("keeps a previous published revision intact when publishing a new fingerprint", async () => {
