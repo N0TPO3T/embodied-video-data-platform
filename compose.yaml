@@ -56,6 +56,26 @@ services:
       retries: 20
     restart: unless-stopped
 
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      # Root 与应用密钥统一取自 MINIO_ACCESS_KEY/MINIO_SECRET_KEY：
+      # deploy/prepare-production-env.sh 对两者一起轮换，值始终一致。
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-evdp_local_minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-evdp_local_minio_password}
+    ports:
+      - "${MINIO_BIND_ADDRESS:-127.0.0.1}:${MINIO_API_HOST_PORT:-9000}:9000"
+      - "${MINIO_BIND_ADDRESS:-127.0.0.1}:${MINIO_CONSOLE_HOST_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
   api:
     image: evdp-api:${EVDP_RELEASE_VERSION:-dev}
     build:
@@ -93,6 +113,8 @@ services:
       redis:
         condition: service_healthy
       rabbitmq:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     healthcheck:
       test:
@@ -278,5 +300,6 @@ volumes:
   postgres_data:
   redis_data:
   rabbitmq_data:
+  minio_data:
   quality_lab_data:
   annotation_lab_data:

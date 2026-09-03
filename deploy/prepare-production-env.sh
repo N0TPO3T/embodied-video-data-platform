@@ -75,10 +75,11 @@ upsert_env RABBITMQ_URL "amqp://${rabbitmq_user}:${rabbitmq_password}@rabbitmq:5
 upsert_env MINIO_ACCESS_KEY "$minio_user"
 upsert_env MINIO_SECRET_KEY "$minio_password"
 upsert_env MINIO_ENDPOINT "http://minio:9000"
-upsert_env MINIO_API_HOST_PORT "19000"
+# 以下为 compose.yaml 内 minio 服务的宿主发布参数：
+# MINIO_API_HOST_PORT 必须与 MINIO_PUBLIC_ENDPOINT 端口一致（预签名 URL 直接指向该端口）。
+upsert_env MINIO_BIND_ADDRESS "0.0.0.0"
+upsert_env MINIO_API_HOST_PORT "9000"
 upsert_env MINIO_CONSOLE_HOST_PORT "19001"
-upsert_env MINIO_PUBLIC_BIND_ADDRESS "0.0.0.0"
-upsert_env MINIO_PUBLIC_HOST_PORT "9000"
 upsert_env MINIO_PUBLIC_ENDPOINT "http://${public_host}:9000"
 upsert_env WEB_BIND_ADDRESS "0.0.0.0"
 upsert_env WEB_HOST_PORT "80"
