@@ -1,3 +1,4 @@
+import type { TaskAssetFilters, TaskAssetList, TaskAssetFacets, TaskAssetSceneSummary } from "../../task-assets/contracts";
 import type {
   BackendOperationsStatus,
   BackendAnnotationOperations,
@@ -9,6 +10,7 @@ import type {
   TaskSegmentGenerateResult,
   TaskSegmentPreview,
 } from "../contracts";
+import { resolveApiBaseUrl } from "../../lib/api-base";
 
 export class OperationsApiError extends Error {
   constructor(
@@ -22,9 +24,10 @@ export class OperationsApiError extends Error {
 }
 
 function apiUrl(path: string): string {
-  const base =
-    process.env.NEXT_PUBLIC_API_BASE_URL ??
-    "http://localhost:4000/api/v1";
+  const base = resolveApiBaseUrl(
+    process.env.NEXT_PUBLIC_API_BASE_URL,
+    "http://localhost:4000/api/v1",
+  );
   return `${base.replace(/\/$/u, "")}/${path.replace(/^\//u, "")}`;
 }
 
@@ -141,4 +144,41 @@ export function getTaskSegmentPreview(
   return requestJson<TaskSegmentPreview>(
     `/operations/task-segment-assets/${encodeURIComponent(assetId)}/preview`,
   );
+}
+
+export function taskAssetQueryString(input: TaskAssetFilters): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(input)) {
+    if (value === undefined || value === "") continue;
+    if (Array.isArray(value)) value.forEach(item => query.append(key, item));
+    else query.set(key, String(value));
+  }
+  return query.toString();
+}
+
+export function getTaskAssets(input: TaskAssetFilters, signal?: AbortSignal): Promise<TaskAssetList> {
+  return requestJson(`/operations/task-assets?${taskAssetQueryString(input)}`, { signal });
+}
+export function getTaskAssetFacets(input: TaskAssetFilters, signal?: AbortSignal): Promise<TaskAssetFacets> {
+  return requestJson(`/operations/task-assets/facets?${taskAssetQueryString(input)}`, { signal });
+}
+export function getTaskAssetSceneSummary(input: TaskAssetFilters, signal?: AbortSignal): Promise<TaskAssetSceneSummary> {
+  return requestJson(`/operations/task-assets/scene-summary?${taskAssetQueryString(input)}`, { signal });
+}
+export function getTaskAssetAnnotation(assetId: string): Promise<{ currentRevision: { revision: number; contentJson: Record<string, unknown> } | null }> {
+  return requestJson(`/operations/task-segment-assets/${encodeURIComponent(assetId)}/annotation`);
+}
+export function getTaskAssetAnnotationDownload(assetId: string, revision: number): Promise<{ url: string; expiresAt: number }> {
+  return requestJson(`/operations/task-segment-assets/${encodeURIComponent(assetId)}/annotation-revisions/${revision}/download`);
+}
+export function getTaskAssetTechnicalDetail(assetId: string): Promise<{ asset: BackendTaskSegmentAsset }> {
+  return requestJson(`/operations/task-segment-assets/${encodeURIComponent(assetId)}`);
+}
+export async function exportTaskAssetsCsv(input: TaskAssetFilters): Promise<Blob> {
+  const response = await fetch(apiUrl(`/operations/task-assets/export.csv?${taskAssetQueryString(input)}`), { credentials: "include" });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: string; code?: string };
+    throw new OperationsApiError(response.status, body.error ?? "CSV 导出失败", body.code);
+  }
+  return response.blob();
 }

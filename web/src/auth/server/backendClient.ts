@@ -1,3 +1,4 @@
+import { resolveApiBaseUrl } from "../../lib/api-base";
 import type { AccountPublic, TeamPublic } from "../contracts";
 
 type BackendSession = {
@@ -6,9 +7,10 @@ type BackendSession = {
 };
 
 function apiUrl(path: string): string {
-  const base =
-    process.env.BACKEND_INTERNAL_URL ??
-    "http://localhost:4000/api/v1";
+  const base = resolveApiBaseUrl(
+    process.env.BACKEND_INTERNAL_URL,
+    "http://localhost:4000/api/v1",
+  );
   return `${base.replace(/\/$/u, "")}/${path.replace(/^\//u, "")}`;
 }
 

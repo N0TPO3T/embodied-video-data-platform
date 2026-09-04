@@ -28,6 +28,10 @@ import { RabbitMediaWorker } from "../src/media/rabbit-media-worker.js";
 import { RabbitMqMessageBusService } from "../src/messaging/rabbitmq-message-bus.service.js";
 import { TASK_SEGMENT_ANNOTATION_ROUTING_KEY } from "../src/messaging/rabbitmq-topology.js";
 import { segmentAnnotationFixture } from "./fixtures/task-segment-annotation.js";
+import { TaskAssetService } from "../src/task-asset/task-asset.service.js";
+import { TaskSegmentAssetProjectionEntity } from "../src/database/entities/task-segment-asset-projection.entity.js";
+import { AnnotationReviewEntity } from "../src/database/entities/annotation-review.entity.js";
+import { backfillTaskAssetProjections } from "../src/task-asset/task-asset-projection-backfill.js";
 
 // Opt-in only: database-safety.ts independently checks the physical DB before
 // every connection. Use a disposable MinIO endpoint and RabbitMQ instance.
@@ -128,6 +132,92 @@ smoke("real PostgreSQL / MinIO / FFmpeg segment JSON smoke", () => {
     expect(await ds.getRepository(JobOutboxEntity).countBy({ aggregateId: asset.id, eventType: TASK_SEGMENT_ANNOTATION_ROUTING_KEY, status: "pending" })).toBe(1);
     return asset;
   }
+
+  it.each(["A", "B", "C", "D", "E", "F", "G"])("Asset library acceptance %s: real DB / MP4 / published JSON", async caseName => {
+    const asset = await ready(`LIB-${caseName}`);
+    const library = new TaskAssetService(ds);
+    const run = await ds.getRepository(AnnotationRunEntity).findOneByOrFail({ id: asset.annotationRunId });
+    const normalized = run.normalizedResult as any;
+    if (caseName === "A") {
+      normalized.labelMappings = normalized.labelMappings.filter((v: { type: string }) => v.type !== "action");
+      normalized.labelMappings.push({ type: "action", sourceText: "清洗杯子", status: "matched", labelId: "TASK-WASH", labelName: "清洗杯子", confidence: 0.9 },
+        { type: "object", sourceText: "海绵", status: "matched", labelId: "TOOL-SPONGE", labelName: "海绵", confidence: 0.9 });
+    }
+    if (caseName === "B") {
+      normalized.labelMappings = [{ type: "scene", sourceText: "家庭厨房", status: "proposed", labelId: null, labelName: null, confidence: 0.9 }];
+      normalized.effective.tasks[0].result_status = "unknown";
+      normalized.effective.tasks[0].completion = "uncertain";
+    }
+    if (caseName === "C") {
+      run.publicationStatus = "human_verified"; run.reviewStatus = "accepted_corrected"; run.reviewRevision = 1;
+      run.humanResult = { ...structuredClone(normalized), source: "human_correction" };
+      await ds.getRepository(AnnotationReviewEntity).save({ id: "LIB-REVIEW-C", annotationRunId: run.id, revision: 1,
+        disposition: "accepted_corrected", correctedResult: run.humanResult, reviewDurationMs: 1000, reason: "fixture human review", reviewerAccountId: admin.id, reviewerName: "smoke" });
+    }
+    if (caseName === "D") {
+      for (const snapshot of [normalized.raw, normalized.effective]) {
+        snapshot.tasks.push(structuredClone(snapshot.tasks[0]));
+        snapshot.coverage_segments.push({ ...snapshot.coverage_segments[0], linked_task_index: 1 });
+      }
+    }
+    await ds.getRepository(AnnotationRunEntity).save(run);
+    expect(await publisher.process({ assetId: asset.id })).toBe("published");
+    const scope = { sourceGroupId: asset.submissionId };
+    const before = await library.list(admin, scope);
+    expect(before.items[0]?.currentAnnotationRevisionId).toBeTruthy();
+    if (caseName === "A") expect(before.items[0]).toMatchObject({ hasUnmappedLabels: false, resultStatus: "success" });
+    if (caseName === "B") expect(before.items[0]).toMatchObject({ scene: { mappingStatus: "proposed", id: null }, hasUnmappedLabels: true, resultStatus: "unknown", hasUncertainty: true });
+    if (caseName === "C") expect(before.items[0]).toMatchObject({ semanticVerification: "human_verified", sourceAnnotationAcceptance: "human" });
+    if (caseName === "A") expect((await library.list(admin, { ...scope, sceneKeys: "label:SCENE-001",
+      taskLabelIds: "TASK-WASH", objectLabelIds: "OBJ-CUP", toolLabelIds: "TOOL-SPONGE" })).summary.assetCount).toBe(1);
+    if (caseName === "B") expect((await library.list(admin, { ...scope, sceneMappingStatuses: "proposed",
+      hasUnmappedLabels: "true", q: "海绵", resultStatuses: "unknown" })).summary.assetCount).toBe(1);
+    if (caseName === "C") expect((await library.list(admin, { ...scope, semanticVerifications: "human_verified" })).summary.humanVerifiedCount).toBe(1);
+    if (caseName === "D") {
+      await segments.generate(admin, run.id);
+      const second = await ds.getRepository(TaskSegmentAssetEntity).findOneByOrFail({ annotationRunId: run.id, taskIndex: 1 });
+      expect(await processor.process({ assetId: second.id })).toBe("ready");
+      expect(await publisher.process({ assetId: second.id })).toBe("published");
+      const inventory = await library.sceneSummary(admin, scope);
+      expect(inventory.totals).toMatchObject({ assetCount: 2, sourceGroupCount: 1, totalSegmentDurationMs: asset.clipDurationMs! + (await ds.getRepository(TaskSegmentAssetEntity).findOneByOrFail({ id: second.id })).clipDurationMs! });
+    }
+    if (caseName === "E") {
+      await ds.getRepository(AnnotationRunEntity).update(run.id, { publicationStatus: "superseded" });
+      const replacement = await ds.getRepository(AnnotationRunEntity).save({ ...run, id: "LIB-REPLACEMENT-E", trigger: "manual" });
+      await segments.generate(admin, replacement.id);
+      const second = await ds.getRepository(TaskSegmentAssetEntity).findOneByOrFail({ annotationRunId: replacement.id, taskIndex: 0 });
+      expect(await processor.process({ assetId: second.id })).toBe("ready");
+      expect(await publisher.process({ assetId: second.id })).toBe("published");
+      const current = await library.list(admin, scope);
+      expect(current.items.map(v => v.assetId)).toEqual([second.id]);
+      const historical = await library.list(admin, { ...scope, includeHistorical: "true" });
+      expect(historical.summary.assetCount).toBe(2);
+      expect(historical.items.find(v => v.assetId === asset.id)?.isCurrent).toBe(false);
+    }
+    if (caseName === "F") {
+      const revisionId = before.items[0]!.currentAnnotationRevisionId;
+      await ds.getRepository(TaskSegmentAssetProjectionEntity).delete(asset.id);
+      expect((await library.list(admin, scope)).items).toEqual([]);
+      expect(await backfillTaskAssetProjections(ds, { dryRun: false, limit: 1000 })).toMatchObject({ created: 1, failed: 0 });
+      expect((await library.list(admin, scope)).items[0]?.currentAnnotationRevisionId).toBe(revisionId);
+    }
+    if (caseName === "G") {
+      expect(await retention.process({ submissionId: asset.submissionId, reason: "isolated-library-smoke" })).toBe("archived");
+      await expect(storage.headObject({ objectKey: asset.sourceObjectKey })).rejects.toThrow();
+      expect((await library.list(admin, scope)).summary.assetCount).toBe(1);
+      expect((await library.facets(admin, scope)).scenes).toHaveLength(1);
+      expect((await library.sceneSummary(admin, scope)).totals.assetCount).toBe(1);
+      expect(await library.exportCsv(admin, scope)).toContain(asset.id);
+      expect((await library.list(admin, { ...scope, sceneKeys: "label:SCENE-001", objectLabelIds: "OBJ-CUP", taskVerbs: "wash_or_rinse" })).summary.assetCount).toBe(1);
+    }
+    // All seven cases still resolve independent MP4 + JSON objects.
+    const preview = await segments.preview(admin, asset.id);
+    expect(segmentJsonSha256(Buffer.from(await (await fetch(preview.url)).arrayBuffer()))).toBe(asset.clipSha256);
+    const json = await publisher.download(admin, asset.id, 1);
+    expect((await fetch(json.url)).status).toBe(200);
+    expect((await publisher.current(admin, asset.id)).currentRevision?.contentJson).toBeTruthy();
+    console.log("TASK_ASSET_ACCEPTANCE", JSON.stringify({ case: caseName, sourceGroupId: asset.submissionId, assetCount: (await library.list(admin, scope)).summary.assetCount, mp4AndJsonReadable: true }));
+  }, 120000);
 
   it.each(["A", "B", "C", "D", "E", "F"])("Case %s: independent paired assets", async caseName => {
     const asset = await ready(caseName);

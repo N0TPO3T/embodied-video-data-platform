@@ -32,6 +32,8 @@ import { SubmissionDuplicateCandidateEntity } from "./entities/submission-duplic
 import { SubmissionEntity } from "./entities/submission.entity.js";
 import { TaskSegmentAssetEntity } from "./entities/task-segment-asset.entity.js";
 import { TaskSegmentAnnotationRevisionEntity } from "./entities/task-segment-annotation-revision.entity.js";
+import { TaskSegmentAssetProjectionEntity } from "./entities/task-segment-asset-projection.entity.js";
+import { TaskAssetProjection2026091300001 } from "./migrations/202609130001-task-asset-projection.js";
 import { TaskBoundaryRefinementEntity } from "./entities/task-boundary-refinement.entity.js";
 import { TeamEntity } from "./entities/team.entity.js";
 import { UserEntity } from "./entities/user.entity.js";
@@ -120,6 +122,7 @@ export const identityEntities = [
   SceneLevel1Entity,
   TaskSegmentAssetEntity,
   TaskSegmentAnnotationRevisionEntity,
+  TaskSegmentAssetProjectionEntity,
   TaskBoundaryRefinementEntity,
 ];
 
@@ -178,6 +181,7 @@ export function createDataSource(
       TaskBoundaryRefinements2026090500001,
       TaskSegmentAdaptiveCut2026090600001,
       TaskSegmentAnnotationPublication2026091200001,
+      TaskAssetProjection2026091300001,
     ],
     synchronize: false,
     logging: false,

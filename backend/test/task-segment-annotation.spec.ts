@@ -20,6 +20,7 @@ describe("task_segment.v1 contract", () => {
   });
 
   it.each([
+    ["unsupported schema version", (d: any) => { d.schema_version = "task_segment.v0"; }],
     ["extra field", (d: any) => { d.private_field = "no"; }],
     ["nested extra", (d: any) => { d.media.objectKey = "no"; }],
     ["bad SHA", (d: any) => { d.media.sha256 = "etag"; }],
@@ -35,6 +36,7 @@ describe("task_segment.v1 contract", () => {
     const doc = buildTaskSegmentAnnotation(segmentAnnotationFixture(), 1);
     mutate(doc);
     expect(taskSegmentAnnotationSchema.safeParse(doc).success).toBe(false);
+    expect(() => validateSegmentAnnotation(doc, { assetId: doc.asset_id, revision: 1, videoSha256: doc.media.sha256 })).toThrow("SEGMENT_JSON_SCHEMA_INVALID");
   });
 
   it.each(["assetId", "revision", "videoSha256"] as const)("checks %s against external binding", field => {
