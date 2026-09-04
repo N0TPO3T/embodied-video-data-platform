@@ -1,9 +1,11 @@
+import { resolveApiBaseUrl } from "../../lib/api-base";
 import type { BackendSubmission } from "../contracts";
 
 function apiUrl(path: string): string {
-  const base =
-    process.env.BACKEND_INTERNAL_URL ??
-    "http://localhost:4000/api/v1";
+  const base = resolveApiBaseUrl(
+    process.env.BACKEND_INTERNAL_URL,
+    "http://localhost:4000/api/v1",
+  );
   return `${base.replace(/\/$/u, "")}/${path.replace(/^\//u, "")}`;
 }
 

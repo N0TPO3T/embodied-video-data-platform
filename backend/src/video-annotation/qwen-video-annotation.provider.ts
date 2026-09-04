@@ -59,8 +59,8 @@ function parseWithDeterministicRepair(
   if (repaired.changes.length > 0) structuralRepairs.push(...repaired.changes);
   try {
     return { raw: parseRawVideoAnnotation(repaired.value) };
-  } catch (error) {
-    console.log("[repair-dbg] parse still fails after repair; changes:", repaired.changes.map((c) => c.code), "issues:", JSON.stringify((error as Error & { issues?: unknown }).issues ?? String(error)).slice(0, 1500));
+  } catch {
+    // 确定性修复后仍无法通过 Schema 解析：交由上层走模型 schema_repair 预算路径。
     return null;
   }
 }

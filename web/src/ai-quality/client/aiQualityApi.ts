@@ -1,3 +1,4 @@
+import { resolveApiBaseUrl } from "../../lib/api-base";
 import type {
   AiQualityPrompt,
   CreateLabelInput,
@@ -21,9 +22,10 @@ export class AiQualityApiError extends Error {
 }
 
 function apiUrl(path: string): string {
-  const base =
-    process.env.NEXT_PUBLIC_API_BASE_URL ??
-    "http://localhost:4000/api/v1";
+  const base = resolveApiBaseUrl(
+    process.env.NEXT_PUBLIC_API_BASE_URL,
+    "http://localhost:4000/api/v1",
+  );
   return `${base.replace(/\/$/u, "")}/${path.replace(/^\//u, "")}`;
 }
 
