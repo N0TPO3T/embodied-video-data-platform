@@ -4,7 +4,7 @@ export type TaskAssetFilters = {
   interactionPrimitives?: string[]; complexitySignals?: string[]; completions?: string[]; resultStatuses?: string[];
   failureRecoveryStatuses?: string[]; semanticVerifications?: string[]; sourceAnnotationAcceptances?: string[];
   boundarySources?: string[]; materializationModes?: string[]; hasAudio?: string; hasUnmappedLabels?: string;
-  hasUncertainty?: string; minDurationMs?: string; maxDurationMs?: string; sourceGroupId?: string;
+  hasUncertainty?: string; minDurationMs?: string; maxDurationMs?: string; sourceGroupId?: string; includeHistorical?: "true" | "false";
   page?: number; pageSize?: number; sortBy?: string; sortOrder?: string;
 };
 export type TaskAssetSummary = {
@@ -12,6 +12,7 @@ export type TaskAssetSummary = {
   humanVerifiedCount: number; inheritedCount: number; mappedSceneCount: number; proposedSceneCount: number;
   unknownSceneCount: number; unmappedLabelAssetCount: number; uncertainAssetCount: number;
 };
+// proposedCount is included in unmappedCount; the two counts must not be added.
 type LabelSet = { ids: string[]; names: string[]; rawTexts: string[]; unmappedCount: number; proposedCount: number };
 export type TaskAsset = {
   assetId: string; currentAnnotationRevisionId: string; annotationRevision: number; isCurrent: boolean;

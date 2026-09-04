@@ -87,6 +87,44 @@ describe("task asset library", () => {
     await waitFor(() => expect(api.getTaskAssets).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, sortBy: "duration", sortOrder: "desc" }), expect.any(AbortSignal)));
   });
 
+  it("includes historical assets consistently across views and preserves the choice until reset", async () => {
+    vi.mocked(api.getTaskAssets).mockImplementation(async input => input.includeHistorical === "true" ? {
+      ...structuredClone(data), items: [...structuredClone(data.items), { ...structuredClone(data.items[0]), assetId: "TSA-HISTORY", isCurrent: false }],
+    } : structuredClone(data));
+    render(<TaskAssetLibraryPage />); await screen.findByText("TSA-TEST");
+    expect(screen.getByLabelText("包含历史资产（已被替代）")).not.toBeChecked();
+    expect(screen.queryByText("TSA-HISTORY")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("包含历史资产（已被替代）"));
+    fireEvent.click(screen.getByText("应用筛选"));
+    await screen.findByText("TSA-HISTORY");
+    for (const request of [api.getTaskAssets, api.getTaskAssetFacets, api.getTaskAssetSceneSummary]) {
+      expect(request).toHaveBeenLastCalledWith(expect.objectContaining({ includeHistorical: "true", page: 1 }), expect.any(AbortSignal));
+    }
+    expect(screen.getByText("当前资产")).toBeInTheDocument();
+    expect(screen.getByText("历史资产（已被替代）")).toBeInTheDocument();
+    expect(screen.getByText(/当前与历史已发布范围/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText("下一页"));
+    await waitFor(() => expect(api.getTaskAssets).toHaveBeenLastCalledWith(expect.objectContaining({ includeHistorical: "true", page: 2 }), expect.any(AbortSignal)));
+    await screen.findByText("TSA-HISTORY");
+    fireEvent.click(screen.getByRole("tab", { name: "场景库存" }));
+    fireEvent.click(within(screen.getByRole("tabpanel", { name: "场景库存" })).getByRole("button", { name: "阳台" }));
+    await waitFor(() => expect(api.getTaskAssets).toHaveBeenLastCalledWith(expect.objectContaining({ includeHistorical: "true", sceneKeys: ["proposed:阳台"], page: 1 }), expect.any(AbortSignal)));
+    await screen.findByText("TSA-HISTORY");
+    fireEvent.click(screen.getByText("重置"));
+    await waitFor(() => expect(screen.queryByText("TSA-HISTORY")).not.toBeInTheDocument());
+    expect(screen.getByLabelText("包含历史资产（已被替代）")).not.toBeChecked();
+    expect(api.getTaskAssets).toHaveBeenLastCalledWith({ page: 1, pageSize: 50 }, expect.any(AbortSignal));
+  });
+
+  it("serializes both historical filter values without losing false", async () => {
+    const { taskAssetQueryString } = await vi.importActual<typeof api>("../../operations/client/operationsApi");
+    for (const includeHistorical of ["true", "false"] as const) {
+      const query = new URLSearchParams(taskAssetQueryString({ includeHistorical, sceneKeys: ["label:SCENE-001"] }));
+      expect(query.get("includeHistorical")).toBe(includeHistorical);
+      expect(query.getAll("sceneKeys")).toEqual(["label:SCENE-001"]);
+    }
+  });
+
   it("switches to scene inventory and drills into scene-filtered assets", async () => {
     render(<TaskAssetLibraryPage />); await screen.findByText("TSA-TEST"); fireEvent.click(screen.getByRole("tab", { name: "场景库存" }));
     expect(screen.getByText(/未知 1/)).toBeInTheDocument();
@@ -119,8 +157,11 @@ describe("task asset library", () => {
 
   it("shows explicit export-limit failure instead of a successful download", async () => {
     vi.mocked(api.exportTaskAssetsCsv).mockRejectedValue(new Error("导出超过 50,000 行，请缩小筛选范围"));
-    render(<TaskAssetLibraryPage />); await screen.findByText("TSA-TEST"); fireEvent.click(screen.getByText("导出 CSV"));
+    render(<TaskAssetLibraryPage />); await screen.findByText("TSA-TEST");
+    fireEvent.click(screen.getByLabelText("包含历史资产（已被替代）"));
+    fireEvent.click(screen.getByText("应用筛选")); await screen.findByText("TSA-TEST");
+    fireEvent.click(screen.getByText("导出 CSV"));
     expect(await screen.findByText(/导出超过 50,000 行/)).toBeInTheDocument();
-    expect(api.exportTaskAssetsCsv).toHaveBeenCalledWith({ page: 1, pageSize: 50 });
+    expect(api.exportTaskAssetsCsv).toHaveBeenCalledWith(expect.objectContaining({ includeHistorical: "true", page: 1, pageSize: 50 }));
   });
 });

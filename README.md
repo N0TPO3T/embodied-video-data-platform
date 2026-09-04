@@ -354,6 +354,8 @@ pnpm exec vitest run test/task-segment-annotation-smoke.e2e-spec.ts
 新 JSON 发布时，保留 submission → run → asset → revision 锁顺序及正式 Run、视频绑定、指纹校验，
 在同一事务内先 upsert 投影，再发布 Revision、切换 Asset 当前指针。任何一步失败都会回滚；
 新 Revision 覆盖同一条投影，历史 JSON 不变。并发回填重新锁定 Asset 后读取当前指针，不能覆盖新版本。
+发布 finalize 和历史回填均先对数据库 JSON 做一次 schema 与 Asset/Revision/视频绑定校验，再复用解析结果构建投影。
+001A 发布器即使用 `task_segment.v1`；本功能不引入旧格式转换，不支持的格式在校验时明确失败，不静默发布。
 
 场景只做确定性归组：正式标签为 `label:<labelId>`；无正式 ID 时使用 fine label（否则 coarse label）
 经 NFKC、trim、小写、空白折叠得到 `proposed:<text>`；无可读文本为 `unknown`。
@@ -372,6 +374,9 @@ pnpm exec vitest run test/task-segment-annotation-smoke.e2e-spec.ts
 默认范围：Run succeeded 且 auto_accepted/human_verified；Asset ready、validation passed、JSON published；
 当前 Revision published；投影的 Revision 与当前指针一致且 projectionVersion 为当前版本。
 `includeHistorical=true` 额外包含 superseded Run 并标记 `isCurrent=false`，不包含 candidate/rejected。
+页面的“包含历史资产（已被替代）”默认关闭；启用并应用筛选后，列表、分面、场景库存、索引覆盖与 CSV 共享当前/历史范围，
+每行显示当前/历史状态，重置筛选恢复仅当前范围。这里的历史资产指被替代 Run 的切片，各切片仍读取自己的当前已发布 JSON，
+不是展开同一切片的全部旧 JSON 修订。
 原视频删除不影响入库范围。缺失或过期投影不混入结果；indexHealth 统计整个上述已发布范围（不随语义筛选变化），
 分别报告当前、缺失和过期数量。资产表、统计、分面和 CSV 不逐条解析源 JSON，不做 Node 端全量过滤。
 

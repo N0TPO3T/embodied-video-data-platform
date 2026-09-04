@@ -2,6 +2,7 @@ import { buildTaskAssetProjection, buildTaskAssetSearchText } from "../src/task-
 import { parseProjectionBackfillArgs } from "../src/task-asset/task-asset-projection-backfill.js";
 import { buildTaskSegmentAnnotation } from "../src/task-segment/task-segment-annotation-builder.js";
 import { segmentAnnotationFixture } from "./fixtures/task-segment-annotation.js";
+import { taskSegmentAnnotationSchema, validateSegmentAnnotation } from "../src/task-segment/task-segment-annotation.js";
 
 const document = () => buildTaskSegmentAnnotation(segmentAnnotationFixture(), 1);
 const project = (doc = document()) => buildTaskAssetProjection({ assetId: doc.asset_id, revisionId: "REV-1", document: doc });
@@ -58,9 +59,22 @@ describe("deterministic published JSON projection", () => {
       modelResultStatus: "unknown", effectiveResultStatus: "partial", semanticVerification: "human_verified", warningCount: 2 });
   });
 
-  it("rejects invalid schema or asset binding", () => {
+  it("reuses the validated document without parsing it again", () => {
+    const doc = document();
+    const parse = vi.spyOn(taskSegmentAnnotationSchema, "safeParse");
+    try {
+      const validated = validateSegmentAnnotation(doc, { assetId: doc.asset_id, revision: 1, videoSha256: doc.media.sha256 });
+      expect(project(validated)).toMatchObject({ assetId: doc.asset_id, currentAnnotationRevisionId: "REV-1" });
+      expect(parse).toHaveBeenCalledTimes(1);
+    } finally {
+      parse.mockRestore();
+    }
+  });
+
+  it("rejects asset or revision binding errors", () => {
     expect(() => buildTaskAssetProjection({ assetId: "wrong", revisionId: "R", document: document() })).toThrow("BINDING_INVALID");
-    expect(() => buildTaskAssetProjection({ assetId: "x", revisionId: "R", document: {} })).toThrow("INVALID_DOCUMENT");
+    const doc = document();
+    expect(() => buildTaskAssetProjection({ assetId: doc.asset_id, revisionId: "", document: doc })).toThrow("BINDING_INVALID");
   });
 });
 

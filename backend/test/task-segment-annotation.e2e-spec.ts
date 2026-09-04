@@ -21,7 +21,7 @@ import type { PublicUser } from "../src/auth/auth.types.js";
 import type { ObjectStoragePort } from "../src/storage/object-storage.port.js";
 import { TaskSegmentAnnotationService } from "../src/task-segment/task-segment-annotation.service.js";
 import { SourceRetentionProcessor } from "../src/task-segment/source-retention.processor.js";
-import { canonicalSegmentJson, segmentJsonSha256 } from "../src/task-segment/task-segment-annotation.js";
+import { canonicalSegmentJson, segmentJsonSha256, taskSegmentAnnotationSchema } from "../src/task-segment/task-segment-annotation.js";
 import { TaskSegmentAnnotationPublication2026091200001 } from "../src/database/migrations/202609120001-task-segment-annotation-publication.js";
 import { segmentAnnotationFixture } from "./fixtures/task-segment-annotation.js";
 import { TaskSegmentAssetProjectionEntity } from "../src/database/entities/task-segment-asset-projection.entity.js";
@@ -117,8 +117,14 @@ describe("segment annotation publication / retention / backfill", () => {
 
   it("publishes exactly one immutable revision; current JSON and video are bound", async () => {
     const beforeRun = canonicalSegmentJson(fixture.run.normalizedResult);
+    const parse = vi.spyOn(taskSegmentAnnotationSchema, "safeParse");
+    // Finalize rebuilds/validates the source fingerprint, then validates stored
+    // JSON once. Projection construction must not add a third parse.
+    storage.onUpload = async () => { parse.mockClear(); };
     await expect(service.process({ assetId: fixture.asset.id })).resolves.toBe("published");
+    expect(parse).toHaveBeenCalledTimes(2);
     await expect(service.process({ assetId: fixture.asset.id })).resolves.toBe("published");
+    expect(parse).toHaveBeenCalledTimes(3); // Idempotent retry checks only the fingerprint.
     const rows = await revisions();
     expect(rows).toHaveLength(1);
     expect(storage.uploads).toHaveLength(1);

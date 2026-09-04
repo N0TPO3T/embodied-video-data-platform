@@ -1,6 +1,6 @@
 import type { EntityManager } from "typeorm";
 import { TaskSegmentAssetProjectionEntity, type TaskAssetLabel } from "../database/entities/task-segment-asset-projection.entity.js";
-import { taskSegmentAnnotationSchema, SegmentAnnotationError, type TaskSegmentAnnotationV1 } from "../task-segment/task-segment-annotation.js";
+import { SegmentAnnotationError, type TaskSegmentAnnotationV1 } from "../task-segment/task-segment-annotation.js";
 
 export const TASK_ASSET_PROJECTION_VERSION = "task_asset_projection_v1";
 export const normalizeTaskAssetText = (value: string): string => value.normalize("NFKC").trim().replace(/\s+/gu, " ");
@@ -41,10 +41,10 @@ function mappedLabels(entries: TaskSegmentAnnotationV1["task"]["tools"]) {
   };
 }
 
-export function buildTaskAssetProjection(input: { assetId: string; revisionId: string; document: unknown }) {
-  const parsed = taskSegmentAnnotationSchema.safeParse(input.document);
-  if (!parsed.success) throw new SegmentAnnotationError("TASK_ASSET_PROJECTION_INVALID_DOCUMENT");
-  const document = parsed.data;
+// Publisher finalize and backfill validate stored JSON and media/revision binding
+// with validateSegmentAnnotation before calling this typed projection builder.
+export function buildTaskAssetProjection(input: { assetId: string; revisionId: string; document: TaskSegmentAnnotationV1 }) {
+  const { document } = input;
   if (document.asset_id !== input.assetId || !input.revisionId) throw new SegmentAnnotationError("TASK_ASSET_PROJECTION_BINDING_INVALID");
   const { task, scene, verification } = document;
   const sceneId = scene.mapping?.status === "matched" ? normalized(scene.mapping.label_id) : null;

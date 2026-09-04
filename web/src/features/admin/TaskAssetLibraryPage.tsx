@@ -101,9 +101,10 @@ export function TaskAssetLibraryPage() {
   const counted = (values: Array<{ value: string; count: number }> = []) => values.map(v => ({ value: v.value, label: `${label(v.value)} (${v.count})` }));
   const summary = data?.summary;
   const health = data?.indexHealth;
+  const includesHistory = query.includeHistorical === "true";
 
   return <div className={styles.page}>
-    <header className="page-header"><div><h1>任务片段资产库</h1><p>按当前正式发布的任务片段检索；原视频删除后，片段和 JSON 仍可独立使用。</p></div></header>
+    <header className="page-header"><div><h1>任务片段资产库</h1><p>{includesHistory ? "按当前与历史已发布的任务片段检索" : "按当前正式发布的任务片段检索"}；原视频删除后，片段和 JSON 仍可独立使用。</p></div></header>
     {summary && <section className={styles.metrics} aria-label="库存概览">
       <MetricCard icon={Archive} label="任务片段" value={summary.assetCount.toLocaleString()} detail="当前筛选结果" />
       <MetricCard icon={Clock} label="片段累计时长" value={duration(summary.totalSegmentDurationMs)} detail="包含重叠任务" />
@@ -112,9 +113,9 @@ export function TaskAssetLibraryPage() {
       <MetricCard icon={ShieldCheck} label="人工确认" value={String(summary.humanVerifiedCount)} detail={`继承标注 ${summary.inheritedCount}`} />
       <MetricCard icon={Tags} label="待映射资产" value={String(summary.unmappedLabelAssetCount)} detail={`含不确定信息 ${summary.uncertainAssetCount}`} tone="amber" />
     </section>}
-    <p className={styles.notice}>任务可能重叠，累计时长可能重复计算原视频区间，不代表去重后视频时长。</p>
+    <p className={styles.notice}>任务可能重叠，累计时长可能重复计算原视频区间，不代表去重后视频时长。{includesHistory && "当前包含历史资产，汇总与导出也包含已被替代的片段。"}</p>
     {health && <div className={styles.notice} role={health.missingProjectionAssets || health.staleProjectionAssets ? "alert" : "status"}>
-      索引覆盖 {health.projectedCurrentAssets} / {health.totalPublishedAssets}（当前正式发布范围，不随筛选变化）
+      索引覆盖 {health.projectedCurrentAssets} / {health.totalPublishedAssets}（{includesHistory ? "当前与历史已发布范围" : "当前正式发布范围"}，不随筛选变化）
       {(health.missingProjectionAssets > 0 || health.staleProjectionAssets > 0) && <p>缺失 {health.missingProjectionAssets}，过期 {health.staleProjectionAssets}。请由运维运行 <code>pnpm task-asset:projection-backfill -- --dry-run --limit=100</code> 核对后补建索引；不需要原视频或对象存储。</p>}
     </div>}
 
@@ -133,6 +134,7 @@ export function TaskAssetLibraryPage() {
       <label>最长时长（秒）<input aria-label="最长时长（秒）" type="number" min="0" step="0.001" value={draft.maxDurationMs === undefined ? "" : Number(draft.maxDurationMs) / 1000} onChange={e => setDraft({ ...draft, maxDurationMs: e.target.value === "" ? undefined : String(Number(e.target.value) * 1000) })} /></label>
       <label>音轨<select aria-label="音轨" value={draft.hasAudio ?? ""} onChange={e => setDraft({ ...draft, hasAudio: e.target.value })}><option value="">全部</option><option value="true">含音轨</option><option value="false">无音轨</option></select></label>
       <label>映射情况<select aria-label="映射情况" value={draft.hasUnmappedLabels ?? ""} onChange={e => setDraft({ ...draft, hasUnmappedLabels: e.target.value })}><option value="">全部</option><option value="true">含待映射标签</option><option value="false">全部已映射</option></select></label>
+      <label className={styles.historyToggle}><input type="checkbox" checked={draft.includeHistorical === "true"} onChange={e => setDraft({ ...draft, includeHistorical: e.target.checked ? "true" : undefined })} />包含历史资产（已被替代）</label>
       <div className={styles.filterActions}><small>同维度多选为 OR，不同维度为 AND。分面数量随全部筛选条件变化。</small><div className="button-row">
         <button className="primary-button" type="submit">应用筛选</button>
         <button className="secondary-button" type="button" onClick={() => { setDraft({}); search({ page: 1, pageSize: 50 }); }}>重置</button>
@@ -153,7 +155,7 @@ export function TaskAssetLibraryPage() {
       {data.items.length === 0 ? <p>没有符合条件的任务片段。</p> : <div className={styles.tableWrap}><table className={`data-table ${styles.assetTable}`}><thead><tr>
         {["片段 / 操作", "任务描述", "场景", "动词", "对象", "工具", "交互原语", "完成 / 结果", "时长", "语义确认", "边界来源", "Revision", "创建时间"].map(v => <th key={v}>{v}</th>)}
       </tr></thead><tbody>{data.items.map(asset => <tr key={asset.assetId}>
-        <td><strong>{asset.assetId}</strong><div className={styles.actions}><button onClick={() => void openAsset(asset, "play")}>播放</button><button onClick={() => void openAsset(asset, "json")}>查看 JSON</button><button onClick={() => void openAsset(asset, "download")}>下载 JSON</button><button onClick={() => void openAsset(asset, "technical")}>技术详情</button></div></td>
+        <td><strong>{asset.assetId}</strong><small className={styles.assetStatus}>{asset.isCurrent ? "当前资产" : "历史资产（已被替代）"}</small><div className={styles.actions}><button onClick={() => void openAsset(asset, "play")}>播放</button><button onClick={() => void openAsset(asset, "json")}>查看 JSON</button><button onClick={() => void openAsset(asset, "download")}>下载 JSON</button><button onClick={() => void openAsset(asset, "technical")}>技术详情</button></div></td>
         <td>{asset.task.description}{asset.hasUncertainty && <small className={styles.flag}>含不确定信息</small>}</td>
         <td>{asset.scene.name ?? "未知场景"}{asset.scene.mappingStatus === "proposed" && <small className={styles.flag}>待映射</small>}</td>
         <td>{asset.task.verb}</td><td>{listedLabels(asset.objects) || "未列出对象"}{asset.objects.unmappedCount > 0 && <small className={styles.flag}>含待映射项</small>}</td>
