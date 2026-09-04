@@ -119,6 +119,7 @@ export const navigationByRole: Record<Role, NavigationGroup[]> = {
       items: [
         { label: "数据提交", path: "/admin/submissions", icon: Database },
         { label: "数据资产", path: "/admin/assets", icon: Archive },
+        { label: "任务片段资产库", path: "/admin/task-assets", icon: Files },
       ],
     },
     {

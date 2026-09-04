@@ -7,6 +7,7 @@ import { LoginPage } from "../features/auth/LoginPage";
 import { AdminDashboard } from "../features/admin/AdminDashboard";
 import { AiQueuePage } from "../features/admin/AiQueuePage";
 import { AssetsPage } from "../features/admin/AssetsPage";
+import { TaskAssetLibraryPage } from "../features/admin/TaskAssetLibraryPage";
 import { AuditLogPage } from "../features/admin/AuditLogPage";
 import { PublicConfigPage } from "../features/admin/PublicConfigPage";
 import { AdminReviewDetailPage } from "../features/admin/AdminReviewDetailPage";
@@ -141,6 +142,7 @@ function AuthenticatedPlatformContent({
       );
     }
     else if (safePath === "/admin/assets") page = <AssetsPage />;
+    else if (safePath === "/admin/task-assets") page = <TaskAssetLibraryPage />;
     else if (safePath === "/admin/tasks") page = <TasksPage />;
     else if (safePath === "/admin/people") page = <UsersTeamsPage />;
     else if (safePath === "/admin/labels") page = <LabelSetPage />;

@@ -24,6 +24,7 @@
     "import:d1": "tsx src/cli/import-d1.ts",
     "outbox:publish": "tsx src/cli/publish-outbox.ts",
     "task-segment:annotation-backfill": "tsx src/cli/backfill-task-segment-annotations.ts",
+    "task-asset:projection-backfill": "tsx src/cli/backfill-task-asset-projections.ts",
     "worker:media": "node dist/media/media-worker.js",
     "worker:ai-quality": "node dist/ai-quality/ai-quality-worker.js",
     "worker:ai-annotation": "node dist/video-annotation/annotation-worker.js",
