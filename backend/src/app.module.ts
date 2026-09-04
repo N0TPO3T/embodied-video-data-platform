@@ -16,6 +16,7 @@ import { SceneSystemModule } from "./scene-system/scene-system.module.js";
 import { SubmissionsModule } from "./submissions/submissions.module.js";
 import { TasksModule } from "./tasks/tasks.module.js";
 import { TaskSegmentModule } from "./task-segment/task-segment.module.js";
+import { TaskAssetModule } from "./task-asset/task-asset.module.js";
 import { VideoAnnotationModule } from "./video-annotation/video-annotation.module.js";
 import { WalletModule } from "./wallet/wallet.module.js";
 
@@ -38,6 +39,7 @@ import { WalletModule } from "./wallet/wallet.module.js";
     HealthModule,
     TasksModule,
     TaskSegmentModule,
+    TaskAssetModule,
     VideoAnnotationModule,
   ],
 })
