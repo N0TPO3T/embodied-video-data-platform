@@ -163,7 +163,7 @@ function AuthenticatedPlatformContent({
     else if (safePath === "/admin/labels") page = <LabelSetPage />;
     else if (safePath === "/admin/scenes") page = <SceneSystemPage />;
     else if (safePath === "/admin/rules") page = <RulesPage />;
-    else if (safePath === "/admin/settlements") page = <SettlementPage />;
+    else if (safePath === "/admin/settlements") page = <SettlementPage navigate={navigate} />;
     else if (safePath === "/admin/withdrawals") page = <WithdrawalsPage />;
     else if (safePath === "/admin/public") page = <PublicConfigPage />;
     else if (safePath === "/admin/audit") page = <AuditLogPage />;
