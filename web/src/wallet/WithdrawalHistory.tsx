@@ -5,12 +5,15 @@ import { withdrawalLabels, type WithdrawalList } from "./contracts";
 
 export function WithdrawalHistory({ revision = 0 }: { revision?: number }) {
   const [page, setPage] = useState(1);
-  const [data, setData] = useState<WithdrawalList | null>(null);
-  const [error, setError] = useState("");
+  const [result, setResult] = useState<{ page: number; revision: number; data: WithdrawalList | null; error: string } | null>(null);
+  const current = result?.page === page && result.revision === revision ? result : null;
+  const data = current?.data ?? null;
+  const error = current?.error ?? "";
   useEffect(() => {
     let active = true;
-    setError("");
-    listWithdrawals({ page }).then(value => { if (active) setData(value); }).catch(() => { if (active) setError("提现申请读取失败，请刷新重试"); });
+    listWithdrawals({ page })
+      .then(data => { if (active) setResult({ page, revision, data, error: "" }); })
+      .catch(() => { if (active) setResult({ page, revision, data: null, error: "提现申请读取失败，请刷新重试" }); });
     return () => { active = false; };
   }, [page, revision]);
   return <section className="content-card table-card">

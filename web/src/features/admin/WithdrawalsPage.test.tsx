@@ -1,10 +1,10 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PlatformApp } from "../../app/PlatformApp";
 import { IdentityProvider } from "../../auth/client/IdentityContext";
 import { accountForRole, demoAccounts } from "../../test/accountFixtures";
-import type { WithdrawalRequest } from "../../wallet/contracts";
+import type { WithdrawalList, WithdrawalRequest } from "../../wallet/contracts";
 
 const api = vi.hoisted(() => ({ listWithdrawals: vi.fn(), claimWithdrawals: vi.fn(), exportWithdrawalBatch: vi.fn(), updateWithdrawal: vi.fn() }));
 vi.mock("../../wallet/client/walletApi", async importOriginal => ({ ...await importOriginal<typeof import("../../wallet/client/walletApi")>(), ...api }));
@@ -40,4 +40,25 @@ it("opens the finance route and requires a distinct verified-payment action afte
   await user.click(within(dialog).getByRole("button", { name: "提交财务确认" }));
   expect(await screen.findByText(/BANK-verified-123/)).toBeVisible();
   expect(screen.queryByRole("button", { name: "确认实际付款" })).not.toBeInTheDocument();
+});
+
+it("does not claim stale selections or display an obsolete filter response", async () => {
+  const user = userEvent.setup();
+  render(<IdentityProvider currentAccount={accountForRole("admin")} accounts={demoAccounts} teams={[]}><PlatformApp initialPath="/admin/withdrawals" /></IdentityProvider>);
+  await user.click(await screen.findByLabelText("选择 WR-finance"));
+  let resolveProcessing!: (value: WithdrawalList) => void;
+  let resolvePaid!: (value: WithdrawalList) => void;
+  api.listWithdrawals.mockImplementationOnce(() => new Promise<WithdrawalList>(resolve => { resolveProcessing = resolve; }))
+    .mockImplementationOnce(() => new Promise<WithdrawalList>(resolve => { resolvePaid = resolve; }));
+  await user.selectOptions(screen.getByLabelText("提现状态"), "processing");
+  expect(screen.queryByLabelText("选择 WR-finance")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /领取所选并创建批次/ })).toBeDisabled();
+  await user.selectOptions(screen.getByLabelText("提现状态"), "paid");
+  const pagination = { page: 1, pageSize: 25, total: 1, totalPages: 1 };
+  await act(async () => resolvePaid({ requests: [{ ...row, id: "WR-paid", status: "paid" }], pagination }));
+  expect(await screen.findByLabelText("选择 WR-paid")).toBeDisabled();
+  await act(async () => resolveProcessing({ requests: [{ ...row, id: "WR-obsolete", status: "processing" }], pagination }));
+  expect(screen.queryByLabelText("选择 WR-obsolete")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("选择 WR-paid")).toBeInTheDocument();
+  expect(api.claimWithdrawals).not.toHaveBeenCalled();
 });

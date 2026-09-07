@@ -10,6 +10,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { MetricCard } from "../../components/MetricCard";
 import { StatusBadge } from "../../components/StatusBadge";
 import {
@@ -291,7 +292,7 @@ export function SettlementPage() {
         </tbody></table></div>
       </section>
       <section className="content-card table-card">
-        <div className="card-heading"><div><h2>数采人员钱包</h2><p>总余额（元）= 结算中 + 可提现 + 提现处理中（预留）+ 已提现；<a href="/admin/withdrawals">管理人工提现申请</a></p></div></div>
+        <div className="card-heading"><div><h2>数采人员钱包</h2><p>总余额（元）= 结算中 + 可提现 + 提现处理中（预留）+ 已提现；<Link href="/admin/withdrawals">管理人工提现申请</Link></p></div></div>
         <div className="table-scroll"><table className="data-table"><thead><tr><th>数采人员</th><th>总余额</th><th>结算中</th><th>可提现</th><th>提现处理中（预留）</th><th>已提现</th><th>累计提现</th><th /></tr></thead><tbody>
           {wallets.map((wallet) => (
             <tr key={wallet.ownerId}><td><strong>{wallet.ownerName}</strong></td><td><strong>{wallet.totalBalance.toFixed(2)} 元</strong></td><td>{wallet.settlingBalance.toFixed(2)} 元</td><td>{wallet.availableBalance.toFixed(2)} 元</td><td>{wallet.reservedBalance.toFixed(2)} 元</td><td>{wallet.withdrawnBalance.toFixed(2)} 元</td><td>{wallet.cumulativeWithdrawn.toFixed(2)} 元</td><td><button className="table-action" onClick={() => setDetailMember(wallet)}>提现记录</button></td></tr>

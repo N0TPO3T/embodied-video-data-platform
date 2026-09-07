@@ -7,28 +7,31 @@ import { Modal } from "../../components/Modal";
 
 export function WithdrawalsPage() {
   const { notify } = useInteractions();
-  const [data, setData] = useState<WithdrawalList | null>(null);
+  const [result, setResult] = useState<{ requestKey: string; data: WithdrawalList | null; error: string } | null>(null);
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState<WithdrawalStatus | "">("pending");
   const [ownerId, setOwnerId] = useState("");
   const [batchFilter, setBatchFilter] = useState("");
   const [exportId, setExportId] = useState("");
-  const [selection, setSelection] = useState<string[]>([]);
+  const [selected, setSelected] = useState<{ requestKey: string; ids: string[] } | null>(null);
   const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
   const [action, setAction] = useState<{ row: WithdrawalRequest; status: "paid" | "rejected" | "failed" } | null>(null);
   const [reason, setReason] = useState("");
   const [reference, setReference] = useState("");
   const [paidAt, setPaidAt] = useState("");
   const [confirmed, setConfirmed] = useState(false);
+  const requestKey = JSON.stringify([page, status, ownerId, batchFilter, revision]);
+  const data = result?.requestKey === requestKey ? result.data : null;
+  const error = result?.requestKey === requestKey ? result.error : "";
+  const selection = data && selected?.requestKey === requestKey ? selected.ids : [];
   useEffect(() => {
     let active = true;
-    setData(null); setSelection([]); setError("");
     listWithdrawals({ page, status: status || undefined, ownerId: ownerId.trim() || undefined, batchId: batchFilter.trim() || undefined })
-      .then(value => { if (active) setData(value); }).catch(() => { if (active) setError("提现申请读取失败，请刷新或检查管理员权限"); });
+      .then(data => { if (active) setResult({ requestKey, data, error: "" }); })
+      .catch(() => { if (active) setResult({ requestKey, data: null, error: "提现申请读取失败，请刷新或检查管理员权限" }); });
     return () => { active = false; };
-  }, [page, status, ownerId, batchFilter, revision]);
+  }, [page, status, ownerId, batchFilter, revision, requestKey]);
   async function claim() {
     if (busy || !selection.length || !window.confirm(`领取 ${selection.length} 条申请并创建不可变批次？金额仍预留；导出不是付款。`)) return;
     setBusy(true);
@@ -79,7 +82,7 @@ export function WithdrawalsPage() {
         <label>筛选批次 ID<input value={batchFilter} onChange={event => { setBatchFilter(event.target.value); setPage(1); }} maxLength={64} /></label><button className="button button-secondary" onClick={() => setRevision(value => value + 1)}>刷新</button></div>
       {error && <p role="alert">{error}</p>}
       <div className="table-scroll"><table className="data-table"><thead><tr><th>选择</th><th>申请 / 用户</th><th>提交时间</th><th>收款信息（脱敏）</th><th>金额</th><th>状态 / 结果</th><th>批次 / 操作</th></tr></thead><tbody>
-        {data?.requests.map(row => <tr key={row.id}><td><input type="checkbox" aria-label={`选择 ${row.id}`} disabled={busy || row.status !== "pending"} checked={selection.includes(row.id)} onChange={event => setSelection(current => event.target.checked ? [...current, row.id] : current.filter(id => id !== row.id))} /></td><td>{row.id}<small className="row-sub">{row.ownerId}</small></td><td>{new Date(row.createdAt).toLocaleString()}</td><td>{row.method === "bank" ? "银行账户" : "支付宝"} {row.accountMasked} / {row.nameMasked}</td><td>{row.amount.toFixed(2)} 元</td><td>{withdrawalLabels[row.status]}<small className="row-sub">{row.reason ?? row.transferReference}{row.paidAt && ` / ${new Date(row.paidAt).toLocaleString()}`}</small></td><td>
+        {data?.requests.map(row => <tr key={row.id}><td><input type="checkbox" aria-label={`选择 ${row.id}`} disabled={busy || row.status !== "pending"} checked={selection.includes(row.id)} onChange={event => setSelected({ requestKey, ids: event.target.checked ? [...selection, row.id] : selection.filter(id => id !== row.id) })} /></td><td>{row.id}<small className="row-sub">{row.ownerId}</small></td><td>{new Date(row.createdAt).toLocaleString()}</td><td>{row.method === "bank" ? "银行账户" : "支付宝"} {row.accountMasked} / {row.nameMasked}</td><td>{row.amount.toFixed(2)} 元</td><td>{withdrawalLabels[row.status]}<small className="row-sub">{row.reason ?? row.transferReference}{row.paidAt && ` / ${new Date(row.paidAt).toLocaleString()}`}</small></td><td>
           {row.batchId && <button className="table-action" onClick={() => setExportId(row.batchId!)}>{row.batchId}（选择导出）</button>}
           {row.status === "pending" && <button className="table-action" disabled={busy} onClick={() => openAction(row, "rejected")}>拒绝并退回余额</button>}
           {row.status === "processing" && <><button className="table-action" disabled={busy} onClick={() => openAction(row, "paid")}>确认实际付款</button><button className="table-action" disabled={busy} onClick={() => openAction(row, "failed")}>确认未付 / 已退回</button></>}
