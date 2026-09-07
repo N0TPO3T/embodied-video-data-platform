@@ -146,16 +146,16 @@ pnpm start:local
 
 ### 本地健康自愈与故障预防
 
-api 容器（NestJS）曾出现两类故障：① Node 句柄/线程泄漏（基线 11 线程，挂死前 265 线程）；② **宿主机内存压力导致 Docker VM 冻结**——Docker VM 默认占用约一半内存（16GB 机器约 7.75GB），叠加 web dev 与编辑器后 macOS 进入重度换页（swap 打满），会冻结 VM 内全部进程，表现为 api 无响应且容器无法 kill（`did not receive an exit event`，见 docker/for-mac #6850 / #7816），只能重启 Docker Desktop。为此做了三层预防：
+api 容器（NestJS）曾出现两类故障：① Node 句柄/线程泄漏（基线 11 线程，挂死前 265 线程）；② **宿主机内存压力导致 Docker VM 冻结**——Docker VM 默认占用约一半内存（16GB 机器约 7.75GB），叠加 web dev 与编辑器后 macOS 进入重度换页（swap 打满），会冻结 VM 内全部进程，表现为 api 无响应且容器无法 kill（`did not receive an exit event`，见 docker/for-mac #6850 / #7816），只能重启 Docker Desktop。为此做了四项预防：
 
-1. **有界失败（compose.yaml）**：api 容器配置 `pids_limit: 200`、`mem_limit: 1536m`、`NODE_OPTIONS=--max-old-space-size=1024` 与 `stop_grace_period: 30s`。线程/内存超限时由内核终止容器并依赖 `restart: unless-stopped` 自动拉起。
+1. **本地有界失败（compose.yaml）**：api 容器默认配置 `pids_limit: 200`、`mem_limit: 1536m`、`NODE_OPTIONS=--max-old-space-size=1024` 与 `stop_grace_period: 30s`。线程/内存超限时由内核终止容器并依赖 `restart: unless-stopped` 自动拉起。服务器部署叠加 `compose.prod.yaml` 后会清除 `mem_limit` 和 Node 堆上限，不把开发机容量带入生产；`pids_limit` 与停止宽限仍作为进程异常保护保留。
 2. **健康自愈脚本**：`scripts/dev-health.sh` 定时探测 `/api/v1/health/ready`，连续失败 3 次自动 `docker compose restart api`；daemon 卡死时给出重启 Docker Desktop 的指引；**并预检宿主机 swap 使用率**，超过 50% 提示、超过 80% 预警并建议降低 Docker VM 内存。建议通过 cron/launchd 每 2~5 分钟执行一次：
 
    ```bash
    */2 * * * * cd <仓库目录> && ./scripts/dev-health.sh --cron >> /tmp/dev-health.log 2>&1
    ```
 
-3. **降低 Docker VM 内存（强烈建议）**：全部容器实际占用 <1GB，Docker Desktop → Settings → Resources → Memory 降到 **4~6GB** 即可，可显著缓解宿主换页导致的 VM 冻结。
+3. **按本地机器调整 Docker VM 内存**：这是 Docker Desktop 虚拟机的本地设置，不是生产服务器限制。8GB MacBook Air 可设为 **2GB** 以避免 macOS 重度换页；内存更充足的开发机可按并行容器数量提高。Linux 服务器没有这项 Docker Desktop VM 上限，生产容量应按真实视频并发与 Worker 实测配置。
 4. **泄漏监控**：可用 `docker stats evdp-api-1` 观察线程数（基线约 10~20）。若线程持续增长，说明存在连接/句柄泄漏，需要排查 TypeORM 连接池、amqplib、aws-sdk 与 ioredis 的配置。
 
 ### 独立 AI 视频质检与融合标注实验页
