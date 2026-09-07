@@ -16,10 +16,10 @@ function formatMoney(amount: number): string {
   return `${Math.round(amount * 100) / 100} 元`;
 }
 
-/** 累计赚取 = 可提现 + 已提现（不含结算中） */
+/** 累计赚取 = 可提现 + 预留 + 已提现（不含结算中） */
 function earnedTotal(balance: WalletBalance): number {
   return (
-    Math.round((balance.availableBalance + balance.withdrawnBalance) * 100) /
+    Math.round((balance.availableBalance + balance.reservedBalance + balance.withdrawnBalance) * 100) /
     100
   );
 }
@@ -133,6 +133,7 @@ export function TeamWalletPage() {
                 <th>成员</th>
                 <th>结算中</th>
                 <th>可提现</th>
+                <th>提现处理中（预留）</th>
                 <th>累计赚取</th>
                 <th>已提现</th>
                 <th />
@@ -150,7 +151,7 @@ export function TeamWalletPage() {
                 />
               ))}
               {wallets.length === 0 && (
-                <tr><td colSpan={6}><div className="empty-state compact-empty"><Users size={20} /><span>本队暂无成员钱包数据</span></div></td></tr>
+                <tr><td colSpan={7}><div className="empty-state compact-empty"><Users size={20} /><span>本队暂无成员钱包数据</span></div></td></tr>
               )}
             </tbody>
           </table>
@@ -179,6 +180,7 @@ function WalletMemberRow({
         <td><strong>{item.ownerName}</strong><small className="field-help">{item.ownerId}</small></td>
         <td className="nowrap-cell">{formatMoney(item.settlingBalance)}</td>
         <td className="nowrap-cell"><strong>{formatMoney(item.availableBalance)}</strong></td>
+        <td className="nowrap-cell">{formatMoney(item.reservedBalance)}</td>
         <td className="nowrap-cell">{formatMoney(earnedTotal(item))}</td>
         <td className="nowrap-cell">{formatMoney(item.withdrawnBalance)}</td>
         <td>
@@ -189,7 +191,7 @@ function WalletMemberRow({
       </tr>
       {expanded && (
         <tr className="wallet-detail-row">
-          <td colSpan={6}>
+          <td colSpan={7}>
             <div className="wallet-detail-inner">
               <h3>提现记录（{transactions.filter((t) => t.type === "withdraw").length} 条）</h3>
               {transactions.filter((t) => t.type === "withdraw").length > 0 ? (

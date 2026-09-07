@@ -5,6 +5,9 @@ import type {
   WalletTeamStat,
   WalletTransaction,
   WithdrawInput,
+  WithdrawalRequest,
+  WithdrawalList,
+  WithdrawalStatus,
 } from "../contracts";
 
 export class WalletApiError extends Error {
@@ -71,12 +74,12 @@ export async function listWallets(): Promise<WalletBalance[]> {
   return result.wallets;
 }
 
-export async function withdrawWallet(input: WithdrawInput): Promise<WalletBalance> {
-  const result = await requestJson<{ balance: WalletBalance }>("/wallet/withdraw", {
+export async function withdrawWallet(input: WithdrawInput): Promise<WithdrawalRequest> {
+  const result = await requestJson<{ request: WithdrawalRequest }>("/wallet/withdraw", {
     method: "POST",
     body: JSON.stringify(input),
   });
-  return result.balance;
+  return result.request;
 }
 
 /** 指定成员的钱包流水（管理员查看任意成员 / 团长查看本队成员） */
@@ -117,4 +120,21 @@ export async function getWalletTeamStats(
     `/wallet/stats/teams${suffix ? `?${suffix}` : ""}`,
   );
   return result.teams;
+}
+
+export async function listWithdrawals(input: { page?: number; status?: WithdrawalStatus; ownerId?: string; batchId?: string } = {}): Promise<WithdrawalList> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(input)) if (value !== undefined && value !== "") params.set(key, String(value));
+  return requestJson<WithdrawalList>(`/wallet/withdrawals?${params.toString()}`);
+}
+export async function claimWithdrawals(ids: string[]): Promise<{ batchId: string; requests: WithdrawalRequest[] }> {
+  return requestJson("/wallet/withdrawal-batches", { method: "POST", body: JSON.stringify({ ids }) });
+}
+export async function updateWithdrawal(id: string, input: { status: "paid" | "rejected" | "failed"; reason?: string; transferReference?: string; paidAt?: string; fundsNotTransferred?: boolean }): Promise<{ request: WithdrawalRequest }> {
+  return requestJson(`/wallet/withdrawals/${encodeURIComponent(id)}/status`, { method: "POST", body: JSON.stringify(input) });
+}
+export async function exportWithdrawalBatch(batchId: string): Promise<Blob> {
+  const response = await fetch(apiUrl(`/wallet/withdrawal-batches/${encodeURIComponent(batchId)}/export`), { method: "POST", credentials: "include" });
+  if (!response.ok) throw new WalletApiError(response.status, "导出失败，请检查权限、批次与密钥配置");
+  return response.blob();
 }

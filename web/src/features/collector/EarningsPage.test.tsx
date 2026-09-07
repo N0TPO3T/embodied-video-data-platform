@@ -10,11 +10,13 @@ import { EarningsPage } from "./EarningsPage";
 const walletApi = vi.hoisted(() => ({
   getMyWallet: vi.fn(),
   withdrawWallet: vi.fn(),
+  listWithdrawals: vi.fn(),
 }));
 
 vi.mock("../../wallet/client/walletApi", () => ({
   getMyWallet: walletApi.getMyWallet,
   withdrawWallet: walletApi.withdrawWallet,
+  listWithdrawals: walletApi.listWithdrawals,
 }));
 
 const detail = {
@@ -24,6 +26,7 @@ const detail = {
     totalBalance: 25.5,
     settlingBalance: 10,
     availableBalance: 12.5,
+    reservedBalance: 0,
     withdrawnBalance: 3,
     cumulativeWithdrawn: 8,
   },
@@ -80,12 +83,8 @@ describe("collector wallet page", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     walletApi.getMyWallet.mockResolvedValue(detail);
-    walletApi.withdrawWallet.mockResolvedValue({
-      ...detail.balance,
-      availableBalance: 9.5,
-      withdrawnBalance: 6,
-      cumulativeWithdrawn: 11,
-    });
+    walletApi.listWithdrawals.mockResolvedValue({ requests: [], pagination: { page: 1, pageSize: 25, total: 0, totalPages: 1 } });
+    walletApi.withdrawWallet.mockResolvedValue({ id: "WR-test", status: "pending" });
   });
 
   it("shows the three clickable summary cards（结算中/可提现/累计赚取）", async () => {
@@ -120,21 +119,21 @@ describe("collector wallet page", () => {
     expect(screen.queryByText("-3 元")).not.toBeInTheDocument();
   });
 
-  it("withdraws from available balance with confirmation", async () => {
+  it("reserves a submitted withdrawal without fabricating a paid ledger entry", async () => {
     const user = userEvent.setup();
     vi.spyOn(window, "confirm").mockReturnValue(true);
     renderPage();
     await screen.findByText("12.5 元");
-    // 切到「可提现」视图后提现表单可用
+    walletApi.getMyWallet.mockResolvedValue({ ...detail, balance: { ...detail.balance, availableBalance: 9.5, reservedBalance: 3 } });
     await user.click(screen.getByRole("button", { name: /可提现/ }));
-    await user.type(await screen.findByLabelText("提现金额"), "3");
+    await user.type(screen.getByLabelText("收款人姓名"), "测试收款人");
+    await user.type(screen.getByLabelText("收款账号"), "test@example.test");
+    await user.type(screen.getByLabelText("提现金额"), "3");
     await user.click(screen.getByRole("button", { name: "确认提现" }));
-
-    expect(walletApi.withdrawWallet).toHaveBeenCalledWith({
-      amount: 3,
-      remark: undefined,
-    });
-    expect(await screen.findByText("提现成功，已记录累计提现")).toBeVisible();
+    expect(await screen.findByText("9.5 元")).toBeVisible();
+    expect(screen.getByText("15.5 元")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /累计赚取/ }));
+    expect(screen.getAllByText("-3 元")).toHaveLength(1);
     vi.restoreAllMocks();
   });
 
@@ -143,6 +142,8 @@ describe("collector wallet page", () => {
     renderPage();
     await screen.findByText("12.5 元");
     await user.click(screen.getByRole("button", { name: /可提现/ }));
+    await user.type(screen.getByLabelText("收款人姓名"), "测试收款人");
+    await user.type(screen.getByLabelText("收款账号"), "test@example.test");
     await user.type(await screen.findByLabelText("提现金额"), "999");
     await user.click(screen.getByRole("button", { name: "确认提现" }));
 

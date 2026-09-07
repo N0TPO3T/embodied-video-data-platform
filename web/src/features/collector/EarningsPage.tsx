@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   BadgeCheck,
   CircleDollarSign,
@@ -18,6 +18,7 @@ import {
   type WalletDetail,
 } from "../../wallet/client/walletApi";
 import type { WalletTransaction } from "../../wallet/contracts";
+import { WithdrawalHistory } from "../../wallet/WithdrawalHistory";
 
 type PageMode = "loading" | "live" | "unavailable";
 
@@ -31,6 +32,7 @@ const emptyWallet: WalletDetail = {
     totalBalance: 0,
     settlingBalance: 0,
     availableBalance: 0,
+    reservedBalance: 0,
     withdrawnBalance: 0,
     cumulativeWithdrawn: 0,
   },
@@ -53,9 +55,9 @@ function transactionTone(type: string): "success" | "info" | "warning" {
   return "warning";
 }
 
-/** 累计赚取 = 可提现 + 已提现（不含结算中） */
+/** 累计赚取包含预留金额，不含结算中。 */
 function earnedTotal(balance: WalletDetail["balance"]): number {
-  return Math.round((balance.availableBalance + balance.withdrawnBalance) * 100) / 100;
+  return Math.round((balance.availableBalance + balance.reservedBalance + balance.withdrawnBalance) * 100) / 100;
 }
 
 const viewMeta: Record<
@@ -86,7 +88,12 @@ export function EarningsPage() {
   const [mode, setMode] = useState<PageMode>("loading");
   const [view, setView] = useState<DetailView>("settling");
   const [withdrawAmount, setWithdrawAmount] = useState("");
-  const [withdrawRemark, setWithdrawRemark] = useState("");
+  const [method, setMethod] = useState<"alipay" | "bank">("alipay");
+  const [account, setAccount] = useState("");
+  const [recipientName, setRecipientName] = useState("");
+  const [bankName, setBankName] = useState("");
+  const [revision, setRevision] = useState(0);
+  const attempt = useRef<{ payload: string; key: string } | null>(null);
   const [withdrawing, setWithdrawing] = useState(false);
 
   useEffect(() => {
@@ -124,37 +131,32 @@ export function EarningsPage() {
     }
     if (
       !window.confirm(
-        `确认提现 ${formatMoney(amount)}？提现后金额转入已提现，累计提现同步累加。`,
+        `确认申请提现 ${formatMoney(amount)} 至 ${method === "bank" ? bankName : "支付宝"} / ${recipientName.trim()} / ${account.trim()}？请核对收款信息。此操作仅预留金额，需财务线下转账，不代表已付款。`,
       )
     ) {
       return;
     }
     setWithdrawing(true);
     try {
-      const next = await withdrawWallet({
-        amount,
-        remark: withdrawRemark.trim() || undefined,
-      });
-      setWallet((current) => ({
-        ...current,
-        balance: next,
-        transactions: [
-          {
-            id: `WT-${Date.now()}`,
-            type: "withdraw",
-            amount: -amount,
-            balanceAfter: next.totalBalance,
-            cycleId: null,
-            submissionId: null,
-            remark: withdrawRemark.trim() || "钱包提现",
-            createdAt: Date.now(),
-          },
-          ...current.transactions,
-        ],
-      }));
+      const input = { amount, method, account: account.trim(), name: recipientName.trim(), bankName: method === "bank" ? bankName.trim() : undefined };
+      const payload = JSON.stringify(input);
+      if (!attempt.current || attempt.current.payload !== payload) {
+        attempt.current = { payload, key: crypto.randomUUID() };
+      }
+      await withdrawWallet({ ...input, idempotencyKey: attempt.current.key });
+      attempt.current = null;
       setWithdrawAmount("");
-      setWithdrawRemark("");
-      notify("success", "提现成功，已记录累计提现");
+      setAccount("");
+      setRecipientName("");
+      setBankName("");
+      setRevision(value => value + 1);
+      notify("success", "提现申请已提交，金额已预留，等待财务人工付款");
+      try {
+        setWallet(await getMyWallet());
+      } catch {
+        setMode("unavailable");
+        notify("error", "申请已提交，但余额刷新失败；请刷新页面，不要重复申请");
+      }
     } catch (reason) {
       notify("error", reason instanceof Error ? reason.message : "提现失败，请重试");
     } finally {
@@ -220,16 +222,22 @@ export function EarningsPage() {
           <small>含已提现，不含结算中</small>
         </button>
       </div>
+      <p className="form-message">提现处理中（已预留）：<strong>{formatMoney(balance.reservedBalance)}</strong>，不计为已付款。</p>
+      <WithdrawalHistory key={currentAccount.id} revision={revision} />
 
       {view === "available" && (
         <section className="content-card wallet-withdraw-card">
           <div className="card-heading">
             <div>
               <h2>提现</h2>
-              <p>从可提现余额转出，金额进入已提现并累加累计提现</p>
+              <p>提交后预留金额，由财务线下人工转账；只在实际付款确认后计入已提现。不要填写身份证、密码、PIN 或 CVV。</p>
             </div>
           </div>
-          <form className="wallet-withdraw-form" onSubmit={submitWithdraw}>
+          <form className="wallet-withdraw-form modal-form" onSubmit={submitWithdraw}>
+            <label>收款方式<select aria-label="收款方式" value={method} onChange={event => setMethod(event.target.value as "alipay" | "bank")}><option value="alipay">支付宝</option><option value="bank">银行账户</option></select></label>
+            <label>收款人姓名<input aria-label="收款人姓名" value={recipientName} onChange={event => setRecipientName(event.target.value)} maxLength={120} required autoComplete="off" /></label>
+            <label>{method === "bank" ? "银行卡 / 账户" : "支付宝账号"}<input aria-label="收款账号" value={account} onChange={event => setAccount(event.target.value)} maxLength={200} required autoComplete="off" /></label>
+            {method === "bank" && <label>银行名称<input aria-label="银行名称" value={bankName} onChange={event => setBankName(event.target.value)} maxLength={120} required /></label>}
             <div className="input-with-suffix wallet-amount-field">
               <input
                 aria-label="提现金额"
@@ -244,20 +252,12 @@ export function EarningsPage() {
               />
               <span>元</span>
             </div>
-            <input
-              aria-label="提现备注"
-              className="wallet-remark-field"
-              value={withdrawRemark}
-              onChange={(event) => setWithdrawRemark(event.target.value)}
-              placeholder="备注（可选）"
-              maxLength={200}
-            />
             <button
               type="submit"
               className="button button-primary"
               disabled={withdrawing || mode !== "live"}
             >
-              {withdrawing ? "提现中…" : "确认提现"}
+              {withdrawing ? "提交中…" : "确认提现"}
             </button>
           </form>
         </section>

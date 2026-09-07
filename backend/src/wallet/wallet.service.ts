@@ -11,6 +11,7 @@ import {
   type WalletTransactionType,
 } from "../database/entities/wallet.entity.js";
 import { UserEntity } from "../database/entities/user.entity.js";
+import type { PublicUser } from "../auth/auth.types.js";
 
 export type WalletBalanceView = {
   ownerId: string;
@@ -18,6 +19,7 @@ export type WalletBalanceView = {
   totalBalance: number;
   settlingBalance: number;
   availableBalance: number;
+  reservedBalance: number;
   withdrawnBalance: number;
   cumulativeWithdrawn: number;
 };
@@ -47,18 +49,8 @@ export class WalletService {
     ownerId: string,
   ): Promise<WalletBalanceEntity> {
     const repo = manager.getRepository(WalletBalanceEntity);
-    let row = await repo.findOne({ where: { ownerId }, lock: { mode: "pessimistic_write" } });
-    if (!row) {
-      row = repo.create({
-        ownerId,
-        totalBalance: "0.00",
-        settlingBalance: "0.00",
-        availableBalance: "0.00",
-        withdrawnBalance: "0.00",
-        cumulativeWithdrawn: "0.00",
-      });
-      row = await repo.save(row);
-    }
+    await repo.createQueryBuilder().insert().values({ ownerId }).orIgnore().execute();
+    const row = await repo.findOneOrFail({ where: { ownerId }, lock: { mode: "pessimistic_write" } });
     return row;
   }
 
@@ -141,7 +133,7 @@ export class WalletService {
     const amount = Math.round(input.amount * 100) / 100;
     const settling = Math.max(0, numberOr(row.settlingBalance) - amount);
     const available = numberOr(row.availableBalance) + amount;
-    const total = settling + available + numberOr(row.withdrawnBalance);
+    const total = settling + available + numberOr(row.reservedBalance) + numberOr(row.withdrawnBalance);
     row.settlingBalance = decimal(settling);
     row.availableBalance = decimal(available);
     row.totalBalance = decimal(total);
@@ -157,48 +149,6 @@ export class WalletService {
     });
   }
 
-  /**
-   * 提现：从「可提现」转出，记录已提现与累计提现。
-   * available -= amount, withdrawn += amount, cumulative_withdrawn += amount；流水 type=withdraw（负值）。
-   */
-  async withdraw(
-    actor: { id: string; displayName: string },
-    input: { ownerId: string; amount: number; remark?: string },
-  ): Promise<WalletBalanceView> {
-    const amount = Math.round(input.amount * 100) / 100;
-    if (!Number.isFinite(amount) || amount <= 0) {
-      throw new WalletFailure("VALIDATION", "提现金额必须大于 0", 400);
-    }
-    return this.transactions.manager.transaction(async (manager) => {
-      const row = await this.balanceRow(manager, input.ownerId);
-      const available = numberOr(row.availableBalance);
-      if (amount > available) {
-        throw new WalletFailure(
-          "INSUFFICIENT_BALANCE",
-          `可提现余额不足（当前可提现 ${available.toFixed(2)} 元）`,
-          409,
-        );
-      }
-      const nextAvailable = Math.round((available - amount) * 100) / 100;
-      const withdrawn = numberOr(row.withdrawnBalance) + amount;
-      const cumulative = numberOr(row.cumulativeWithdrawn) + amount;
-      const total = numberOr(row.settlingBalance) + nextAvailable + withdrawn;
-      row.availableBalance = decimal(nextAvailable);
-      row.withdrawnBalance = decimal(withdrawn);
-      row.cumulativeWithdrawn = decimal(cumulative);
-      row.totalBalance = decimal(total);
-      await manager.getRepository(WalletBalanceEntity).save(row);
-      await this.recordTransaction(manager, {
-        ownerId: input.ownerId,
-        type: "withdraw",
-        amount: -amount,
-        balanceAfter: total,
-        remark: input.remark ?? null,
-        createdByAccountId: actor.id,
-      });
-      return this.view(row, input.ownerId);
-    });
-  }
 
   private async view(
     row: WalletBalanceEntity,
@@ -211,6 +161,7 @@ export class WalletService {
       totalBalance: numberOr(row.totalBalance),
       settlingBalance: numberOr(row.settlingBalance),
       availableBalance: numberOr(row.availableBalance),
+      reservedBalance: numberOr(row.reservedBalance),
       withdrawnBalance: numberOr(row.withdrawnBalance),
       cumulativeWithdrawn: numberOr(row.cumulativeWithdrawn),
     };
@@ -226,6 +177,7 @@ export class WalletService {
         totalBalance: 0,
         settlingBalance: 0,
         availableBalance: 0,
+        reservedBalance: 0,
         withdrawnBalance: 0,
         cumulativeWithdrawn: 0,
       };
@@ -238,6 +190,7 @@ export class WalletService {
     actor: { id: string; role: "admin" | "leader" | "collector"; teamId?: string },
   ): Promise<WalletBalanceView[]> {
     let rows: WalletBalanceEntity[];
+    if (actor.role === "leader" && !actor.teamId) return [];
     if (actor.role === "collector") {
       const row = await this.balances.findOneBy({ ownerId: actor.id });
       rows = row ? [row] : [];
@@ -256,6 +209,7 @@ export class WalletService {
 
   /** 钱包流水 */
   async listTransactions(
+    actor: PublicUser,
     ownerId: string,
     limit = 50,
   ): Promise<
@@ -270,6 +224,7 @@ export class WalletService {
       createdAt: number;
     }>
   > {
+    await this.authorizeOwner(actor, ownerId);
     const rows = await this.transactions.find({
       where: { ownerId },
       order: { createdAt: "DESC" },
@@ -285,6 +240,15 @@ export class WalletService {
       remark: row.remark,
       createdAt: row.createdAt.getTime(),
     }));
+  }
+
+  private async authorizeOwner(actor: PublicUser, ownerId: string): Promise<void> {
+    if (actor.role === "admin" || actor.id === ownerId) return;
+    if (actor.role === "leader" && actor.teamId) {
+      const owner = await this.users.findOneBy({ id: ownerId });
+      if (owner?.teamId === actor.teamId) return;
+    }
+    throw new WalletFailure("FORBIDDEN", "无权读取此钱包", 403);
   }
 
   // ---------- 流水统计（管理员监控） ----------
