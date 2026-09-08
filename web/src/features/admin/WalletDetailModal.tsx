@@ -14,7 +14,7 @@ function formatMoney(amount: number): string {
 
 function earnedTotal(balance: WalletBalance): number {
   return (
-    Math.round((balance.availableBalance + balance.withdrawnBalance) * 100) /
+    Math.round((balance.availableBalance + balance.reservedBalance + balance.withdrawnBalance) * 100) /
     100
   );
 }
@@ -76,6 +76,7 @@ export function WalletDetailModal({
           <span><BadgeCheck size={15} />累计赚取 <strong>{formatMoney(earnedTotal(member))}</strong></span>
           <span><Landmark size={15} />已提现 <strong>{formatMoney(member.withdrawnBalance)}</strong></span>
           <span>结算中 <strong>{formatMoney(member.settlingBalance)}</strong></span>
+          <span>提现处理中（预留） <strong>{formatMoney(member.reservedBalance)}</strong></span>
         </div>
 
         <h3>提现记录（{withdrawals.length} 条）</h3>

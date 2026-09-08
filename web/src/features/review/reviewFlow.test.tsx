@@ -759,10 +759,4 @@ describe("review workflows", () => {
     );
   });
 
-  it("routes the retired withdrawal page back to the admin overview", () => {
-    renderRole("/admin/withdrawals", "admin");
-
-    expect(screen.getByRole("heading", { name: "运营总览" })).toBeVisible();
-    expect(screen.queryByText("提现审核")).not.toBeInTheDocument();
-  });
 });

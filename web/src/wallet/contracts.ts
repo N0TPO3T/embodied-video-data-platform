@@ -4,6 +4,7 @@ export type WalletBalance = {
   totalBalance: number;
   settlingBalance: number;
   availableBalance: number;
+  reservedBalance: number;
   withdrawnBalance: number;
   cumulativeWithdrawn: number;
 };
@@ -21,7 +22,11 @@ export type WalletTransaction = {
 
 export type WithdrawInput = {
   amount: number;
-  remark?: string;
+  idempotencyKey: string;
+  method: "alipay" | "bank";
+  account: string;
+  name: string;
+  bankName?: string;
 };
 
 /** 流水统计点（日/周/月聚合；withdraw 为负值=流出） */
@@ -39,4 +44,28 @@ export type WalletTeamStat = {
   lock: number;
   settle: number;
   withdraw: number;
+};
+
+export type WithdrawalStatus = "pending" | "processing" | "paid" | "rejected" | "failed";
+export type WithdrawalRequest = {
+  id: string;
+  ownerId: string;
+  amount: number;
+  status: WithdrawalStatus;
+  method: "alipay" | "bank";
+  accountMasked: string;
+  nameMasked: string;
+  batchId: string | null;
+  reason: string | null;
+  transferReference: string | null;
+  paidAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+export type WithdrawalList = {
+  requests: WithdrawalRequest[];
+  pagination: { page: number; pageSize: number; total: number; totalPages: number };
+};
+export const withdrawalLabels: Record<WithdrawalStatus, string> = {
+  pending: "待审核", processing: "人工付款处理中", paid: "已确认付款", rejected: "已拒绝（余额已退回）", failed: "已确认失败（余额已退回）",
 };

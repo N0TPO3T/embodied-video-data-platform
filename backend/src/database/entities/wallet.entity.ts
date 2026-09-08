@@ -13,7 +13,7 @@ import { UserEntity } from "./user.entity.js";
 
 /**
  * 数采人员钱包余额。
- * 总余额 = 结算中 + 可提现 + 已提现；
+ * 总余额 = 结算中 + 可提现 + 提现处理中 + 已提现；
  * 结算中 = 已锁定尚未结算（3 天）的任务金额；可提现 = 已结算金额；
  * 已提现 + 累计提现 记录提现历史。
  */
@@ -34,6 +34,9 @@ export class WalletBalanceEntity {
 
   @Column({ name: "available_balance", type: "numeric", precision: 14, scale: 2, default: 0 })
   availableBalance!: string;
+
+  @Column({ name: "reserved_balance", type: "numeric", precision: 14, scale: 2, default: 0 })
+  reservedBalance!: string;
 
   @Column({ name: "withdrawn_balance", type: "numeric", precision: 14, scale: 2, default: 0 })
   withdrawnBalance!: string;

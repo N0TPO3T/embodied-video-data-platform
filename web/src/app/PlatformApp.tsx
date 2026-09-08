@@ -17,6 +17,7 @@ import { LabelSetPage } from "../features/admin/LabelSetPage";
 import { SceneSystemPage } from "../features/admin/SceneSystemPage";
 import { RulesPage } from "../features/admin/RulesPage";
 import { SettlementPage } from "../features/admin/SettlementPage";
+import { WithdrawalsPage } from "../features/admin/WithdrawalsPage";
 import { SubmissionsAdminPage } from "../features/admin/SubmissionsAdminPage";
 import { TasksPage } from "../features/admin/TasksPage";
 import { UsersTeamsPage } from "../features/admin/UsersTeamsPage";
@@ -162,7 +163,8 @@ function AuthenticatedPlatformContent({
     else if (safePath === "/admin/labels") page = <LabelSetPage />;
     else if (safePath === "/admin/scenes") page = <SceneSystemPage />;
     else if (safePath === "/admin/rules") page = <RulesPage />;
-    else if (safePath === "/admin/settlements") page = <SettlementPage />;
+    else if (safePath === "/admin/settlements") page = <SettlementPage navigate={navigate} />;
+    else if (safePath === "/admin/withdrawals") page = <WithdrawalsPage />;
     else if (safePath === "/admin/public") page = <PublicConfigPage />;
     else if (safePath === "/admin/audit") page = <AuditLogPage />;
     else page = <AdminDashboard />;

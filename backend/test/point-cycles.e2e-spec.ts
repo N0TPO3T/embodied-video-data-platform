@@ -1,4 +1,5 @@
 import type { INestApplication } from "@nestjs/common";
+import { randomBytes } from "node:crypto";
 import { Test } from "@nestjs/testing";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import * as argon2 from "argon2";
@@ -93,6 +94,7 @@ describe("point cycle API", () => {
   }
 
   beforeAll(async () => {
+    vi.stubEnv("PAYOUT_RECIPIENT_KEY", randomBytes(32).toString("hex"));
     dataSource = createDataSource(TEST_DATABASE_URL);
     await dataSource.initialize();
     await dataSource.dropDatabase();
@@ -479,6 +481,7 @@ describe("point cycle API", () => {
     if (dataSource?.isInitialized) {
       await dataSource.destroy();
     }
+    vi.unstubAllEnvs();
   });
 
   it("previews eligible submissions before locking", async () => {
@@ -934,27 +937,28 @@ describe("point cycle API", () => {
     );
     expect(txTypes.slice(0, 2)).toEqual(["settle", "lock"]);
 
-    // 提现：可提现 → 已提现 / 累计提现
+    // Application reserves funds; only subsequent finance confirmation creates a paid ledger.
     const withdrawn = await request(app.getHttpServer())
-      .post("/api/v1/wallet/withdraw")
-      .set("Origin", WEB_ORIGIN)
-      .set("Cookie", collectorCookie)
-      .send({ amount: 0.1, remark: "测试提现" })
-      .expect(200);
-    expect(withdrawn.body.balance).toMatchObject({
-      totalBalance: 0.18,
-      settlingBalance: 0,
-      availableBalance: 0.08,
-      withdrawnBalance: 0.1,
-      cumulativeWithdrawn: 0.1,
-    });
+      .post("/api/v1/wallet/withdraw").set("Origin", WEB_ORIGIN).set("Cookie", collectorCookie)
+      .send({ amount: 0.1, idempotencyKey: "point-withdrawal", method: "alipay", account: "point@example.test", name: "测试收款人" }).expect(200);
+    expect(withdrawn.body.request.status).toBe("pending");
+    const reserved = await request(app.getHttpServer()).get("/api/v1/wallet/me").set("Cookie", collectorCookie).expect(200);
+    expect(reserved.body.balance).toMatchObject({ totalBalance: 0.18, availableBalance: 0.08, reservedBalance: 0.1, withdrawnBalance: 0, cumulativeWithdrawn: 0 });
+    const batch = await request(app.getHttpServer()).post("/api/v1/wallet/withdrawal-batches").set("Origin", WEB_ORIGIN).set("Cookie", adminCookie)
+      .send({ ids: [withdrawn.body.request.id] }).expect(200);
+    await request(app.getHttpServer()).post(`/api/v1/wallet/withdrawal-batches/${batch.body.batchId}/export`).set("Origin", WEB_ORIGIN).set("Cookie", adminCookie).expect(200);
+    await request(app.getHttpServer()).post(`/api/v1/wallet/withdrawals/${withdrawn.body.request.id}/status`).set("Origin", WEB_ORIGIN).set("Cookie", adminCookie)
+      .send({ status: "paid", transferReference: "point-manual-transfer", paidAt: new Date().toISOString() }).expect(200);
+    const paid = await request(app.getHttpServer()).get("/api/v1/wallet/me").set("Cookie", collectorCookie).expect(200);
+    expect(paid.body.balance).toMatchObject({ totalBalance: 0.18, availableBalance: 0.08, reservedBalance: 0, withdrawnBalance: 0.1, cumulativeWithdrawn: 0.1 });
+    expect(paid.body.transactions.filter((row: { type: string }) => row.type === "withdraw")).toHaveLength(1);
 
     // 超额提现被拒绝
     await request(app.getHttpServer())
       .post("/api/v1/wallet/withdraw")
       .set("Origin", WEB_ORIGIN)
       .set("Cookie", collectorCookie)
-      .send({ amount: 999 })
+      .send({ amount: 999, idempotencyKey: "point-insufficient", method: "alipay", account: "point@example.test", name: "测试收款人" })
       .expect(409);
 
     // 钱包列表范围：管理员全平台 / 团长本队

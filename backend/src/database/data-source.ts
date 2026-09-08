@@ -94,6 +94,8 @@ import { SceneSingleLayer2026091500001 } from "./migrations/202609150001-scene-s
 import { TaskSceneBinding2026091600001 } from "./migrations/202609160001-task-scene-binding.js";
 import { PriceFieldRename2026091800001 } from "./migrations/202609180001-price-field-rename.js";
 import { TaskSegmentFkCascade2026091900001 } from "./migrations/202609190001-task-segment-fk-cascade.js";
+import { WithdrawalBatchEntity, WithdrawalRequestEntity } from "./entities/withdrawal.entity.js";
+import { ManualPayouts2026092000001 } from "./migrations/202609200001-manual-payouts.js";
 
 export const identityEntities = [
   TeamEntity,
@@ -126,6 +128,8 @@ export const identityEntities = [
   CollectionTaskEntity,
   WalletBalanceEntity,
   WalletTransactionEntity,
+  WithdrawalBatchEntity,
+  WithdrawalRequestEntity,
   SceneCategoryPricingEntity,
   SceneEntity,
   SceneLibraryEntity,
@@ -202,6 +206,7 @@ export function createDataSource(
       TaskSceneBinding2026091600001,
       PriceFieldRename2026091800001,
       TaskSegmentFkCascade2026091900001,
+      ManualPayouts2026092000001,
     ],
     synchronize: false,
     logging: false,
