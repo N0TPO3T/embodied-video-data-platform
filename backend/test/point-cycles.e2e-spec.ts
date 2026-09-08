@@ -984,5 +984,27 @@ describe("point cycle API", () => {
     );
     expect(leaderNames).toContain("积分数采");
     expect(leaderNames).not.toContain("二队数采");
+
+    const ownTeamTransactions = await request(app.getHttpServer())
+      .get("/api/v1/wallet/transactions?ownerId=U-PC-COLLECTOR")
+      .set("Cookie", leaderCookie)
+      .expect(200);
+    expect(ownTeamTransactions.body.transactions.length).toBeGreaterThan(0);
+
+    const crossTeamTransactions = await request(app.getHttpServer())
+      .get("/api/v1/wallet/transactions?ownerId=U-PC-OTHER")
+      .set("Cookie", leaderCookie)
+      .expect(403);
+    expect(crossTeamTransactions.body).toMatchObject({ code: "FORBIDDEN" });
+
+    await request(app.getHttpServer())
+      .get("/api/v1/wallet/transactions?ownerId=U-PC-OTHER")
+      .set("Cookie", collectorCookie)
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .get("/api/v1/wallet/transactions?ownerId=U-PC-OTHER")
+      .set("Cookie", adminCookie)
+      .expect(200);
   });
 });
